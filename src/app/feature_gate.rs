@@ -149,6 +149,7 @@ pub(super) fn route_label_key(route: &Route) -> &'static str {
 /// mapping collapses onto the same key.
 pub(super) fn settings_route_label_key(section: &str) -> &'static str {
     match section {
+        "agents" => "settings.section.agents",
         "server" => "route.settings.server",
         "devices" => "route.devices",
         "storage" => "route.settings.storage",

@@ -8,6 +8,8 @@ use super::{TranslationDict, UiLocale};
 /// Build the default English translation dictionary.
 pub fn english_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(UiLocale::En);
+    dict.set("contacts.my_agent", "My Agent");
+    dict.set("nav.realms", "Realms");
     dict.set("search.result_source", "Search result source");
     dict.set("search.source_event", "Event");
     dict.set("search.source_commit", "Covering commit");

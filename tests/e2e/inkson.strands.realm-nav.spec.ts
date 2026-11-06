@@ -12,7 +12,6 @@ import {
   svgDrawingMarkup,
   dismissBlockingRecoveryModal,
   gotoAndDismissRecovery,
-  openServerSwitcher,
   refreshServer,
   openSettings,
   writeLocalConfig,
@@ -271,182 +270,32 @@ test("Realm row menu reaches the Circle directory", async ({ page }) => {
   await expect(page.locator("[class~=\"circle-realm\"]")).toBeVisible();
 });
 
-test("realm sidebar separates contact-based direct chats", async ({ page }) => {
-  const shell = page.locator(".shell.app").last();
-  await expect(shell.locator("[class~=\"realm-tree-list\"]")).toContainText(
-    "Arkret Demo Realm",
-  );
-  await expect(shell.locator(".sidebar-tab-toolbar")).toBeVisible();
-  await expect(shell.locator(".sidebar-tab-search input")).toBeVisible();
-  await expect(shell.locator(".add-realm-cta")).toBeVisible();
-  await expect(
-    shell.locator(".manage-home-link"),
-  ).toBeVisible();
+test("Contacts list selects human and agent details before opening their direct conversations", async ({ page }) => {
   await dismissBlockingRecoveryModal(page);
-  await shell.locator(".manage-home-link").click();
-  await expect(page).toHaveURL(/\/realms\/manage$/);
-  const realmsManagePage = shell.locator(".realm-manage-page");
-  await expect(realmsManagePage).toBeVisible();
-  await expect(realmsManagePage).toContainText("Arkret Demo Realm");
-  await expect(realmsManagePage.locator(".realm-manage-hero")).toHaveCount(0);
-  await expect(realmsManagePage.locator('input[type="checkbox"]')).toHaveCount(
-    0,
-  );
-  await expect(realmsManagePage).not.toContainText(/\d+\s+rows/);
-  const firstRealmRow = realmsManagePage
-    .locator(".realm-manage-row")
-    .first();
-  await expect(
-    firstRealmRow.getByRole("link", { name: "Open Realm", exact: true }),
-  ).toBeHidden();
-  await firstRealmRow.hover();
-  await expect(
-    firstRealmRow.getByRole("link", { name: "Open Realm", exact: true }),
-  ).toBeVisible();
-  await expect(
-    firstRealmRow.getByRole("link", { name: "Settings", exact: true }),
-  ).toBeVisible();
-  await expect(
-    firstRealmRow.getByRole("button", { name: "Leave", exact: true }),
-  ).toBeVisible();
-
-  await shell.getByRole("button", { name: "Contacts", exact: true }).click();
-
-  await expect(
-    shell.locator(".sidebar-tab-search input"),
-  ).toBeVisible();
-  await expect(shell.locator(".add-contact-cta")).toBeVisible();
-  await expect(shell.locator("[class~=\"contacts-sidebar-summary\"]")).toHaveCount(0);
-  const selfRow = shell.locator("[class~=\"contact-sidebar-self-row\"]");
-  await expect(selfRow).toContainText("alice:local.host");
-  await expect(shell.locator("[class~=\"contact-sidebar-self-badge\"]")).toHaveText(
-    "ME",
-  );
-  const selfAvatar = selfRow.locator("svg.contact-sidebar-user-avatar.generated-avatar");
-  const topbarAvatar = shell.locator(".topbar-account-avatar svg.generated-avatar, svg.topbar-account-avatar.generated-avatar");
-  await expect(selfAvatar).toBeVisible();
-  await expect(topbarAvatar).toBeVisible();
-  expect(await svgDrawingMarkup(selfAvatar)).toBe(
-    await svgDrawingMarkup(topbarAvatar),
-  );
-  await expect(selfRow).not.toContainText("Agents 1");
-  await expect(
-    shell.locator("[class~=\"contact-sidebar-self-agent-toggle\"]"),
-  ).toBeVisible();
-  await expect(shell.locator(".contact-sidebar-group").first()).toHaveClass(/\bcontact-sidebar-self-group\b/);
-  await expect(shell.locator("[class~=\"contact-sidebar-self-agents\"]")).toContainText(
-    "Alice Assistant",
-  );
-  const ownAgentRow = shell
-    .locator("[class~=\"contact-sidebar-agent-row\"]")
-    .filter({ hasText: "Alice Assistant" });
-  await expect(
-    ownAgentRow.locator("img.contact-sidebar-agent-avatar, .contact-sidebar-agent-avatar img"),
-  ).toHaveCount(1);
-  await expect(ownAgentRow).not.toContainText("active");
-  await expect(ownAgentRow).not.toContainText("paused");
-  await expect(ownAgentRow).toHaveCSS("min-height", "34px");
-  await expect(
-    shell.locator("[class~=\"contact-sidebar-agent-toggle\"]").first(),
-  ).toContainText("Agents 1");
-  await shell.locator("[class~=\"contact-sidebar-agent-toggle\"]").first().click();
-  await expect(
-    shell.locator("[class~=\"contact-sidebar-contact-agents\"]"),
-  ).toContainText("Bob Helper");
-  await expect(
-    shell
-      .locator("[class~=\"contact-sidebar-agent-row\"]")
-      .filter({ hasText: "Bob Helper" })
-      .locator("img.contact-sidebar-agent-avatar, .contact-sidebar-agent-avatar img"),
-  ).toHaveCount(1);
+  await page.locator(".rail-contacts").click();
+  const list = page.locator(".contact-list-items");
+  await expect(list).toContainText("Alice Assistant");
+  await expect(list).toContainText("Bob Helper");
   const bobPrincipalToken = BOB_ACCOUNT_ID.principal_id.split(":").at(-1)!;
   const bobDisplayLabel = `ak:did_core:webvh:${bobPrincipalToken.slice(0, 8)}...${bobPrincipalToken.slice(-6)}`;
-  const bobContactRow = shell.getByRole("button", { name: `Chat with ${bobDisplayLabel}`, exact: true });
-  await expect(bobContactRow).toHaveAccessibleDescription(
-    `Principal: ${BOB_ACCOUNT_ID.principal_id} · Station: ${BOB_ACCOUNT_ID.station_id}`,
-  );
-  await expect(bobContactRow).toContainText("DM");
-  await expect(bobContactRow).toHaveAttribute(
-    "aria-label",
-    `Chat with ${bobDisplayLabel}`,
-  );
-  await expect(
-    shell
-      .locator("[class~=\"direct-conversation-row\"]")
-      .filter({ hasText: "ak:did_core:web:carol.example" }),
-  ).toContainText("pending");
-  const isDirectResolver = (request: import("@playwright/test").Request) =>
-    request.method() === "POST" &&
-    new URL(request.url()).pathname === "/_arkret/self/direct-conversations/resolve";
-  // The active Direct view revalidates its own authority. Track the real
-  // requests through either terminal network event: retiring the view can
-  // abort a response after headers, without resolving Response.finished().
-  const pendingHumanResolvers = new Set<import("@playwright/test").Request>();
-  const failedHumanResolvers = new Set<import("@playwright/test").Request>();
-  const observeHumanResolver = (request: import("@playwright/test").Request) => {
-    if (isDirectResolver(request)) pendingHumanResolvers.add(request);
-  };
-  const finishHumanResolver = (request: import("@playwright/test").Request) => {
-    pendingHumanResolvers.delete(request);
-  };
-  const failHumanResolver = (request: import("@playwright/test").Request) => {
-    if (!pendingHumanResolvers.has(request)) return;
-    failedHumanResolvers.add(request);
-    pendingHumanResolvers.delete(request);
-  };
-  page.on("request", observeHumanResolver);
-  page.on("requestfinished", finishHumanResolver);
-  page.on("requestfailed", failHumanResolver);
-  const humanRequest = page.waitForRequest(isDirectResolver);
-  await bobContactRow.click();
-  const resolvedHumanRequest = await humanRequest;
-  expect(resolvedHumanRequest.postDataJSON().peer).toEqual({
-    kind: "human", account_id: BOB_ACCOUNT_ID,
-  });
-  const humanResponse = await resolvedHumanRequest.response();
-  expect(humanResponse?.status()).toBe(200);
-  expect(await humanResponse!.finished()).toBeNull();
-  await expect(page).toHaveURL(
-    /\/direct\/ak:realm:AUEAoXMJeJWBETvkqm7gk4imduk7g-l8bim19OPFQDaO\/ak:strand:Ae9PN2rTd0Dojs9yS8iLnfheJtjSEZ3mgDDyONpztHUd$/,
-  );
-  await page.locator("[class~=\"sidebar\"] a.sidebar-nav-item[href=\"/\"]").click();
-  await expect(page.locator("[class~=\"dashboard-panel\"]")).toBeVisible();
-  await expect.poll(() => pendingHumanResolvers.size).toBe(0);
-  // Only normal Chromium cancellation may retire a background revalidation;
-  // other network errors must remain visible failures.
-  for (const failed of failedHumanResolvers) {
-    expect(failed.failure()?.errorText).toBe("net::ERR_ABORTED");
-  }
-  page.off("request", observeHumanResolver);
-  page.off("requestfinished", finishHumanResolver);
-  page.off("requestfailed", failHumanResolver);
-  await shell.getByRole("button", { name: "Contacts", exact: true }).click();
-  // Do not filter by the expected peer: a wrong actual request must fail.
-  const helperRequest = page.waitForRequest(isDirectResolver);
-  await shell
-    .locator("[class~=\"contact-sidebar-agent-row\"]")
-    .filter({ hasText: "Bob Helper" })
-    .click();
-  expect((await helperRequest).postDataJSON().peer).toEqual({
-    kind: "agent", actor_id: { kind: "account", account_id: BOB_HELPER_ACCOUNT_ID },
-    controller_account_id: BOB_ACCOUNT_ID,
+  await list.locator(".contact-list-item").filter({ hasText: bobDisplayLabel }).click();
+  const detail = page.locator(".contacts-detail-pane .contact-row");
+  await expect(detail).toHaveAccessibleDescription(`Principal: ${BOB_ACCOUNT_ID.principal_id} · Station: ${BOB_ACCOUNT_ID.station_id}`);
+  const humanRequest = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === "/_arkret/self/direct-conversations/resolve");
+  await detail.locator(".contact-message").click();
+  expect((await humanRequest).postDataJSON().peer).toEqual({ kind: "human", account_id: BOB_ACCOUNT_ID });
+  await expect(page).toHaveURL(/\/direct\//);
+  await page.locator(".rail-brand").click();
+  await expect(page.locator(".dashboard-panel")).toBeVisible();
+  await page.locator(".rail-contacts").click();
+  await list.locator(".contact-agent-list-item").filter({ hasText: "Bob Helper" }).click();
+  await expect(page.locator(".contact-agent-detail")).toContainText("Bob Helper");
+  const agentRequest = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === "/_arkret/self/direct-conversations/resolve");
+  await page.locator(".contact-agent-message").click();
+  expect((await agentRequest).postDataJSON().peer).toEqual({
+    kind: "agent", actor_id: { kind: "account", account_id: BOB_HELPER_ACCOUNT_ID }, controller_account_id: BOB_ACCOUNT_ID,
   });
   await expect(page).toHaveURL(`/direct/${DIRECT_BOB_HELPER_REALM}/${DIRECT_BOB_HELPER_STRAND}`);
-  await shell.getByRole("button", { name: "Contacts", exact: true }).click();
-  await shell.locator(".manage-home-link").click();
-  await expect(page).toHaveURL(/\/contacts\/manage$/);
-  const contactsManagePage = shell.locator(".realm-manage-page");
-  await expect(contactsManagePage).toBeVisible();
-  const recipientDescription = `Principal: ${BOB_ACCOUNT_ID.principal_id} · Station: ${BOB_ACCOUNT_ID.station_id}`;
-  const managedBob = contactsManagePage.locator(".contacts-manage-row").filter({
-    has: page.getByText(recipientDescription, { exact: true }),
-  });
-  await expect(managedBob).toHaveAccessibleDescription(recipientDescription);
-  await expect(managedBob).toContainText(bobDisplayLabel);
-  await expect(contactsManagePage.locator(".realm-manage-hero")).toHaveCount(0);
-  await expect(
-    contactsManagePage.locator('input[type="checkbox"]'),
-  ).toHaveCount(0);
 });
 
 test("owned agent opens an independent two-principal Direct Conversation Realm", async ({
@@ -454,7 +303,7 @@ test("owned agent opens an independent two-principal Direct Conversation Realm",
 }) => {
   const shell = page.locator(".shell.app").last();
   await dismissBlockingRecoveryModal(page);
-  await shell.getByRole("button", { name: "Contacts", exact: true }).click();
+  await shell.locator(".rail-contacts").click();
   let directRequestBody: Record<string, unknown> | null = null;
   let sidecarEnsureCount = 0;
   await page.route(
@@ -473,10 +322,9 @@ test("owned agent opens an independent two-principal Direct Conversation Realm",
       response.url().endsWith("/_arkret/self/direct-conversations/resolve"),
     { timeout: 20_000 },
   );
-  const ownedAgentRow = shell
-    .locator("[class~=\"contact-sidebar-agent-row\"]")
-    .filter({ hasText: "Alice Assistant" });
+  const ownedAgentRow = shell.locator(".contact-agent-list-item").filter({ hasText: "Alice Assistant" });
   await ownedAgentRow.click();
+  await shell.locator(".contact-agent-message").click();
   await expect((await directResponse).ok()).toBeTruthy();
   expect(directRequestBody).toEqual({
     peer: {
@@ -498,6 +346,7 @@ test("new space strand uses sidebar realm context without home realm picker", as
   page,
 }) => {
   await refreshServer(page);
+  await assertRealmTreeSeeded(page);
   const shell = page.locator(".shell.app").last();
   await expect(shell.locator("[class~=\"realm-tree-list\"]")).toContainText(
     "Arkret Demo Realm",
@@ -523,72 +372,13 @@ test("new space strand uses sidebar realm context without home realm picker", as
   await expect(setupPanel.locator("[class~=\"new-space-submit-button\"]")).toBeEnabled();
 });
 
-test("realm header collapses and sidebar edge resizes the menu", async ({
-  page,
-}) => {
-  const sidebar = page.locator("[class~=\"sidebar\"]");
-  const mainView = page.locator(".main.realm");
-  const toggle = page.locator("[class~=\"sidebar-collapse-toggle\"]");
-  const resizeHandle = page.locator("[class~=\"sidebar-resize-handle\"]");
-  const initialBox = await sidebar.boundingBox();
-  const mainBox = await mainView.boundingBox();
-  const toggleBox = await toggle.boundingBox();
-  const handleBox = await resizeHandle.boundingBox();
-
-  expect(initialBox).not.toBeNull();
-  expect(mainBox).not.toBeNull();
-  expect(toggleBox).not.toBeNull();
-  expect(handleBox).not.toBeNull();
-  expect(toggleBox!.x).toBeLessThan(mainBox!.x + 60);
-
-  await page.mouse.move(handleBox!.x + handleBox!.width / 2, handleBox!.y + 24);
-  await page.mouse.down();
-  await page.mouse.move(340, handleBox!.y + 24, { steps: 6 });
-  await page.mouse.up();
-
-  await expect
-    .poll(async () => (await sidebar.boundingBox())?.width ?? 0)
-    .toBeGreaterThan(initialBox?.width ?? 0);
-  const resizedWidth = (await sidebar.boundingBox())?.width ?? 0;
-
+test("icon rail retains its width and omits the server picker", async ({ page }) => {
+  const rail = page.locator(".navigation-rail");
+  const width = (await rail.boundingBox())!.width;
+  await expect(page.locator(".server-switch-button, .sidebar-resize-handle, .sidebar-collapse-toggle")).toHaveCount(0);
   await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(page.locator(".shell.app").last()).toBeVisible({
-    timeout: 120_000,
-  });
-  await expect
-    .poll(
-      async () => (await page.locator("[class~=\"sidebar\"]").boundingBox())?.width ?? 0,
-    )
-    .toBeGreaterThan(300);
-  const reloadedWidth =
-    (await page.locator("[class~=\"sidebar\"]").boundingBox())?.width ?? 0;
-  expect(Math.abs(reloadedWidth - resizedWidth)).toBeLessThan(24);
-
-  await toggle.click();
-  await expect
-    .poll(async () => (await sidebar.boundingBox())?.width ?? 0)
-    .toBeLessThan(100);
-  await expect(resizeHandle).toBeHidden();
-});
-
-test("loopback proxy server aliases are normalized to local.host", async ({
-  page,
-}) => {
-  await writeLocalConfig(page, { server_url: "http://127.0.0.1:8787/" });
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(page.locator(".shell.app").last()).toBeVisible({
-    timeout: 120_000,
-  });
-
-  await openServerSwitcher(page);
-  await expect(page.locator(".server-switch-menu")).toContainText(
-    "https://local.host",
-  );
-  await expect(page.locator("[class~=\"server-url-input\"]")).toHaveCount(0);
-  await expect(page.locator("[class~=\"connect-button\"]")).toHaveCount(0);
-  await expect(page.locator(".topbar-context")).not.toContainText(
-    "https://local.host",
-  );
+  await expect(rail).toBeVisible();
+  expect((await rail.boundingBox())!.width).toBe(width);
 });
 
 test("topbar breadcrumbs avoid duplicated route and server context", async ({
@@ -640,28 +430,9 @@ test("dashboard summarizes unread notifications from sync projection", async ({
   );
 });
 
-test("server switcher hides custom endpoint controls", async ({ page }) => {
-  await openServerSwitcher(page);
-
-  await expect(page.locator("[class~=\"server-url-input\"]")).toHaveCount(0);
-  await expect(page.locator("[class~=\"connect-button\"]")).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Services" })).toHaveCount(0);
-});
-
-test("server switcher keeps only server choices after expand", async ({
-  page,
-}) => {
-  await openServerSwitcher(page);
-
-  await expect(page.locator("[class~=\"server-switch-menu\"]")).toBeVisible();
-  await expect(page.locator("[class~=\"server-option\"]")).toHaveCount(1);
-  await expect(page.locator("[class~=\"server-switch-menu\"]")).toContainText(
-    "https://local.host",
-  );
-  await expect(page.locator("[class~=\"server-switch-menu\"]")).not.toContainText(
-    "Current data home",
-  );
-  await expect(page.locator(".server-switch-menu")).not.toContainText(
-    "Refresh",
-  );
+test("server identity lives in the account menu", async ({ page }) => {
+  await dismissBlockingRecoveryModal(page);
+  await page.locator(".navigation-rail .account-menu-button").click();
+  await expect(page.locator(".account-menu__server")).toHaveText("https://local.host");
+  await expect(page.locator(".server-switch-menu, .server-switch-button")).toHaveCount(0);
 });

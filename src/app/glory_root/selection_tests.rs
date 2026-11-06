@@ -76,13 +76,15 @@ fn root_realm_selection_survives_history_routes_filters_control_and_respects_acc
     );
     install_realm_selection(app.scope(), context.clone());
     let ui = crate::app::shell_state::ShellState::new(app.scope(), &context);
-    app.mount(crate::app::sidebar::sidebar(
-        app.scope(),
-        context.clone(),
-        ui,
-    ))
+    app.mount(glory::ui::group().fill(vec![
+        crate::app::sidebar::sidebar(app.scope(), context.clone(), ui.clone()),
+        crate::app::sidebar::workspace_list(app.scope(), context.clone(), ui),
+    ]))
     .unwrap();
-    assert_eq!(active_rows(&app), vec!["First"]);
+    assert!(
+        active_rows(&app).is_empty(),
+        "Settings owns its own section list"
+    );
     assert!(!context.realm_events_route_enabled.get_untracked());
     context.route.revise(|route| {
         *route = Route::Realm {
@@ -110,17 +112,15 @@ fn root_realm_selection_survives_history_routes_filters_control_and_respects_acc
         }
     });
     app.flush().unwrap();
-    assert_eq!(active_rows(&app), vec!["Second"]);
+    assert!(active_rows(&app).is_empty());
+    assert_eq!(context.selected_realm_id.get_untracked(), b);
     assert!(!context.realm_events_route_enabled.get_untracked());
     context
         .selected_realm_id
         .revise(|selected| *selected = a.clone());
     app.flush().unwrap();
-    assert_eq!(
-        active_rows(&app),
-        vec!["First"],
-        "selection itself updates the sidebar outside a Realm route"
-    );
+    assert!(active_rows(&app).is_empty());
+    assert_eq!(context.selected_realm_id.get_untracked(), a);
     context.route.revise(|route| {
         *route = Route::Realm {
             realm_id: control.clone(),

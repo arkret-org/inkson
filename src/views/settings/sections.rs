@@ -135,11 +135,8 @@ impl SettingsSection {
 // 隐私 / 通知 / 外观与语言 / 高级. `Mimi` is intentionally absent from every
 // group — the MIMI interop test surface stays reachable only by direct route
 // so it does not leak into normal settings navigation (design §3.3).
-pub(super) const SETTINGS_ACCOUNT_GROUP: &[SettingsSection] = &[
-    SettingsSection::Account,
-    SettingsSection::Agents,
-    SettingsSection::Server,
-];
+pub(super) const SETTINGS_ACCOUNT_GROUP: &[SettingsSection] =
+    &[SettingsSection::Account, SettingsSection::Server];
 pub(super) const SETTINGS_SECURITY_GROUP: &[SettingsSection] = &[
     SettingsSection::Devices,
     SettingsSection::Recovery,

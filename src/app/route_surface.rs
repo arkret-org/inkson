@@ -138,6 +138,9 @@ pub(super) fn surface(
         );
     }
     let content = match &route {
+        Route::SettingsSection { section, .. } if section == "agents" => {
+            crate::views::agents::page(scope, context.clone(), route.clone())
+        }
         Route::Login | Route::AuthCallback => {
             crate::views::login::page(scope, context.clone(), route.clone())
         }

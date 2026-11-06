@@ -533,6 +533,9 @@ mod preferences;
 mod profile;
 
 pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
+    if matches!(&route, Route::SettingsSection { section, .. } if section == "agents") {
+        return crate::views::agents::page(scope, context, route);
+    }
     let active_section = SettingsSection::from_slug(route.settings_section());
     let nav_filter = scope.cage(String::new());
     let nav_context = context.clone();

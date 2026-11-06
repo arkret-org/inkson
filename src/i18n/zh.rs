@@ -174,6 +174,8 @@ fn add_generic_error_keys_zh(dict: &mut TranslationDict) {
 /// Build Chinese translation dictionary.
 pub fn chinese_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(UiLocale::Zh);
+    dict.set("contacts.my_agent", "我的智能体");
+    dict.set("nav.realms", "领域");
     dict.set("search.result_source", "搜索结果来源");
     dict.set("search.source_event", "事件");
     dict.set("search.source_commit", "覆盖提交");

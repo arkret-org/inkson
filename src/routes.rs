@@ -216,6 +216,9 @@ impl std::fmt::Display for Route {
             Self::SettingsDevices => ("/settings/devices".to_owned(), vec![]),
             Self::SettingsDevicesPair => ("/settings/devices/pair".to_owned(), vec![]),
             Self::SettingsRecovery => ("/settings/recovery".to_owned(), vec![]),
+            Self::SettingsSection { section, filter } if section == "agents" => {
+                ("/agents".to_owned(), vec![("filter", filter.as_str())])
+            }
             Self::SettingsSection { section, filter } => (
                 format!("/settings/{section}", section = encode_segment(section)),
                 vec![("filter", filter.as_str())],
@@ -350,6 +353,10 @@ impl std::str::FromStr for Route {
             .into_owned()
             .collect::<std::collections::HashMap<_, _>>();
         match parts.as_slice() {
+            ["agents"] => Ok(Self::SettingsSection {
+                section: "agents".into(),
+                filter: query.get("filter").cloned().unwrap_or_default(),
+            }),
             ["kanban", realm_id, "board", board_id, "task", task_id] => Ok(Self::KanbanBoardTask {
                 realm_id: decode_segment(realm_id)?,
                 board_id: decode_segment(board_id)?,
@@ -745,6 +752,23 @@ mod tests {
             }
             .realm_admin_section(),
             None
+        );
+    }
+}
+
+#[cfg(test)]
+mod agents_route_tests {
+    use super::Route;
+    #[test]
+    fn agents_have_a_top_level_url_with_filter_roundtrip() {
+        let route: Route = "/agents?filter=paused".parse().unwrap();
+        assert_eq!(route.to_string(), "/agents?filter=paused");
+        assert_eq!(
+            route,
+            Route::SettingsSection {
+                section: "agents".into(),
+                filter: "paused".into()
+            }
         );
     }
 }

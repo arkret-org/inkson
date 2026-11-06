@@ -5,18 +5,13 @@ use std::rc::Rc;
 use glory::prelude::*;
 
 pub(super) struct ShellState {
-    pub collapsed: Cage<bool>,
-    pub width: Cage<f64>,
-    pub resizing: Cage<bool>,
     pub mobile_open: Cage<bool>,
     pub mobile_query: Cage<String>,
     pub notifications_open: Cage<bool>,
     pub shortcut_open: Cage<bool>,
     pub account_open: Cage<bool>,
-    pub server_open: Cage<bool>,
     pub search_open: Cage<bool>,
     pub search_query: Cage<String>,
-    pub tab: Cage<String>,
     pub realm_query: Cage<String>,
     pub contact_query: Cage<String>,
     pub contacts_loaded: Cage<bool>,
@@ -37,26 +32,15 @@ pub(super) struct ShellState {
     pub pending_delete: Cage<Option<(String, String)>>,
 }
 impl ShellState {
-    pub fn new(scope: &Scope, context: &crate::presentation::InksonContext) -> Rc<Self> {
+    pub fn new(scope: &Scope, _context: &crate::presentation::InksonContext) -> Rc<Self> {
         Rc::new(Self {
-            collapsed: scope.cage(context.state_store.read(|store| {
-                store.load_plain_local_data("sidebar_collapsed").as_deref() == Some("true")
-            })),
-            width: scope.cage(
-                context
-                    .state_store
-                    .read(super::sidebar_width::load_sidebar_width_preference),
-            ),
-            resizing: scope.cage(false),
             mobile_open: scope.cage(false),
             mobile_query: scope.cage(String::new()),
             notifications_open: scope.cage(false),
             shortcut_open: scope.cage(false),
             account_open: scope.cage(false),
-            server_open: scope.cage(false),
             search_open: scope.cage(false),
             search_query: scope.cage(String::new()),
-            tab: scope.cage("collaboration".into()),
             realm_query: scope.cage(String::new()),
             contact_query: scope.cage(String::new()),
             contacts_loaded: scope.cage(false),

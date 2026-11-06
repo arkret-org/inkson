@@ -565,7 +565,7 @@ test("account settings split account/server info and surface Agents", async ({ p
   await expect(page).toHaveURL(/\/settings\/server(?:\?filter=)?$/);
   await expect(byClass(page, "transport-invariant")).toBeVisible();
 
-  // My Agents lives inside account settings — no feature flag — and
+  // My Agents has its own primary navigation entry and
   // exposes the participation policy editor.
   let agentListRequests = 0;
   page.on("request", (request) => {
@@ -576,8 +576,8 @@ test("account settings split account/server info and surface Agents", async ({ p
       agentListRequests += 1;
     }
   });
-  await byClass(page, "settings-nav-item-agents").click();
-  await expect(page).toHaveURL(/\/settings\/agents(?:\?filter=)?$/);
+  await byClass(page, "rail-agents").click();
+  await expect(page).toHaveURL(/\/agents(?:\?filter=)?$/);
   await expect(byClass(page, "agent-admin")).toBeVisible();
   await expect(byClass(page, "agent-admin-list").getByText(/\d+ shown/)).toHaveCount(0);
   await expect(byClass(page, "agent-admin-toggle-inactive-button")).toHaveCount(0);
@@ -591,9 +591,9 @@ test("account settings split account/server info and surface Agents", async ({ p
   await expect(byClass(page, "agent-admin-row")).toHaveCount(0);
   await expect(byClass(page, "agent-admin-row").filter({ hasText: "deactivated" })).toHaveCount(0);
   await byClass(page, "agent-admin-filter-paused").click();
-  await expect(page).toHaveURL(/\/settings\/agents\?filter=paused$/);
+  await expect(page).toHaveURL(/\/agents\?filter=paused$/);
   await byClass(page, "agent-admin-filter-all").click();
-  await expect(page).toHaveURL(/\/settings\/agents\?filter=all$/);
+  await expect(page).toHaveURL(/\/agents\?filter=all$/);
   await expect.poll(() => agentListRequests, { timeout: 5_000 }).toBe(1);
   await page.waitForTimeout(750);
   expect(agentListRequests).toBe(1);
@@ -660,9 +660,9 @@ test("account settings split account/server info and surface Agents", async ({ p
   expect(scrollLayout.rootOverflowY).toBe("hidden");
   expect(scrollLayout.bodyOverflowY).toBe("hidden");
   expect(scrollLayout.viewportScrollbarGap).toBe(0);
-  expect(scrollLayout.realmOverflowY).toBe("auto");
+  expect(scrollLayout.realmOverflowY).toBe("hidden");
   expect(scrollLayout.realmScrollTop).toBe(0);
-  expect(scrollLayout.settingsContentOverflowY).toBe("hidden");
+  expect(scrollLayout.settingsContentOverflowY).toBeNull();
   expect(scrollLayout.settingsContentScrollTop).toBe(0);
   expect(scrollLayout.detailOverflowY).toBe("auto");
   expect(scrollLayout.detailScrollTop).toBeGreaterThan(0);
@@ -693,7 +693,7 @@ test("account settings split account/server info and surface Agents", async ({ p
 });
 
 async function confirmAssistantDeactivation(page: import("@playwright/test").Page) {
-  await gotoAndDismissRecovery(page, "/settings/agents?filter=all");
+  await gotoAndDismissRecovery(page, "/agents?filter=all");
   await byClass(page, "agent-admin-row").filter({ hasText: "assistant" }).click();
   await byClass(page, "agent-admin-deactivate-button").click();
   await byClass(page, "agent-admin-deactivate-confirm-input").getByRole("textbox").fill("DEACTIVATE");
@@ -744,7 +744,7 @@ test("agent deactivation submits controller-signed lifecycle without revoke bund
   await expect(byClass(page, "agent-admin-row").filter({ hasText: "assistant" })).toHaveCount(0);
   // Ordinary filters intentionally remove terminal Agents. Inspect the newly
   // deactivated Agent through the existing audit deep link, then select it.
-  await gotoAndDismissRecovery(page, "/settings/agents?filter=deactivated");
+  await gotoAndDismissRecovery(page, "/agents?filter=deactivated");
   const terminalRow = byClass(page, "agent-admin-row").filter({ hasText: "assistant" });
   await expect(terminalRow).toContainText("Deactivated");
   await terminalRow.click();
@@ -776,8 +776,8 @@ for (const [binding, message] of [
 test("deactivated Agents are available only through the audit deep link", async ({
   page,
 }) => {
-  await gotoAndDismissRecovery(page, "/settings/agents?filter=deactivated");
-  await expect(page).toHaveURL(/\/settings\/agents\?filter=deactivated$/);
+  await gotoAndDismissRecovery(page, "/agents?filter=deactivated");
+  await expect(page).toHaveURL(/\/agents\?filter=deactivated$/);
   await expect(byClass(page, "agent-admin")).toBeVisible();
   await expect(byClass(page, "agent-admin-filter-deactivated")).toHaveCount(0);
   await expect(byClass(page, "agent-admin-row")).toHaveCount(1);
@@ -793,7 +793,7 @@ test("active Agents never expose stale pairing credentials", async ({ page }) =>
   await page.reload({ waitUntil: "domcontentloaded" });
   await dismissBlockingRecoveryModal(page);
 
-  await gotoAndDismissRecovery(page, "/settings/agents");
+  await gotoAndDismissRecovery(page, "/agents");
   await expect(byClass(page, "agent-admin")).toBeVisible();
 
   await byClass(page, "agent-admin-row").filter({ hasText: "assistant" }).click();
@@ -837,7 +837,7 @@ test("expired Agent pairing renews in place with a fresh handle", async ({ page 
   await page.reload({ waitUntil: "domcontentloaded" });
   await dismissBlockingRecoveryModal(page);
 
-  await gotoAndDismissRecovery(page, "/settings/agents");
+  await gotoAndDismissRecovery(page, "/agents");
   await expect(byClass(page, "agent-admin")).toBeVisible();
   await byClass(page, "agent-admin-row").filter({ hasText: "summary" }).click();
   await expect(byClass(page, "agent-admin-pairing-card")).toBeVisible();

@@ -29,13 +29,6 @@ pub(super) fn refresh_connection_using(
         ConnectContext::for_application(&owner, context),
     );
 }
-pub(super) fn switch_server_and_connect(scope: &Scope, next: String, context: Rc<InksonContext>) {
-    let next = normalize_server_url(&next);
-    if !same_server_url(&context.base_url.get(), &next) {
-        select_server(next, context.clone());
-    }
-    refresh_connection(scope, context);
-}
 #[derive(Clone)]
 pub(super) struct ManualSessionRefreshContext {
     pub context: Rc<InksonContext>,

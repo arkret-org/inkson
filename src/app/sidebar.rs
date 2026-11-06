@@ -131,7 +131,7 @@ pub(super) fn sidebar_text_matches_query(normalized_query: &str, values: &[&str]
 /// existing authorization effective, while bootstrap-pending and expired
 /// agents stay in Settings → My Agents. Keeping this filter in one place
 /// ensures the initial load and the `owned_agents_rev`-driven reload agree.
-fn active_agents_only(
+pub(crate) fn active_agents_only(
     agents: Vec<arkret_sdk::AgentProjection>,
 ) -> Vec<arkret_sdk::AgentProjection> {
     agents
@@ -689,10 +689,7 @@ pub(super) fn ensure_default_push_token_provider() {
 use std::rc::Rc;
 
 use glory::prelude::*;
-use glory::render::{
-    DragPhase, Event, EventKind, FocusMode, Orientation, RangeCommand, RangeValue, Role,
-    SemanticId, Semantics,
-};
+use glory::render::{EventKind, Role, SemanticId, Semantics};
 
 use super::session_shell::{action, block, icon_action, nav};
 use super::shell_state::ShellState;
@@ -736,445 +733,227 @@ fn load_sidebar_contacts(scope: &Scope, context: &Rc<InksonContext>, ui: &Rc<She
     );
 }
 
+pub(super) fn is_agents_route(route: &Route) -> bool {
+    matches!(route, Route::SettingsSection { section, .. } if section == "agents")
+}
+
+pub(super) fn workspace_list_kind(route: &Route) -> Option<bool> {
+    match route {
+        Route::DirectConversation { .. } => Some(true),
+        Route::RealmsManage
+        | Route::Realm { .. }
+        | Route::Chat { .. }
+        | Route::Kanban
+        | Route::KanbanRealm { .. }
+        | Route::KanbanBoard { .. }
+        | Route::KanbanBoardTask { .. }
+        | Route::KanbanTask { .. }
+        | Route::Circles { .. }
+        | Route::CircleDetail { .. }
+        | Route::Setup
+        | Route::SetupSection { .. } => Some(false),
+        _ => None,
+    }
+}
+
 pub(super) fn sidebar(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
-    let tab = ui.tab;
-    let paging = reactive(
-        scope.bond({
-            let context = context.clone();
-            move || {
-                let _ = context.state_revision.get();
-                !context.token.get().trim().is_empty()
-                    && context
-                        .state_store
-                        .read(|store| store.sync_realm_list_after().is_some())
-            }
-        }),
-        {
-            let context = context.clone();
-            move |scope, available| {
-                if !available {
-                    return empty();
-                }
-                action(
-                    "sidebar-toolbar-action",
-                    context.translated(scope, "directory.load_more_realms"),
-                    {
-                        let context = context.clone();
-                        move || {
-                            context
-                                .state_store
-                                .write(|store| store.request_next_sync_realm_list_page())
-                        }
-                    },
-                )
-            }
-        },
+    use base64::Engine as _;
+    let logo = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD
+            .encode(include_bytes!("../../assets/arkret-logo-512.png"))
     );
-    let controls = reactive_distinct(ui.collapsed, {
-        let context = context.clone();
-        let ui = ui.clone();
-        move |scope, collapsed| {
-            if collapsed {
-                return empty();
-            }
-            let direct_context = context.clone();
-            let direct_ui = ui.clone();
-            let weak = scope.downgrade();
-            let tabs = block(
-                "sidebar-scope-toggle realm-tabs",
-                vec![
-                    Box::new(
-                        sapid::button()
-                            .unstyled()
-                            .class(scope.bond(move || {
-                                if tab.get() == "collaboration" {
-                                    "scope-chip active"
-                                } else {
-                                    "scope-chip"
-                                }
-                                .to_owned()
-                            }))
-                            .label(context.translated(scope, "nav.collaboration"))
-                            .on_press(move || tab.revise(|value| *value = "collaboration".into())),
-                    ) as View,
-                    Box::new(
-                        sapid::button()
-                            .unstyled()
-                            .class(scope.bond(move || {
-                                if tab.get() == "direct" {
-                                    "scope-chip active"
-                                } else {
-                                    "scope-chip"
-                                }
-                                .to_owned()
-                            }))
-                            .label(context.translated(scope, "nav.contacts"))
-                            .on_press(move || {
-                                tab.revise(|value| *value = "direct".into());
-                                if let Some(scope) = weak.upgrade() {
-                                    load_sidebar_contacts(&scope, &direct_context, &direct_ui);
-                                }
-                            }),
-                    ) as View,
-                ],
-            );
-            let toolbar = reactive_distinct(tab, {
-                let context = context.clone();
-                let ui = ui.clone();
-                move |scope, tab| {
-                    let direct = tab == "direct";
-                    let (value, label) = if direct {
-                        (ui.contact_query, "sidebar.search_contacts")
-                    } else {
-                        (ui.realm_query, "sidebar.search_realms")
-                    };
-                    let weak = scope.downgrade();
-                    let search_context = context.clone();
-                    let search_ui = ui.clone();
-                    let hint = reactive_distinct(scope.bond(move || value.get().is_empty()), {
-                        let context = context.clone();
-                        move |scope, empty_value| {
-                            if empty_value {
-                                paragraph(
-                                    "sidebar-search-placeholder",
-                                    context.translated(scope, label),
-                                )
-                            } else {
-                                empty()
-                            }
-                        }
-                    });
-                    let search = block(
-                        "sidebar-tab-search",
-                        vec![
-                            input_field(
-                                context.clone(),
-                                format!("sidebar-{tab}-query"),
-                                context.translated(scope, label),
-                                value,
-                                Purpose::Text,
-                            ),
-                            icon_action(
-                                "sidebar-toolbar-action sidebar-tab-search-submit",
-                                context.translated(scope, "sidebar.search"),
-                                "search",
-                                move || {
-                                    if direct && let Some(scope) = weak.upgrade() {
-                                        load_sidebar_contacts(&scope, &search_context, &search_ui);
-                                    }
-                                },
-                            ),
-                            hint,
-                        ],
-                    );
-                    let add = if direct {
-                        Route::Contacts
-                    } else {
-                        Route::SetupSection {
-                            section: "realms".into(),
-                        }
-                    };
-                    let manage = if direct {
-                        Route::ContactsManage
-                    } else {
-                        Route::RealmsManage
-                    };
-                    block(
-                        "sidebar-tab-toolbar",
-                        vec![
-                            search,
-                            icon_link(
-                                context.clone(),
-                                add,
-                                if direct {
-                                    "sidebar-toolbar-action sidebar-toolbar-link add-contact-cta"
-                                } else {
-                                    "sidebar-toolbar-action sidebar-toolbar-link add-realm-cta"
-                                },
-                                context.translated(
-                                    scope,
-                                    if direct {
-                                        "contacts.empty_add"
-                                    } else {
-                                        "setup.new_realm"
-                                    },
-                                ),
-                                if direct { "user-plus" } else { "plus" },
-                            ),
-                            icon_link(
-                                context.clone(),
-                                manage,
-                                "sidebar-toolbar-action sidebar-toolbar-link manage-home-link",
-                                context.translated(
-                                    scope,
-                                    if direct {
-                                        "manage.contacts_title"
-                                    } else {
-                                        "manage.realms_title"
-                                    },
-                                ),
-                                "home",
-                            ),
-                        ],
-                    )
-                }
-            });
-            block("sidebar-tab-controls", vec![tabs, toolbar])
-        }
-    });
-    let rows = reactive_distinct(tab, {
-        let context = context.clone();
-        let ui = ui.clone();
-        move |scope, tab| {
-            if tab == "direct" {
-                contacts(scope, context.clone(), ui.clone())
-            } else {
-                realm_rows(scope, context.clone(), ui.clone())
-            }
-        }
-    });
-    let description = scope.bond({
-        let context = context.clone();
-        move || crate::config::normalize_server_url(&context.base_url.get())
-    });
-    let server_menu_source = scope.bond({
-        let ui = ui.clone();
-        move || (ui.server_open.get(), ui.collapsed.get())
-    });
-    let server = reactive(server_menu_source, {
-        let context = context.clone();
-        let ui = ui.clone();
-        move |scope, (open, collapsed)| {
-            if !open || collapsed {
-                return empty();
-            }
-            let config = context.config_store.get().load();
-            let base = context.base_url.get();
-            block(
-                "server-switch-menu",
-                vec![block(
-                    "server-option-list",
-                    super::server_options_for(&base, &config.stations)
-                        .into_iter()
-                        .map(|url| {
-                            let current = crate::config::same_server_url(&url, &base);
-                            let weak = scope.downgrade();
-                            let context = context.clone();
-                            let ui = ui.clone();
-                            let mut content = vec![Box::new(
-                                text()
-                                    .class("server-option-text server-option-main mono")
-                                    .content(url.clone()),
-                            ) as View];
-                            if current {
-                                content.push(Box::new(
-                                    text().class("pill muted xs").content("current"),
-                                ));
-                            }
-                            Box::new(
-                                sapid::button()
-                                    .unstyled()
-                                    .class(if current {
-                                        "server-option active"
-                                    } else {
-                                        "server-option"
-                                    })
-                                    .name(format!("Switch to {url}"))
-                                    .fill(content)
-                                    .on_press(move || {
-                                        ui.server_open.revise(|value| *value = false);
-                                        if let Some(scope) = weak.upgrade() {
-                                            super::connection_handlers::switch_server_and_connect(
-                                                &scope,
-                                                url.clone(),
-                                                context.clone(),
-                                            );
-                                        }
-                                    }),
-                            ) as View
-                        })
-                        .collect(),
-                )],
-            )
-        }
-    });
-    let open = ui.server_open;
-    let disclosure = scope.bond(move || {
-        Some(Box::new(Semantics {
-            expanded: Some(open.get()),
-            ..Default::default()
-        }))
-    });
-    let chevron = glory::ui::when(open, || {
-        crate::components::icons::ui_icon_with_class("chevron-up", "ui-icon server-switch-state")
-    })
-    .otherwise(|| {
-        crate::components::icons::ui_icon_with_class("chevron-down", "ui-icon server-switch-state")
-    });
-    let server_toggle = {
-        let ui = ui.clone();
-        Box::new(
-            glory::ui::button()
-                .class("server-switch-button")
-                .name("Switch server")
-                .semantics(disclosure)
-                .fill(vec![
-                    crate::components::icons::ui_icon_with_class(
-                        "server",
-                        "ui-icon server-switch-icon",
-                    ),
-                    Box::new(
-                        text()
-                            .class("server-switch-title server-option-main")
-                            .content(description),
-                    ),
-                    Box::new(chevron),
-                ])
-                .on(EventKind::Activate, move |_| {
-                    ui.server_open.revise(|value| *value = !*value);
-                    ui.account_open.revise(|value| *value = false);
-                }),
-        ) as View
-    };
-    let brand = {
-        let context = context.clone();
-        Box::new(
-            internal_link()
-                .class("brand")
-                .target(Route::Dashboard.to_string())
-                .name(context.translated(scope, "app.brand.home"))
-                .fill(vec![
-                    paragraph("logo", "⌘"),
-                    block(
-                        "product-meta",
-                        vec![paragraph("product-name", "Inkson | Arkret")],
-                    ),
-                ])
-                .on(EventKind::Activate, move |_| {
-                    context.navigate(Route::Dashboard)
-                }),
-        ) as View
-    };
-    let route = context.route;
-    let home = Box::new(
+    let home_context = context.clone();
+    let brand = Box::new(
         internal_link()
+            .class("rail-link rail-brand")
             .target(Route::Dashboard.to_string())
-            .class(scope.bond(move || {
-                if route.get() == Route::Dashboard {
-                    "sidebar-nav-item is-active"
-                } else {
-                    "sidebar-nav-item"
-                }
-                .to_owned()
-            }))
-            .fill(vec![
-                block("sidebar-nav-icon", vec![crate::components::ui_icon("home")]),
-                paragraph("grow", context.translated(scope, "nav.dashboard")),
-            ])
-            .on(EventKind::Activate, {
-                let context = context.clone();
-                move |_| context.navigate(Route::Dashboard)
+            .name(context.translated(scope, "app.brand.home"))
+            .fill(image().class("rail-logo").source(logo).alt("Arkret"))
+            .on(EventKind::Activate, move |_| {
+                home_context.navigate(Route::Dashboard)
             }),
     ) as View;
-    let sidebar_id = match SemanticId::new("application-sidebar") {
-        Ok(id) => id,
-        Err(error) => {
-            scope.report_error(error);
-            return empty();
-        }
-    };
+    let mut links = vec![brand];
+    for (target, label, icon, section) in [
+        (Route::RealmsManage, "nav.realms", "folder", "realms"),
+        (Route::Contacts, "nav.contacts", "users", "contacts"),
+        (
+            Route::SettingsSection {
+                section: "agents".into(),
+                filter: String::new(),
+            },
+            "settings.section.agents",
+            "bot",
+            "agents",
+        ),
+        (Route::Settings, "nav.settings", "settings", "settings"),
+    ] {
+        let route = context.route;
+        let class = scope.bond(move || {
+            let route = route.get();
+            let active = match section {
+                "agents" => is_agents_route(&route),
+                "contacts" => matches!(
+                    route,
+                    Route::Contacts | Route::ContactsManage | Route::DirectConversation { .. }
+                ),
+                "realms" => {
+                    workspace_list_kind(&route) == Some(false)
+                        || matches!(
+                            route,
+                            Route::RealmMembers { .. }
+                                | Route::RealmAdmin { .. }
+                                | Route::RealmAdminSection { .. }
+                        )
+                }
+                _ => {
+                    !is_agents_route(&route)
+                        && (route.settings_section().is_some() || matches!(route, Route::Settings))
+                }
+            };
+            format!(
+                "rail-link rail-{section}{}",
+                if active { " is-active" } else { "" }
+            )
+        });
+        let rail_context = context.clone();
+        let name = context.translated(scope, label);
+        links.push(Box::new(
+            internal_link()
+                .target(target.to_string())
+                .class(class)
+                .name(name)
+                .semantics(scope.bond(move || {
+                    Some(Box::new(Semantics {
+                        current: class
+                            .get()
+                            .contains("is-active")
+                            .then_some(glory::render::Current::Page),
+                        ..Default::default()
+                    }))
+                }))
+                .fill(crate::components::icons::ui_icon_with_class(
+                    icon,
+                    "ui-icon rail-icon",
+                ))
+                .on(EventKind::Activate, move |_| {
+                    rail_context.navigate(target.clone())
+                }),
+        ) as View);
+    }
+    links.push(super::session_shell::account_menu(
+        scope,
+        context.clone(),
+        ui,
+    ));
     Box::new(
         view()
-            .class("sidebar")
+            .class("sidebar navigation-rail")
             .role(Role::Navigation)
             .name(context.translated(scope, "app.nav.main_navigation"))
-            .semantics(Some(Box::new(Semantics {
-                id: Some(sidebar_id),
-                ..Default::default()
-            })))
-            .fill(vec![
-                resize_handle(scope, context.clone(), ui.clone()),
-                block("sidebar-header", vec![brand]),
-                block("server-switch", vec![server_toggle, server]),
-                block("sidebar-nav-group", vec![home]),
-                block(
-                    "sidebar-nav-group realm-tab-group",
-                    vec![paging, controls, rows],
-                ),
-            ]),
+            .fill(links),
     )
 }
 
-fn resize_handle(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
-    let width = ui.width;
-    let resizing = ui.resizing;
-    let (id, controls) = match (
-        SemanticId::new("sidebar-resize"),
-        SemanticId::new("application-sidebar"),
-    ) {
-        (Ok(id), Ok(controls)) => (id, controls),
-        (Err(error), _) | (_, Err(error)) => {
-            scope.report_error(error);
-            return empty();
-        }
-    };
-    let semantics = scope.bond(move || {
-        Some(Box::new(Semantics {
-            id: Some(id.clone()),
-            splitter: Some(RangeValue {
-                min: super::MIN_SIDEBAR_WIDTH,
-                max: super::MAX_SIDEBAR_WIDTH,
-                value: width.get(),
-            }),
-            separator_axis: Some(Orientation::Vertical),
-            controls: Some(controls.clone()),
-            ..Default::default()
-        }))
+pub(super) fn workspace_list(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    ui: Rc<ShellState>,
+) -> View {
+    let kind = scope.bond({
+        let context = context.clone();
+        move || workspace_list_kind(&context.route.get())
     });
-    let drag_context = context.clone();
-    Box::new(
-        view()
-            .class("sidebar-resize-handle")
-            .role(Role::Separator)
-            .name("Resize navigation")
-            .focus(FocusMode::TabStop)
-            .semantics(semantics)
-            .on(EventKind::Range, move |event| {
-                if let Event::Range { command, .. } = event {
-                    let old = width.get_untracked();
-                    let next = super::clamp_sidebar_width(match command {
-                        RangeCommand::Decrease => old - 4.0,
-                        RangeCommand::Increase => old + 4.0,
-                        RangeCommand::PageDecrease => old - 40.0,
-                        RangeCommand::PageIncrease => old + 40.0,
-                        RangeCommand::Minimum => super::MIN_SIDEBAR_WIDTH,
-                        RangeCommand::Maximum => super::MAX_SIDEBAR_WIDTH,
-                        RangeCommand::Set(value) => value,
-                    });
-                    width.revise(|value| *value = next);
-                    context
-                        .state_store
-                        .write(|store| super::save_sidebar_width_preference(store, next));
-                }
-            })
-            .on(EventKind::Drag, move |event| {
-                if let Event::Drag { phase, x, .. } = event {
-                    match phase {
-                        DragPhase::Start | DragPhase::Move => {
-                            resizing.revise(|value| *value = true);
-                            width.revise(|value| *value = super::clamp_sidebar_width(x));
-                        }
-                        DragPhase::Drop | DragPhase::Cancel => {
-                            resizing.revise(|value| *value = false);
-                            drag_context.state_store.write(|store| {
-                                super::save_sidebar_width_preference(store, width.get_untracked())
-                            });
-                        }
+    reactive_distinct(kind, move |scope, kind| {
+        let Some(direct) = kind else {
+            return empty();
+        };
+        if direct {
+            load_sidebar_contacts(scope, &context, &ui);
+        }
+        let (value, label, title) = if direct {
+            (ui.contact_query, "sidebar.search_contacts", "nav.contacts")
+        } else {
+            (ui.realm_query, "sidebar.search_realms", "nav.realms")
+        };
+        let add = if direct {
+            Route::Contacts
+        } else {
+            Route::SetupSection {
+                section: "realms".into(),
+            }
+        };
+        let rows = if direct {
+            contacts(scope, context.clone(), ui.clone())
+        } else {
+            realm_rows(scope, context.clone(), ui.clone())
+        };
+        let paging = if direct {
+            empty()
+        } else {
+            reactive_distinct(
+                scope.bond({
+                    let context = context.clone();
+                    move || {
+                        let _ = context.state_revision.get();
+                        context
+                            .state_store
+                            .read(|store| store.sync_realm_list_after().is_some())
                     }
-                }
-            }),
-    )
+                }),
+                {
+                    let context = context.clone();
+                    move |scope, available| {
+                        if !available {
+                            return empty();
+                        }
+                        let next = context.clone();
+                        action(
+                            "sidebar-toolbar-action",
+                            context.translated(scope, "directory.load_more_realms"),
+                            move || {
+                                next.state_store
+                                    .write(|store| store.request_next_sync_realm_list_page())
+                            },
+                        )
+                    }
+                },
+            )
+        };
+        block(
+            "workspace-list",
+            vec![
+                block(
+                    "workspace-list-heading",
+                    vec![
+                        heading(2, "workspace-list-title", context.translated(scope, title)),
+                        icon_link(
+                            context.clone(),
+                            add,
+                            "sidebar-toolbar-action",
+                            context.translated(
+                                scope,
+                                if direct {
+                                    "contacts.empty_add"
+                                } else {
+                                    "setup.new_realm"
+                                },
+                            ),
+                            "plus",
+                        ),
+                    ],
+                ),
+                block(
+                    "workspace-list-search",
+                    vec![navigation_search(context.translated(scope, label), value)],
+                ),
+                block("workspace-list-rows", vec![rows, paging]),
+            ],
+        )
+    })
 }
+
 fn realm_link_security_hint(
     _scope: &Scope,
     key: String,

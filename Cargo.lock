@@ -289,7 +289,8 @@ dependencies = [
 [[package]]
 name = "apace-dom"
 version = "0.3.0"
-source = "git+https://github.com/glory-rs/apace?rev=a2407c3b2c1d6e25b7fd2ce1421daffff266e584#a2407c3b2c1d6e25b7fd2ce1421daffff266e584"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee1ee2b1b7c6e8e6f500dcb30b5f2d45ba7474356e2b63709d3e382e2ed17463"
 dependencies = [
  "accesskit",
  "anyrender",
@@ -334,7 +335,8 @@ dependencies = [
 [[package]]
 name = "apace-paint"
 version = "0.3.0"
-source = "git+https://github.com/glory-rs/apace?rev=a2407c3b2c1d6e25b7fd2ce1421daffff266e584#a2407c3b2c1d6e25b7fd2ce1421daffff266e584"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d39334db3c4b2e8a17373cf848aad2fb974a90fa91ec49c96aaa0bc6e164670"
 dependencies = [
  "anyrender",
  "apace-dom",
@@ -354,7 +356,8 @@ dependencies = [
 [[package]]
 name = "apace-shell"
 version = "0.3.0"
-source = "git+https://github.com/glory-rs/apace?rev=a2407c3b2c1d6e25b7fd2ce1421daffff266e584#a2407c3b2c1d6e25b7fd2ce1421daffff266e584"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "235324d57a5e35da6d239844c2b92c1e13c832a1d4467271ff42ccd97d56cabc"
 dependencies = [
  "android-activity",
  "anyrender",
@@ -373,7 +376,8 @@ dependencies = [
 [[package]]
 name = "apace-traits"
 version = "0.3.0"
-source = "git+https://github.com/glory-rs/apace?rev=a2407c3b2c1d6e25b7fd2ce1421daffff266e584#a2407c3b2c1d6e25b7fd2ce1421daffff266e584"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf8b98e59d3309bae184558e638a7cf5131f1d76180eb1fa343b77287e0da55f"
 dependencies = [
  "atomic_refcell",
  "bitflags",
@@ -389,7 +393,8 @@ dependencies = [
 [[package]]
 name = "apace_accesskit"
 version = "0.2.2"
-source = "git+https://github.com/glory-rs/apace?rev=a2407c3b2c1d6e25b7fd2ce1421daffff266e584#a2407c3b2c1d6e25b7fd2ce1421daffff266e584"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35ee9f96e436858ae9fbc3b3ef65babb38180d7ba709c8cf9623877c55a48af3"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -402,7 +407,8 @@ dependencies = [
 [[package]]
 name = "apace_debug_timer"
 version = "0.1.4"
-source = "git+https://github.com/glory-rs/apace?rev=a2407c3b2c1d6e25b7fd2ce1421daffff266e584#a2407c3b2c1d6e25b7fd2ce1421daffff266e584"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3911b83053f00030130518df1a41622f68dbcfbb45752034a8c47b0b7c78d886"
 
 [[package]]
 name = "app_units"
@@ -3291,8 +3297,9 @@ dependencies = [
 
 [[package]]
 name = "glory"
-version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7bd3145940910f82a153c99a3ee23dc924348779b0e6e88c99898ff8c6de80e5"
 dependencies = [
  "glory-apace",
  "glory-core",
@@ -3307,8 +3314,9 @@ dependencies = [
 
 [[package]]
 name = "glory-apace"
-version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f37ed02188da28bebcc578bef174eb91ce17bc78c14d32f6b08ff4b88e8476d"
 dependencies = [
  "accesskit",
  "anyrender",
@@ -3342,16 +3350,18 @@ dependencies = [
 
 [[package]]
 name = "glory-core"
-version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3e475d59770a922eb940c79cf9feecddf43d9f9a4019e22fa6df814ede06299"
 dependencies = [
  "glory-render",
 ]
 
 [[package]]
 name = "glory-html"
-version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f7867f085136e703e2e539c64e14f29d339149bf8cd099bb22838b5dc88d689"
 dependencies = [
  "glory-render",
  "glory-style",
@@ -3359,16 +3369,18 @@ dependencies = [
 
 [[package]]
 name = "glory-render"
-version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2628b7d4c96cce62e6adb7555289bae07dace266839da90defb70a9eefb073cd"
 dependencies = [
  "glory-style",
 ]
 
 [[package]]
 name = "glory-ssr"
-version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f849947ead75e59c4fdfd60811611b7940827b6e3cbbf5a04deced0750090a4"
 dependencies = [
  "glory-core",
  "glory-html",
@@ -3378,16 +3390,18 @@ dependencies = [
 
 [[package]]
 name = "glory-style"
-version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d28b3ddc414138e0d745d3e58eec24171938fb58d92c6e5fbcf73bf37e01f3a"
 dependencies = [
  "cssparser 0.38.0",
 ]
 
 [[package]]
 name = "glory-ui"
-version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20c2f12acaf8eccccc5c7a86446ce8e92afae8b1bdc69a31deb0cc8afd0b37cd"
 dependencies = [
  "glory-core",
  "glory-render",
@@ -3396,8 +3410,9 @@ dependencies = [
 
 [[package]]
 name = "glory-web"
-version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a9b98a8fdfaa5fc1c951e2f24f14cf85ce82420405f04db08c0fa1d5b161d8e"
 dependencies = [
  "futures-util",
  "glory-core",
@@ -3412,8 +3427,9 @@ dependencies = [
 
 [[package]]
 name = "glory-wry"
-version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06604d66f1417f79f11595426200648b6650cde157a36ce2f302544a512f3e2f"
 dependencies = [
  "glory-core",
  "glory-html",
@@ -7167,8 +7183,9 @@ dependencies = [
 
 [[package]]
 name = "sapid"
-version = "0.6.1"
-source = "git+https://github.com/sapid-ui/sapid.git?branch=main#f13004b6f6a8b9578945944801380faa78e751e9"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11b597a93e13dbb345e527b49e0aaa4fd7b10ce15d68c7a0a158752007d7aea1"
 dependencies = [
  "glory",
  "serde_json",
@@ -8082,7 +8099,8 @@ dependencies = [
 [[package]]
 name = "stylo_takia"
 version = "0.3.0"
-source = "git+https://github.com/glory-rs/apace?rev=a2407c3b2c1d6e25b7fd2ce1421daffff266e584#a2407c3b2c1d6e25b7fd2ce1421daffff266e584"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1ba68c229f31824b9e0c81baafd2d30d2dafd94d60af358590acc7670426e80"
 dependencies = [
  "bitflags",
  "stylo",
@@ -8189,7 +8207,8 @@ dependencies = [
 [[package]]
 name = "takia"
 version = "0.15.1"
-source = "git+https://github.com/glory-rs/takia?rev=c7dfdfa0ca7fc94cad5c57e2f5e93b1d91b3de03#c7dfdfa0ca7fc94cad5c57e2f5e93b1d91b3de03"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27043cb54eecc8a53e368e69fd0d0898d0357ee76e0fdcdeae908ba1c7e005f0"
 dependencies = [
  "serde",
  "slotmap",
@@ -9845,7 +9864,8 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 [[package]]
 name = "wingy"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "458da50acd0c7180c9f6f45bb3d6e86c3895c267794a0f40e24f4f18f9cbc4dc"
 dependencies = [
  "bitflags",
  "cfg_aliases",
@@ -9871,7 +9891,8 @@ dependencies = [
 [[package]]
 name = "wingy-android"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ececbc09c3e00a27d07c261c2677333372c4d37bb73bf197d0b5eda3c7a6965"
 dependencies = [
  "android-activity",
  "bitflags",
@@ -9886,7 +9907,8 @@ dependencies = [
 [[package]]
 name = "wingy-appkit"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4012f71d212864325dbca63814c2c36e0f61eb4e188af3cf291e62508895ec80"
 dependencies = [
  "bitflags",
  "block2 0.6.2",
@@ -9908,7 +9930,8 @@ dependencies = [
 [[package]]
 name = "wingy-common"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8d800e0ce13c55e9961aa2d01d43e2f58771e85f9d7ee67a3b6df6e5291e9d6"
 dependencies = [
  "block2 0.6.2",
  "memmap2",
@@ -9926,7 +9949,8 @@ dependencies = [
 [[package]]
 name = "wingy-core"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcc321a840a4d3ab0f054e4236241e613b30dd14c144514d38ecaf118b10331d"
 dependencies = [
  "bitflags",
  "cursor-icon",
@@ -9940,12 +9964,14 @@ dependencies = [
 [[package]]
 name = "wingy-dpi"
 version = "0.1.3"
-source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7367d66b6eaa819f75ffb756d7cda4edcb017324c9ff8bd3b3209cc2330d6c32"
 
 [[package]]
 name = "wingy-orbital"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4b17fb50dd18e294b8ba794464b70deb0541eb7eeeeabf09b067b82dd689ee3"
 dependencies = [
  "bitflags",
  "libredox 0.2.0",
@@ -9961,7 +9987,8 @@ dependencies = [
 [[package]]
 name = "wingy-uikit"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "384296fe636dcedbaa74a52a9b21e946b2c8b88dcfb0462efbbff80380f2109b"
 dependencies = [
  "bitflags",
  "block2 0.6.2",
@@ -9981,7 +10008,8 @@ dependencies = [
 [[package]]
 name = "wingy-wayland"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1158a7569c4217c1c1d7001f11673bae956ae8ef7fb1c498cbab9718e6fd6d0"
 dependencies = [
  "bitflags",
  "calloop",
@@ -10008,7 +10036,8 @@ dependencies = [
 [[package]]
 name = "wingy-web"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "818f45ccf1c07ffbeff5bda743efd701e3399b2a8b37499f7fd5f610926247a0"
 dependencies = [
  "atomic-waker",
  "bitflags",
@@ -10030,7 +10059,8 @@ dependencies = [
 [[package]]
 name = "wingy-win32"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe8a82d1d0a11de459410012532df07490916bbd4b326dbca05567d6c660b960"
 dependencies = [
  "bitflags",
  "cursor-icon",
@@ -10048,7 +10078,8 @@ dependencies = [
 [[package]]
 name = "wingy-x11"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65c3cb6f9421e08f070aae33f842ebd45f4c4e84ff56d3d6df86a6f123693e08"
 dependencies = [
  "bitflags",
  "bytemuck",

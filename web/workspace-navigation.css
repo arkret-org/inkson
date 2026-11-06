@@ -1,0 +1,137 @@
+/* Shared icon rail and independently scrolling list/detail columns. */
+.shell.app.workspace-shell,
+.shell.app.workspace-shell.sidebar-collapsed {
+  --sidebar-w: 64px;
+  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100dvh;
+}
+.workspace-shell > .navigation-rail {
+  position: relative;
+  inset: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 64px;
+  min-width: 0;
+  height: 100%;
+  padding: 12px 8px;
+  overflow: visible;
+  border-inline-end: 1px solid var(--border);
+  background: var(--nav-bg);
+  z-index: 30;
+}
+.navigation-rail .rail-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  border-radius: 10px;
+  color: var(--nav-muted);
+  text-decoration: none;
+}
+.navigation-rail .rail-link:hover { background: var(--nav-bg-2); color: var(--nav-text); }
+.navigation-rail .rail-link.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  box-shadow: inset 2px 0 var(--accent);
+}
+.navigation-rail .rail-link:focus-visible,
+.navigation-rail .account-menu-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.navigation-rail .rail-brand { margin-bottom: 12px; }
+.navigation-rail .rail-logo { display: block; width: 38px; height: 38px; object-fit: contain; }
+.navigation-rail .rail-icon { width: 22px; height: 22px; }
+.navigation-rail .rail-settings { margin-top: auto; }
+.navigation-rail .account-menu-wrap { flex-shrink: 0; padding: 4px 0; }
+.navigation-rail .account-menu {
+  top: auto;
+  right: auto;
+  bottom: 0;
+  left: calc(100% + 16px);
+  width: min(420px, calc(100vw - 88px));
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+}
+.workspace-shell > .workspace { grid-column: 2; grid-row: 1; }
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; }
+.workspace.workspace-has-list { grid-template-columns: 264px minmax(0, 1fr); }
+.workspace > .main.realm { height: 100%; min-height: 0; grid-column: auto; grid-row: auto; }
+.workspace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  padding: 16px 10px;
+  border-inline-end: 1px solid var(--border);
+  background: var(--bg);
+  overflow: hidden;
+}
+.workspace-list-heading, .contacts-page-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.workspace-list-heading { padding-inline: 6px; }
+.workspace-list-title { margin: 0; font-size: 16px; font-weight: 650; }
+.workspace-list-search input { width: 100%; min-width: 0; }
+.workspace-list-rows { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.workspace-list .sidebar-nav-item { color: var(--text-2); }
+.workspace-list .sidebar-nav-item.is-active { color: var(--accent-ink); }
+.workspace-shell .realm-body:has(> .settings-page),
+.workspace-shell .realm-body:has(> .agent-admin-page),
+.workspace-shell .realm-body:has(> .contacts-page) { padding: 0; overflow: hidden; }
+.workspace-shell .realm-body > .settings-page,
+.workspace-shell .realm-body > .agent-admin-page,
+.workspace-shell .realm-body > .contacts-page { height: 100%; min-height: 0; gap: 0; }
+.workspace-shell .settings-page > .settings-shell,
+.workspace-shell .agent-admin-layout,
+.workspace-shell .contacts-layout { display: grid; grid-template-columns: 264px minmax(0, 1fr); height: 100%; min-height: 0; gap: 0; align-items: stretch; }
+.workspace-shell .settings-page .settings-sidebar-column,
+.workspace-shell .agent-admin-list-pane,
+.workspace-shell .contacts-list-pane { padding: 20px 14px; border: 0; border-inline-end: 1px solid var(--border); border-radius: 0; background: var(--bg); overflow-y: auto; min-height: 0; align-content: start; }
+.workspace-shell .settings-page .settings-content-column,
+.workspace-shell .agent-admin-layout > :last-child,
+.workspace-shell .contacts-detail-pane { padding: 24px; overflow-y: auto; min-height: 0; min-width: 0; align-content: start; }
+.workspace-shell .realm-body > .agent-admin-page { display: flex; flex-direction: column; overflow: hidden; }
+.workspace-shell .agent-admin-layout { flex: 1 1 0; height: auto; overflow: hidden; }
+.workspace-shell .agent-admin-layout > .agent-admin-detail-pane { margin: 24px; height: calc(100% - 48px); max-height: none; box-sizing: border-box; }
+.workspace-shell .agent-admin-list-rows { max-height: none; }
+.contacts-page { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.contacts-page-heading { padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.contacts-list-pane { display: grid; gap: 16px; }
+.contact-list-items { display: grid; gap: 6px; align-content: start; }
+.contact-list-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px; border: 0; border-radius: 6px; color: var(--text-2); background: transparent; font: inherit; text-align: start; cursor: pointer; }
+.contact-list-item:hover { background: var(--surface-2); }
+.contact-list-item.is-active { background: var(--accent-soft); color: var(--accent-ink); }
+.contact-list-avatar { display: grid; place-items: center; flex: 0 0 28px; height: 28px; margin: 0; border-radius: 50%; background: var(--surface-2); }
+.contact-list-name { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; }
+.workspace-shell .contacts-detail-pane > .contact-row { max-width: 960px; }
+.workspace-shell .mobile-shellbar, .workspace-shell .mobile-drawer { display: none; }
+@media (max-width: 860px) {
+  .shell.app.workspace-shell, .shell.app.workspace-shell.sidebar-collapsed { grid-template-columns: 56px minmax(0, 1fr); }
+  .workspace-shell > .navigation-rail { width: 56px; padding: 10px 6px; }
+  .workspace.workspace-has-list { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 28dvh) minmax(0, 1fr); }
+  .workspace-list { padding: 10px; border-inline-end: 0; border-bottom: 1px solid var(--border); }
+  .workspace-shell .settings-page > .settings-shell,
+  .workspace-shell .agent-admin-layout,
+  .workspace-shell .contacts-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(100px, 30dvh) minmax(0, 1fr); }
+  .workspace-shell .settings-page .settings-sidebar-column,
+  .workspace-shell .agent-admin-list-pane,
+  .workspace-shell .contacts-list-pane { padding: 12px; border-inline-end: 0; border-bottom: 1px solid var(--border); }
+  .workspace-shell .settings-page .settings-content-column,
+  .workspace-shell .agent-admin-layout > :last-child,
+  .workspace-shell .contacts-detail-pane { padding: 14px; }
+  .workspace-shell .topbar.realm-header { display: flex; }
+  .workspace-shell .topbar { flex-wrap: wrap; height: auto; min-height: 52px; padding: 8px; gap: 8px; }
+  .workspace-shell .topbar > .actions { gap: 4px; flex-direction: row; flex-wrap: wrap; }
+  .navigation-rail .account-menu { position: fixed; left: 64px; bottom: 12px; width: calc(100vw - 76px); }
+}
+
+.contacts-detail-pane .contact-row { overflow-wrap: anywhere; }
+
+.workspace-shell .contacts-layout > .contacts-list-pane { padding: 16px 12px; min-width: 0; box-sizing: border-box; }
+.workspace-search-input { display: block; width: 100%; min-width: 0; box-sizing: border-box; }
+.contact-list-items { min-width: 0; }
+.contact-list-item { min-width: 0; max-width: 100%; }
+.contact-agent-actions { justify-content: flex-end; }

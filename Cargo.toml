@@ -32,8 +32,8 @@ base64 = "0.23"
 chacha20poly1305 = { version = "0.11", default-features = false }
 chime = { version = "0.3.0", path = "../chime" }
 chrono = "0.4.45"
-glory = { version = ">=0.6.1", git = "https://github.com/glory-rs/glory.git", branch = "main", default-features = false, features = ["css"] }
-sapid = { version = ">=0.6.1", git = "https://github.com/sapid-ui/sapid.git", branch = "main", default-features = false, features = ["code", "editor", "files", "json", "dates"] }
+glory = { version = "=0.7.0", default-features = false, features = ["css"] }
+sapid = { version = "=0.7.1", default-features = false, features = ["code", "editor", "files", "json", "dates"] }
 ed25519-dalek = "3.0.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 getrandom = "0.4.3"
@@ -407,20 +407,3 @@ debug = 0
 strip = "debuginfo"
 incremental = false
 debug-assertions = false
-
-# Sapid main currently declares its sibling Glory path. Resolve that package
-# from the same remote Glory source as the application, without a local override.
-[patch."https://github.com/sapid-ui/sapid.git"]
-glory = { git = "https://github.com/glory-rs/glory.git", branch = "main" }
-
-[patch."https://github.com/glory-rs/glory.git"]
-apace-dom = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "a2407c3b2c1d6e25b7fd2ce1421daffff266e584" }
-apace-paint = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "a2407c3b2c1d6e25b7fd2ce1421daffff266e584" }
-apace-shell = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "a2407c3b2c1d6e25b7fd2ce1421daffff266e584" }
-apace-traits = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "a2407c3b2c1d6e25b7fd2ce1421daffff266e584" }
-apace_accesskit = { git = "https://github.com/glory-rs/apace", version = "=0.2.2", rev = "a2407c3b2c1d6e25b7fd2ce1421daffff266e584" }
-wingy = { git = "https://github.com/glory-rs/wingy", version = "=0.31.1", rev = "d6613df82dbdf2409d9bfa8762ef431639e42fdc" }
-
-[patch."https://github.com/glory-rs/apace"]
-takia = { git = "https://github.com/glory-rs/takia", version = "=0.15.1", rev = "c7dfdfa0ca7fc94cad5c57e2f5e93b1d91b3de03" }
-wingy = { git = "https://github.com/glory-rs/wingy", version = "=0.31.1", rev = "d6613df82dbdf2409d9bfa8762ef431639e42fdc" }

@@ -174,29 +174,16 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
     });
     let class = scope.bond({
         let context = context.clone();
-        let ui = ui.clone();
         move || {
             let chrome = super::shell_model::shell_chrome(
                 &context.theme.get(),
                 context.system_theme_is_night.get(),
                 context.locale.get().direction(),
-                ui.collapsed.get(),
-                ui.resizing.get(),
+                false,
+                false,
             );
-            format!(
-                "{} sidebar-width-{}",
-                chrome.shell_class,
-                super::sidebar_width::clamp_sidebar_width(ui.width.get()).round() as i32
-            )
+            format!("{} workspace-shell", chrome.shell_class)
         }
-    });
-    let persist = context.clone();
-    let collapsed = ui.collapsed;
-    scope.effect(move || {
-        let value = collapsed.get();
-        persist
-            .state_store
-            .write(|store| store.save_plain_local_data("sidebar_collapsed", value.to_string()));
     });
     #[cfg(not(target_arch = "wasm32"))]
     let keyboard_ui = ui.clone();
@@ -216,6 +203,7 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
                         .notifications_open
                         .revise(|value| *value = false);
                     keyboard_ui.mobile_open.revise(|value| *value = false);
+                    keyboard_ui.account_open.revise(|value| *value = false);
                 }
                 _ => {}
             }
@@ -239,9 +227,26 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
             mobile_bar(scope, context.clone(), ui.clone(), unread),
             mobile_drawer(scope, context.clone(), ui.clone()),
             super::sidebar::sidebar(scope, context.clone(), ui.clone()),
-            block(
-                "main realm",
-                vec![topbar(scope, context.clone(), ui.clone(), unread), content],
+            Box::new(
+                view()
+                    .class(scope.bond({
+                        let context = context.clone();
+                        move || {
+                            if super::sidebar::workspace_list_kind(&context.route.get()).is_some() {
+                                "workspace workspace-has-list"
+                            } else {
+                                "workspace"
+                            }
+                            .to_owned()
+                        }
+                    }))
+                    .fill(vec![
+                        super::sidebar::workspace_list(scope, context.clone(), ui.clone()),
+                        block(
+                            "main realm",
+                            vec![topbar(scope, context.clone(), ui.clone(), unread), content],
+                        ),
+                    ]),
             ),
             super::notifications_drawer::notifications_drawer(
                 scope,
@@ -459,7 +464,6 @@ fn mobile_bar(
             notifications_button(scope, &context, unread, move || {
                 ui.mobile_open.revise(|value| *value = false);
                 ui.account_open.revise(|value| *value = false);
-                ui.server_open.revise(|value| *value = false);
                 ui.search_open.revise(|value| *value = false);
                 ui.search_query.revise(String::clear);
                 ui.notifications_open.revise(|value| *value = !*value);
@@ -826,23 +830,7 @@ fn topbar(
     block(
         "topbar realm-header",
         vec![
-            block(
-                "topbar-left",
-                vec![
-                    icon_action(
-                        "btn icon sidebar-collapse-toggle",
-                        context.translated(scope, "app.nav.hide_navigation"),
-                        "panel-left-close",
-                        {
-                            let ui = ui.clone();
-                            move || {
-                                ui.collapsed.revise(|value| *value = !*value);
-                            }
-                        },
-                    ),
-                    title,
-                ],
-            ),
+            block("topbar-left", vec![title]),
             realm_navigation,
             block(
                 "actions",
@@ -863,7 +851,6 @@ fn topbar(
                         move || ui.notifications_open.revise(|value| *value = !*value)
                     }),
                     connection_status_region(scope, context.clone()),
-                    account_menu(scope, context, ui),
                 ],
             ),
         ],
@@ -977,7 +964,7 @@ fn account_menu_identity(
         )),
     )
 }
-fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
+pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
     let avatar_source = scope.bond({
         let context = context.clone();
         move || {
@@ -1305,7 +1292,6 @@ fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -
                         move |_| {
                             ui.search_open.revise(|value| *value = false);
                             ui.search_query.revise(String::clear);
-                            ui.server_open.revise(|value| *value = false);
                             ui.account_open.revise(|value| *value = !*value);
                         }
                     }),
@@ -1887,14 +1873,12 @@ mod tests {
         ui.search_open.revise(|value| *value = true);
         ui.search_query
             .revise(|value| *value = "previous search".into());
-        ui.server_open.revise(|value| *value = true);
         app.dispatch(button, glory::render::Event::Activate)
             .unwrap();
         app.flush().unwrap();
         assert!(ui.account_open.get_untracked());
         assert!(!ui.search_open.get_untracked());
         assert!(ui.search_query.get_untracked().is_empty());
-        assert!(!ui.server_open.get_untracked());
         assert_eq!(class_nodes(&app, "account-menu__avatar").len(), 1);
         assert_eq!(class_nodes(&app, "account-menu__qr").len(), 1);
         let rows = class_nodes(&app, "account-menu__row");

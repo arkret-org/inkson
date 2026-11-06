@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 ))]
 use serde_json::Value;
 
-use crate::config::{ClientConfig, LocalConfigStore, normalize_server_url};
+use crate::config::{ClientConfig, LocalConfigStore};
 use crate::conformance::StationFeature;
 use crate::i18n::UiLocale;
 use crate::models::{
@@ -74,9 +74,8 @@ mod shell_effects;
 mod shell_model;
 mod shell_state;
 mod sidebar;
+pub(crate) use sidebar::active_agents_only;
 use sidebar::*;
-mod sidebar_width;
-use sidebar_width::*;
 mod signal_products;
 mod sync_effects;
 pub(crate) fn principal_id_text(principal_id: &Option<arkret_sdk::DidCoreId>) -> &str {
@@ -91,11 +90,6 @@ pub(crate) fn principal_id_owned(principal_id: Option<arkret_sdk::DidCoreId>) ->
         .map(|value| value.to_string())
         .unwrap_or_default()
 }
-
-const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
-const DEFAULT_SIDEBAR_WIDTH: f64 = 320.0;
-const MIN_SIDEBAR_WIDTH: f64 = 280.0;
-const MAX_SIDEBAR_WIDTH: f64 = 420.0;
 
 /// Cursor the account-sync signal boots with.
 ///

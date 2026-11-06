@@ -271,6 +271,19 @@ pub fn resource_content<T: Clone + 'static>(
     })
 }
 
+pub(crate) fn navigation_search(label: impl Into<Vary<String>>, value: Cage<String>) -> View {
+    let label = label.into();
+    Box::new(
+        sapid::text_field()
+            .unstyled()
+            .class("input workspace-search-input")
+            .name(label.clone())
+            .placeholder(label)
+            .value(value)
+            .on_value_change(move |next| value.revise(|current| *current = next)),
+    )
+}
+
 pub fn input_field(
     _context: Rc<InksonContext>,
     key: impl Into<String>,

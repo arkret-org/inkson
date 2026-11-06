@@ -21,7 +21,7 @@ fn spawn_direct_open_task(scope: &Scope, task: impl std::future::Future<Output =
 
 /// Which subject a direct conversation is being opened with.
 #[derive(Clone)]
-pub(super) enum DirectConversationTarget {
+pub(crate) enum DirectConversationTarget {
     /// One of the signed-in account's own agents.
     ///
     /// Its actor id is built at request time from the live authority's
@@ -65,7 +65,7 @@ impl DirectConversationTarget {
 /// `direct_chat_opening` is the per-row busy marker; it is cleared on every
 /// exit path, including the failures, so a failed open does not leave the
 /// sidebar permanently disabled.
-pub(super) fn open_direct_conversation(
+pub(crate) fn open_direct_conversation(
     context: Rc<InksonContext>,
     base_url: String,
     api_token: String,

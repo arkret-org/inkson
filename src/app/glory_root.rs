@@ -467,6 +467,9 @@ fn install_browser_navigation(scope: &Scope, context: &Rc<InksonContext>) {
                         .map(|surface| surface.title().to_owned())
                         .unwrap_or_else(|| {
                             title_context.tr(match &route {
+                                Route::SettingsSection { section, .. } if section == "agents" => {
+                                    "settings.section.agents"
+                                }
                                 Route::Settings | Route::SettingsSection { .. } => "nav.settings",
                                 _ => super::route_label_key(&route),
                             })

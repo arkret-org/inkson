@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use arkret_sdk::contact_operations::ContactScope;
-use glory::{Cage, Scope};
+use glory::prelude::{Cage, Scope};
 
 use crate::i18n::tr;
 use crate::models::ContactView;
@@ -1416,12 +1416,128 @@ fn contact_row(
             .fill(nodes),
     )
 }
+#[derive(Clone)]
+struct ContactListAgent {
+    key: String,
+    label: String,
+    identity: String,
+    own: bool,
+    target: crate::app::direct_open::DirectConversationTarget,
+}
+
+fn contact_list_text(class: &str, label: impl Into<glory::Vary<String>>) -> View {
+    Box::new(glory::ui::text().class(class.to_owned()).content(label))
+}
+
+fn contact_list_rows(
+    scope: &Scope,
+    list_context: Rc<InksonContext>,
+    list_rows: &[ContactView],
+    list_agents: &[ContactListAgent],
+    current: &str,
+    query: &str,
+    selected: Cage<String>,
+) -> View {
+    let query = query.trim().to_lowercase();
+    let mut items = Vec::new();
+    for row in list_rows {
+        let id = row.peer.contact_actor_id().to_string();
+        let label = list_context
+            .state_store
+            .read(|store| crate::views::helpers::contact_peer_label(store, row));
+        if !query.is_empty()
+            && !label.to_lowercase().contains(&query)
+            && !id.to_lowercase().contains(&query)
+        {
+            continue;
+        }
+        let pending = row.state == arkret_sdk::ContactState::PendingIncoming;
+        let name = if pending {
+            format!(
+                "{} · {label}",
+                list_context.tr("contacts.state.pending_incoming")
+            )
+        } else {
+            label.clone()
+        };
+        items.push(Box::new(
+            sapid::button()
+                .unstyled()
+                .class(if current == id {
+                    "contact-list-item is-active"
+                } else {
+                    "contact-list-item"
+                })
+                .name(name)
+                .fill(vec![
+                    contact_list_text(
+                        "contact-list-avatar",
+                        label
+                            .chars()
+                            .next()
+                            .unwrap_or('?')
+                            .to_uppercase()
+                            .to_string(),
+                    ),
+                    contact_list_text("contact-list-name", label),
+                    if pending {
+                        crate::components::ui_icon("user-plus")
+                    } else {
+                        empty()
+                    },
+                ])
+                .on_press(move || selected.revise(|value| *value = id.clone())),
+        ) as View);
+    }
+    for agent in list_agents {
+        if !query.is_empty() && !agent.label.to_lowercase().contains(&query) {
+            continue;
+        }
+        let id = agent.key.clone();
+        items.push(Box::new(
+            sapid::button()
+                .unstyled()
+                .class(if current == id {
+                    "contact-list-item contact-agent-list-item is-active"
+                } else {
+                    "contact-list-item contact-agent-list-item"
+                })
+                .name(agent.label.clone())
+                .fill(vec![
+                    crate::components::ui_icon("bot"),
+                    contact_list_text("contact-list-name", agent.label.clone()),
+                    contact_list_text(
+                        "pill muted xs",
+                        list_context.translated(
+                            scope,
+                            if agent.own {
+                                "contacts.my_agent"
+                            } else {
+                                "app.sidebar.agent_badge"
+                            },
+                        ),
+                    ),
+                ])
+                .on_press(move || selected.revise(|value| *value = id.clone())),
+        ) as View);
+    }
+    if items.is_empty() {
+        items.push(contact_list_text(
+            "muted",
+            list_context.translated(scope, "search.no_results"),
+        ));
+    }
+    stack("contact-list-items", items)
+}
+
 pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
     let advanced = matches!(route, Route::SettingsSection { .. });
     contacts_panel(scope, context, advanced)
 }
 pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool) -> View {
     let reload = scope.cage(0_u64);
+    let selected = scope.cage(String::new());
+    let query = scope.cage(String::new());
     let modal = scope.cage(false);
     let load = {
         let ctx = context.clone();
@@ -1434,9 +1550,15 @@ pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool)
             async move {
                 let request_stamp = stamp.clone();
                 let request_context = ctx.clone();
-                let response = with_authed_sdk_client(&base, token, |http| async move {
+                let (response, agents) = with_authed_sdk_client(&base, token, |http| async move {
                     request_stamp.require_current(&request_context)?;
-                    crate::transport::account::contacts(&http).await
+                    let contacts = crate::transport::account::contacts(&http).await?;
+                    let agents = if advanced {
+                        Vec::new()
+                    } else {
+                        http.agent_page().await?.agents
+                    };
+                    Ok((contacts, agents))
                 })
                 .await
                 .map_err(|e| e.display())?;
@@ -1444,7 +1566,7 @@ pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool)
                     ctx.contact_rows.revise(|v| *v = response.contacts.clone());
                     ctx.state_store
                         .write(|store| store.replace_accepted_human_contacts(&response.contacts));
-                    Ok(response.contacts)
+                    Ok((response.contacts, agents))
                 } else {
                     Err(tr("contacts.load_error"))
                 }
@@ -1454,7 +1576,7 @@ pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool)
     let body = {
         let ctx = context.clone();
         reactive(load.data, move |scope, result| {
-            let rows = match result {
+            let (rows, owned_agents) = match result {
                 None => {
                     return paragraph(
                         "muted contacts-loading",
@@ -1492,8 +1614,46 @@ pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool)
                         )
                 })
                 .collect::<Vec<_>>();
-            if rows.is_empty() {
-                return stack(
+            let mut agents = Vec::new();
+            for agent in crate::app::active_agents_only(owned_agents) {
+                let id = agent.agent_id.to_string();
+                agents.push(ContactListAgent {
+                    key: format!("agent:{id}"),
+                    label: agent.display_name.unwrap_or(agent.slug),
+                    identity: id.clone(),
+                    own: true,
+                    target: crate::app::direct_open::DirectConversationTarget::OwnedAgent {
+                        agent_id: id,
+                        controller_principal_id: ctx
+                            .principal_id
+                            .get()
+                            .map(|id| id.to_string())
+                            .unwrap_or_default(),
+                    },
+                });
+            }
+            for contact in &rows {
+                for agent in &contact.contact_agent_projections {
+                    let id = agent.actor_id.to_string();
+                    agents.push(ContactListAgent {
+                        key: format!("agent:{id}"),
+                        identity: agent.actor_id.signing_principal_id().to_string(),
+                        label: agent
+                            .display_name
+                            .clone()
+                            .or_else(|| agent.agent_slug.clone())
+                            .unwrap_or_else(|| short_protocol_id(&id)),
+                        own: false,
+                        target: crate::app::direct_open::DirectConversationTarget::ContactAgent {
+                            agent_id: id,
+                            controller: serde_json::to_string(&agent.controller_account_id)
+                                .unwrap_or_default(),
+                        },
+                    });
+                }
+            }
+            if rows.is_empty() && agents.is_empty() {
+                let empty_state = stack(
                     "members-empty contacts-empty-state",
                     vec![
                         paragraph(
@@ -1526,20 +1686,162 @@ pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool)
                         },
                     ],
                 );
+                return if advanced {
+                    empty_state
+                } else {
+                    stack(
+                        "contacts-layout",
+                        vec![
+                            stack(
+                                "contacts-list-pane",
+                                vec![paragraph(
+                                    "muted",
+                                    ctx.translated(scope, "contacts.empty_title"),
+                                )],
+                            ),
+                            stack("contacts-detail-pane", vec![empty_state]),
+                        ],
+                    )
+                };
             }
-            stack(
-                "settings-list",
-                rows.into_iter()
-                    .map(|row| {
-                        contact_row(
-                            scope,
-                            ctx.clone(),
-                            row,
-                            advanced,
-                            Rc::new(move |_| reload.revise(|v| *v += 1)),
+            if advanced {
+                return stack(
+                    "settings-list",
+                    rows.into_iter()
+                        .map(|row| {
+                            contact_row(
+                                scope,
+                                ctx.clone(),
+                                row,
+                                true,
+                                Rc::new(move |_| reload.revise(|v| *v += 1)),
+                            )
+                        })
+                        .collect(),
+                );
+            }
+            let current = selected.get_untracked();
+            if !rows
+                .iter()
+                .any(|row| row.peer.contact_actor_id().to_string() == current)
+                && !agents.iter().any(|agent| agent.key == current)
+            {
+                selected.revise(|id| {
+                    *id = rows
+                        .first()
+                        .map(|row| row.peer.contact_actor_id().to_string())
+                        .unwrap_or_else(|| agents[0].key.clone())
+                });
+            }
+            let list_agents = agents.clone();
+            let list_rows = rows.clone();
+            let list_context = ctx.clone();
+            let list = reactive(
+                scope.bond({
+                    let ctx = ctx.clone();
+                    move || {
+                        (
+                            selected.get(),
+                            query.get(),
+                            ctx.state_revision.get(),
+                            ctx.locale.get(),
                         )
-                    })
-                    .collect(),
+                    }
+                }),
+                move |scope, (current, query, ..)| {
+                    contact_list_rows(
+                        scope,
+                        list_context.clone(),
+                        &list_rows,
+                        &list_agents,
+                        &current,
+                        &query,
+                        selected,
+                    )
+                },
+            );
+            let detail_context = ctx.clone();
+            let detail =
+                crate::presentation::widgets::reactive_distinct(selected, move |scope, id| {
+                    match rows
+                        .iter()
+                        .find(|row| row.peer.contact_actor_id().to_string() == id)
+                    {
+                        Some(row) => contact_row(
+                            scope,
+                            detail_context.clone(),
+                            row.clone(),
+                            false,
+                            Rc::new(move |_| reload.revise(|v| *v += 1)),
+                        ),
+                        None => {
+                            let Some(agent) = agents.iter().find(|agent| agent.key == id) else {
+                                return empty();
+                            };
+                            let opening = scope.cage(None::<String>);
+                            let ctx = detail_context.clone();
+                            let target = agent.target.clone();
+                            let key = agent.key.clone();
+                            stack(
+                                "event contact-row contact-agent-detail",
+                                vec![
+                                    line(
+                                        "event-head",
+                                        vec![
+                                            heading(2, "", agent.label.clone()),
+                                            plain(ctx.translated(
+                                                scope,
+                                                if agent.own {
+                                                    "contacts.my_agent"
+                                                } else {
+                                                    "app.sidebar.agent_badge"
+                                                },
+                                            )),
+                                        ],
+                                    ),
+                                    paragraph("muted", agent.identity.clone()),
+                                    line(
+                                        "actions contact-agent-actions",
+                                        vec![action(
+                                            scope,
+                                            ctx.clone(),
+                                            "contact-agent-message",
+                                            "contacts.action.message",
+                                            "primary",
+                                            scope.bond(move || opening.get().is_none()),
+                                            move || {
+                                                opening.revise(|value| *value = Some(key.clone()));
+                                                crate::app::direct_open::open_direct_conversation(
+                                                    ctx.clone(),
+                                                    ctx.base_url.get(),
+                                                    ctx.token.get(),
+                                                    ctx.state_store.clone(),
+                                                    opening,
+                                                    target.clone(),
+                                                );
+                                            },
+                                        )],
+                                    ),
+                                ],
+                            )
+                        }
+                    }
+                });
+            stack(
+                "contacts-layout",
+                vec![
+                    stack(
+                        "contacts-list-pane",
+                        vec![
+                            crate::presentation::widgets::navigation_search(
+                                ctx.translated(scope, "sidebar.search_contacts"),
+                                query,
+                            ),
+                            list,
+                        ],
+                    ),
+                    stack("contacts-detail-pane", vec![detail]),
+                ],
             )
         })
     };
@@ -1566,46 +1868,43 @@ pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool)
         )
     });
     stack(
-        "settings contacts-panel",
+        if advanced {
+            "settings contacts-panel"
+        } else {
+            "contacts-page contacts-panel"
+        },
         vec![
-            stack(
-                "settings-shell",
-                vec![stack(
-                    "settings-content-stack",
-                    vec![stack(
-                        "event",
-                        vec![
-                            line(
-                                "event-head",
-                                vec![
-                                    plain(context.translated(
-                                        scope,
-                                        if advanced {
-                                            "settings.section.contacts"
-                                        } else {
-                                            "contacts.title"
-                                        },
-                                    )),
-                                    if !advanced {
-                                        action(
-                                            scope,
-                                            context.clone(),
-                                            "add-contact-button",
-                                            "contacts.add_button",
-                                            "primary",
-                                            true,
-                                            move || modal.revise(|v| *v = true),
-                                        )
-                                    } else {
-                                        empty()
-                                    },
-                                ],
-                            ),
-                            body,
-                        ],
-                    )],
-                )],
+            line(
+                "contacts-page-heading",
+                vec![
+                    heading(
+                        2,
+                        "workspace-list-title",
+                        context.translated(
+                            scope,
+                            if advanced {
+                                "settings.section.contacts"
+                            } else {
+                                "contacts.title"
+                            },
+                        ),
+                    ),
+                    if advanced {
+                        empty()
+                    } else {
+                        action(
+                            scope,
+                            context.clone(),
+                            "add-contact-button",
+                            "contacts.add_button",
+                            "primary",
+                            true,
+                            move || modal.revise(|v| *v = true),
+                        )
+                    },
+                ],
             ),
+            body,
             popup,
         ],
     )
@@ -1615,6 +1914,45 @@ pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool)
 mod feedback_tests {
     use super::*;
     use crate::transport::auth::ApiCallError;
+
+    #[test]
+    fn actual_contact_list_selects_an_agent_without_opening_a_conversation() {
+        let (app, context, _directory) = crate::views::settings::restored_surface_tests::harness();
+        let selected = app.scope().cage(String::new());
+        let agent = ContactListAgent {
+            key: "agent:one".into(),
+            label: "Test Agent".into(),
+            identity: "one".into(),
+            own: true,
+            target: crate::app::direct_open::DirectConversationTarget::OwnedAgent {
+                agent_id: "one".into(),
+                controller_principal_id: "controller".into(),
+            },
+        };
+        app.mount(contact_list_rows(
+            app.scope(),
+            context.clone(),
+            &[],
+            &[agent],
+            "",
+            "",
+            selected,
+        ))
+        .unwrap();
+        app.flush().unwrap();
+        let tree = app.tree();
+        let root = tree.roots()[0];
+        let button = tree.node(root).unwrap().children[0];
+        drop(tree);
+        app.dispatch(button, glory::render::Event::Activate)
+            .unwrap();
+        app.flush().unwrap();
+        assert_eq!(selected.get_untracked(), "agent:one");
+        assert_eq!(
+            context.route.get_untracked().settings_section(),
+            Some("theme")
+        );
+    }
 
     #[test]
     fn contact_petname_hydrates_late_and_preserves_unsaved_edits() {

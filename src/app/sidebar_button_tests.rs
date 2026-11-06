@@ -46,24 +46,40 @@ fn nodes(app: &glory::App, class: &str) -> Vec<glory::render::NodeId> {
 }
 
 #[test]
-fn production_sidebar_server_button_is_admitted_and_retained_when_toggled() {
+fn production_rail_routes_and_account_menu_remain_mounted() {
     let app = glory::App::memory();
     let dir = tempfile::tempdir().unwrap();
     let context = fixture(&app, dir.path());
     let ui = ShellState::new(app.scope(), &context);
-    app.mount(sidebar(app.scope(), context, ui.clone()))
+    app.mount(sidebar(app.scope(), context.clone(), ui.clone()))
         .unwrap();
-    let buttons = nodes(&app, "server-switch-button");
-    assert_eq!(buttons.len(), 1);
-    let button = buttons[0];
-    for open in [true, false, true, false] {
-        assert!(
-            app.dispatch(button, glory::render::Event::Activate)
-                .unwrap()
-        );
+    assert!(nodes(&app, "server-switch-button").is_empty());
+    assert_eq!(nodes(&app, "rail-logo").len(), 1);
+    let avatar = nodes(&app, "account-menu-button")[0];
+    for (class, target) in [
+        ("rail-realms", Route::RealmsManage),
+        ("rail-contacts", Route::Contacts),
+        (
+            "rail-agents",
+            Route::SettingsSection {
+                section: "agents".into(),
+                filter: String::new(),
+            },
+        ),
+        ("rail-settings", Route::Settings),
+        ("rail-brand", Route::Dashboard),
+    ] {
+        app.dispatch(nodes(&app, class)[0], glory::render::Event::Activate)
+            .unwrap();
         app.flush().unwrap();
-        assert_eq!(ui.server_open.get_untracked(), open);
-        assert_eq!(nodes(&app, "server-switch-button"), vec![button]);
+        assert_eq!(context.route.get_untracked(), target);
+        assert_eq!(nodes(&app, "account-menu-button"), vec![avatar]);
+    }
+    for open in [true, false, true, false] {
+        app.dispatch(avatar, glory::render::Event::Activate)
+            .unwrap();
+        app.flush().unwrap();
+        assert_eq!(ui.account_open.get_untracked(), open);
     }
 }
 

@@ -278,24 +278,10 @@ export async function dismissBlockingRecoveryModal(
   await rememberRecoveryOwner(page);
 }
 
-export async function openServerSwitcher(
-  page: import("@playwright/test").Page,
-) {
-  await dismissBlockingRecoveryModal(page);
-  const menu = latestByClass(page, "server-switch-menu");
-  if (await menu.isVisible()) {
-    return;
-  }
-  await latestByClass(page, "server-switch-button").click();
-  await expect(menu).toBeVisible();
-}
-
 export async function refreshServer(page: import("@playwright/test").Page) {
-  await openServerSwitcher(page);
-  await page
-    .locator("[class~=\"server-option\"]")
-    .filter({ hasText: "https://local.host" })
-    .click();
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await dismissHistoryRecoveryModal(page);
+  await dismissBlockingRecoveryModal(page);
 }
 
 export async function gotoAndDismissRecovery(
@@ -343,8 +329,7 @@ export async function dismissRecoveryMissingModal(
 
 export async function openSettings(page: import("@playwright/test").Page) {
   await dismissBlockingRecoveryModal(page);
-  await latestByClass(page, "account-menu-button").click();
-  await page.locator(".account-menu__qr").click();
+  await latestByClass(page, "rail-settings").click();
 }
 
 export async function openDiscussion(page: import("@playwright/test").Page) {
@@ -374,6 +359,9 @@ export async function assertRealmTreeSeeded(
   page: import("@playwright/test").Page,
 ) {
   await dismissBlockingRecoveryModal(page);
+  if (!(await page.locator(".workspace-list .realm-tree-list").isVisible())) {
+    await latestByClass(page, "rail-realms").click();
+  }
   const seededRealm = page
     .locator(".realm-tree-list .sidebar-row-main")
     .filter({ hasText: "Arkret Demo Realm" })

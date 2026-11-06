@@ -100,3 +100,19 @@ RichEditor. The manual path is not native WYSIWYG support; that requires a
 capable native backend. Headless Memory/Blitz checks do not establish physical
 window acceptance, and no further desktop interaction ran after the user
 stopped computer use.
+
+The authenticated shell retains a fixed icon rail across routes. Its Arkret mark
+opens Home; Realms, Contacts and My Agents sit above the bottom Settings and
+account-menu controls. The account menu expands beside the rail. There is no
+server selector or resizable/collapsible primary navigation.
+
+Realm and direct-conversation routes own a neighboring list column. Settings,
+Contacts and the top-level `/agents` surface own their respective list/detail
+columns inside the content region. My Agents does not render the Settings
+section navigation. Contact selection shows one detail view; its explicit
+Message action resolves the human or agent recipient with the existing account
+and generation fences. Narrow layouts keep the icon rail and stack each list
+above its independently scrolling detail.
+
+Glory 0.7.0 and Sapid 0.7.1 resolve from crates.io. Build provenance and Sapid CSS
+come from the locked Cargo graph; no local sibling checkout supplies UI assets.
