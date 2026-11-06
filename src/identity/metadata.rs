@@ -5,10 +5,16 @@ use serde_json::Value;
 use crate::state::LocalStateStore;
 
 fn observe_open_gate(digest: &arkret_sdk::Hash, gate: &'static str, passed: bool) {
-    #[cfg(feature = "spec-conformance")]
+    #[cfg(any(
+        feature = "spec-conformance",
+        all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
+    ))]
     tracing::warn!(phase = "metadata_open_gate", payload_digest = %digest, gate, passed,
         "encrypted metadata admission boundary");
-    #[cfg(not(feature = "spec-conformance"))]
+    #[cfg(not(any(
+        feature = "spec-conformance",
+        all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
+    )))]
     let _ = (digest, gate, passed);
 }
 
