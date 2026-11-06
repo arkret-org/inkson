@@ -944,6 +944,132 @@ fn two_member_group_with_bob_snapshot(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn replaced_device_incarnation_still_needs_its_welcome_at_the_installed_epoch() {
+    let secure = std::sync::Arc::new(MemorySecureKeyStore::new());
+    let _secure = crate::secure_key_store::DefaultSecureKeyStoreTestGuard::replace(secure.clone());
+    let mut state = temp_state_store("replacement-welcome-same-epoch");
+    let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
+    let bob_actor = "did:web:bob.example";
+    let device = fixture::device_id("ak:device:01904100-0000-7000-8000-0000000000b2");
+    let account = fixture::authority(bob_actor);
+    let actor = arkret_sdk::ActorId::account(account.clone());
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+    };
+    let (mut alice, endpoints) =
+        two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, device.as_str());
+    alice.install_test_leaf_bindings(endpoints.clone()).unwrap();
+    let secret = load_device_checkpoint_secret(secure.as_ref(), &account, &device).unwrap();
+    let mut old = crate::mls::persistence::restore_envelope(
+        &state.mls_checkpoint_for_scope(&scope).unwrap(),
+        &secret,
+        0,
+    )
+    .unwrap();
+    let replacement =
+        arkret_sdk::ArkretMlsIdentity::new_test_human_device(actor.clone(), device.clone())
+            .unwrap();
+    let package = fixture::claimed_mls_key_package(
+        replacement.key_package_record().unwrap(),
+        1_760_000_000_020,
+    );
+    let base = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x60; 32]);
+    let binding =
+        arkret_sdk::MlsGovernanceBindingPayload::new(scope.clone(), Some(base.clone()), 1, 2, 0)
+            .unwrap();
+    let artifacts = alice
+        .replace_member_endpoint(&package, &actor, Some(&binding))
+        .unwrap();
+    let accepted = fixture::accepted_mls_commit_with_binding(
+        alice.identity().actor_id.clone(),
+        &artifacts.commit,
+        binding,
+        0x61,
+    );
+    let current = accepted_mls_base_current(&scope, base.clone(), base, 1);
+    alice.install_accepted_commit(&accepted, &current).unwrap();
+    old.install_accepted_commit(&accepted, &current).unwrap();
+    alice.install_test_leaf_bindings(endpoints.clone()).unwrap();
+    old.install_test_leaf_bindings(endpoints.clone()).unwrap();
+    assert_eq!(old.epoch(), 2);
+    assert!(!old.is_active());
+    let seal = |group: &arkret_sdk::ArkretMlsGroup| {
+        let record = group.export_state_record().unwrap();
+        garth::mls::checkpoint::encrypt_state(
+            realm,
+            &record.group_id,
+            record.epoch,
+            &serde_json::to_vec(&record).unwrap(),
+            &secret,
+            &[0x62; 16],
+        )
+    };
+    state
+        .install_accepted_mls_transition(&scope, seal(&old), &accepted.event.event_id)
+        .unwrap()
+        .wait()
+        .await
+        .unwrap();
+    let delivery =
+        fixture::accepted_mls_welcome(&artifacts.welcome, actor, &accepted, 1_760_000_000_021);
+    state
+        .ingest_recipient_deliveries(&[
+            arkret_models_collaboration::device_messages::RecipientDelivery::MlsWelcome {
+                mls_welcome: delivery.clone(),
+            },
+        ])
+        .unwrap();
+    assert!(
+        has_pending_mls_welcome_for_endpoint(&state, &account, &device),
+        "the accepted replacement Commit evicted the old leaf; its epoch is not a joined checkpoint",
+    );
+    let mut joined = arkret_sdk::ArkretMlsGroup::join_from_verified_welcome_delivery(
+        replacement,
+        &delivery,
+        &accepted,
+    )
+    .unwrap();
+    joined.install_test_leaf_bindings(endpoints).unwrap();
+    let payload = alice
+        .encrypt_payload(
+            test_message_header(&alice, realm),
+            b"new incarnation content",
+        )
+        .unwrap();
+    assert!(old.decrypt_payload(&payload).is_err());
+    assert_eq!(
+        joined.decrypt_payload(&payload).unwrap(),
+        b"new incarnation content"
+    );
+    state
+        .install_accepted_mls_transition(&scope, seal(&alice), &accepted.event.event_id)
+        .unwrap()
+        .wait()
+        .await
+        .unwrap();
+    assert!(
+        has_pending_mls_welcome_for_endpoint(&state, &account, &device),
+        "another endpoint's active checkpoint does not join this recipient's leaf",
+    );
+    state
+        .install_accepted_mls_transition(&scope, seal(&joined), &accepted.event.event_id)
+        .unwrap()
+        .wait()
+        .await
+        .unwrap();
+    let before = state.mls_checkpoint_for_scope(&scope).unwrap();
+    assert!(!has_pending_mls_welcome_for_endpoint(
+        &state, &account, &device
+    ));
+    assert_eq!(state.mls_checkpoint_for_scope(&scope).unwrap(), before);
+    assert!(
+        joined.decrypt_payload(&payload).is_err(),
+        "the consumed receive key stays consumed"
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn committed_sender_credential_reconstructs_real_standard_mls_content_aad() {
     let mut state = temp_state_store("committed-content-aad");

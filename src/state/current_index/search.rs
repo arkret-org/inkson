@@ -383,6 +383,10 @@ impl CurrentIndex {
             None
         };
         let mut rows = Vec::new();
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let mut rejected = [0u32; 25];
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let scanned_entries = entries.len();
         let mut recheck_at = None;
         let mut used = 0;
         let mut consumed = after.map(str::to_owned);
@@ -392,6 +396,10 @@ impl CurrentIndex {
                 .latest::<SearchRecord>(&format!("{}search/{message}/", self.prefix), generation)
                 .await?
             else {
+                #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                {
+                    rejected[20] += 1;
+                }
                 consumed = Some(key);
                 continue;
             };
@@ -402,10 +410,18 @@ impl CurrentIndex {
             }
             consumed = Some(key);
             if size > 8 * 1024 * 1024 {
+                #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                {
+                    rejected[23] += 1;
+                }
                 continue;
             }
             used += size;
             let Some(create) = record.create else {
+                #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                {
+                    rejected[21] += 1;
+                }
                 continue;
             };
             // A disclosed current can advance before its signed original is
@@ -415,18 +431,51 @@ impl CurrentIndex {
                 || !self
                     .search_revision_is_current(&message, carrier, generation)
                     .await?
-                || !self
-                    .search_visible(&create, actor, generation, now, &mut recheck_at)
-                    .await?
+            {
+                #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                {
+                    rejected[22] += 1;
+                }
+                continue;
+            }
+            if !self
+                .search_visible(
+                    &create,
+                    actor,
+                    generation,
+                    now,
+                    &mut recheck_at,
+                    #[cfg(all(
+                        target_arch = "wasm32",
+                        feature = "wasm-localstorage-secrets-test"
+                    ))]
+                    &mut rejected,
+                )
+                .await?
             {
                 continue;
             }
             if let Some(revision) = record.revision {
                 if revision.commit.stream_position <= create.commit.stream_position
                     || !self
-                        .search_visible(&revision, actor, generation, now, &mut recheck_at)
+                        .search_visible(
+                            &revision,
+                            actor,
+                            generation,
+                            now,
+                            &mut recheck_at,
+                            #[cfg(all(
+                                target_arch = "wasm32",
+                                feature = "wasm-localstorage-secrets-test"
+                            ))]
+                            &mut rejected,
+                        )
                         .await?
                 {
+                    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                    if revision.commit.stream_position <= create.commit.stream_position {
+                        rejected[24] += 1;
+                    }
                     continue;
                 }
                 rows.push(create);
@@ -435,6 +484,9 @@ impl CurrentIndex {
                 rows.push(create);
             }
         }
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        tracing::warn!(phase = "index_search_gates", scanned_entries, returned_rows = rows.len(), rejected = ?rejected,
+            "local search lifecycle");
         Ok(SearchPage {
             rows,
             next,
@@ -479,14 +531,25 @@ impl CurrentIndex {
         generation: u64,
         now: chrono::DateTime<chrono::Utc>,
         recheck_at: &mut Option<chrono::DateTime<chrono::Utc>>,
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        rejected: &mut [u32; 25],
     ) -> anyhow::Result<bool> {
+        macro_rules! reject_search_candidate {
+            ($gate:literal) => {{
+                #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                {
+                    rejected[$gate] += 1;
+                }
+                return Ok(false);
+            }};
+        }
         let realm = &full.event.realm_id;
         if full
             .event
             .verify_producer_proof_self_consistency(realm.digest_suite_code().digest_suite())
             .is_err()
         {
-            return Ok(false);
+            reject_search_candidate!(0);
         }
         if self
             .latest::<SearchDisclosure>(
@@ -496,14 +559,14 @@ impl CurrentIndex {
             .await?
             .is_some_and(|disclosure| !matches!(disclosure, SearchDisclosure::Withheld(false)))
         {
-            return Ok(false);
+            reject_search_candidate!(1);
         }
         let progress = self.progress_at(realm.as_str(), generation).await?;
         if !progress_is_complete_cut(&progress, realm) {
-            return Ok(false);
+            reject_search_candidate!(2);
         }
         let Some(cut) = &progress.signed_snapshot else {
-            return Ok(false);
+            reject_search_candidate!(3);
         };
         // Recheck the installed current as well as the materialized terminal
         // bit, including candidates cached before current-redaction folding.
@@ -530,18 +593,18 @@ impl CurrentIndex {
             {
                 let redaction: arkret_models_collaboration::events_payloads::redaction::ObjectRedactionCurrentValue = serde_json::from_value(value)?;
                 redaction.validate_for_subject(&subject)?;
-                return Ok(false);
+                reject_search_candidate!(4);
             }
         }
         let (Some(floors), Some(policies)) = (&cut.search_floor, &cut.search_policies) else {
-            return Ok(false);
+            reject_search_candidate!(5);
         };
         let Some(head) = cut
             .stream_heads
             .iter()
             .find(|head| head.stream_ref == full.commit.stream_ref)
         else {
-            return Ok(false);
+            reject_search_candidate!(6);
         };
         if head.stream_position < full.commit.stream_position
             || (head.stream_position == full.commit.stream_position
@@ -557,7 +620,7 @@ impl CurrentIndex {
                     && floor.oldest_position <= full.commit.stream_position
             })
         {
-            return Ok(false);
+            reject_search_candidate!(7);
         }
         let Some(parent) = self
             .ready_selector(
@@ -569,10 +632,10 @@ impl CurrentIndex {
             )
             .await?
         else {
-            return Ok(false);
+            reject_search_candidate!(8);
         };
         let Some(parent_revision) = parent.parent_membership_revision(realm, actor) else {
-            return Ok(false);
+            reject_search_candidate!(9);
         };
         if let arkret_sdk::ScopeRef::Circle { circle_id, .. } = &full.event.scope_ref {
             let Some(CurrentState::Value {
@@ -589,7 +652,7 @@ impl CurrentIndex {
                 )
                 .await?
             else {
-                return Ok(false);
+                reject_search_candidate!(10);
             };
             let circle: arkret_models_collaboration::governance::circle::Circle =
                 serde_json::from_value(value)?;
@@ -605,7 +668,7 @@ impl CurrentIndex {
                 || circle.state
                     == arkret_models_collaboration::governance::circle::CircleState::Tombstoned
             {
-                return Ok(false);
+                reject_search_candidate!(11);
             }
             let Some(CurrentState::Value {
                 source_stream_ref,
@@ -622,7 +685,7 @@ impl CurrentIndex {
                 )
                 .await?
             else {
-                return Ok(false);
+                reject_search_candidate!(12);
             };
             let membership: arkret_wire::CircleMemberStateValue = serde_json::from_value(value)?;
             let CurrentState::Value {
@@ -637,7 +700,7 @@ impl CurrentIndex {
                     arkret_sdk::MembershipState::Join,
                 )
             {
-                return Ok(false);
+                reject_search_candidate!(13);
             }
         }
         let create_id = match full.event.kind {
@@ -657,18 +720,18 @@ impl CurrentIndex {
             )
             .await?;
         let Some(create) = record.and_then(|r| r.create) else {
-            return Ok(false);
+            reject_search_candidate!(14);
         };
         let payload: arkret_sdk::MessageCreatePayload =
             serde_json::from_value(serde_json::to_value(&create.event.payload)?)?;
         if payload.track_name != "discussion" {
-            return Ok(false);
+            reject_search_candidate!(15);
         }
         let Some(strand) = self
             .read_strand_at_generation(realm, &payload.strand_id, generation)
             .await?
         else {
-            return Ok(false);
+            reject_search_candidate!(16);
         };
         let strand_scope = match &strand.scope_circle_id {
             Some(circle_id) => arkret_sdk::ScopeRef::Circle {
@@ -686,7 +749,7 @@ impl CurrentIndex {
                 .get("discussion")
                 .is_some_and(|track| track.enabled != Some(false))
         {
-            return Ok(false);
+            reject_search_candidate!(17);
         }
         let mut active = Vec::new();
         for policy_id in policies {
@@ -700,7 +763,7 @@ impl CurrentIndex {
                 )
                 .await?
             else {
-                return Ok(false);
+                reject_search_candidate!(18);
             };
             let policy: arkret_models_collaboration::governance::operation_wire::Policy =
                 serde_json::from_value(value)?;
@@ -742,9 +805,13 @@ impl CurrentIndex {
             at: now,
             facts: &facts,
         };
-        Ok(arkret_policy::signal_authorization::product_policies_allow(
-            &active, &operation,
-        ))
+        let allowed =
+            arkret_policy::signal_authorization::product_policies_allow(&active, &operation);
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        if !allowed {
+            rejected[19] += 1;
+        }
+        Ok(allowed)
     }
 
     #[cfg(target_arch = "wasm32")]

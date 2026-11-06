@@ -252,19 +252,37 @@ pub(crate) async fn install_accepted_welcome(
     let snapshot_secret =
         super::load_device_checkpoint_secret(secure_store.as_ref(), authority, device_id)
             .map_err(describe)?;
+    let endpoint = welcome_endpoint_identity(delivery, authority, device_id)?;
     if let Some(installed) = state.read(|store| {
         store.mls_checkpoint_for_scope_and_group(
             &transition.effective_scope,
             transition.mls_group_id.as_str(),
         )
-    }) && installed.epoch >= transition.next_epoch
-    {
-        // A replayed or late Welcome must never roll the local group back to
-        // the join epoch.
-        return Ok(MlsInstallOutcome::AlreadyCurrent);
+    }) {
+        if installed.epoch > transition.next_epoch {
+            return Ok(MlsInstallOutcome::AlreadyCurrent);
+        }
+        if installed.epoch == transition.next_epoch {
+            if installed.group_state_event_id.as_ref() != Some(&accepted_commit.event.event_id) {
+                return Err("Welcome conflicts with the installed accepted MLS Event".to_owned());
+            }
+            let group = crate::mls::persistence::restore_envelope(
+                &installed,
+                &snapshot_secret,
+                installed.epoch,
+            )
+            .map_err(describe)?;
+            // A replacement Commit first evicts this endpoint's old leaf. Its
+            // epoch alone does not prove the new leaf's Welcome was joined.
+            if group.is_active()
+                && group.identity().actor_id == delivery.recipient_actor_id
+                && group.local_endpoint_identity() == endpoint
+            {
+                return Ok(MlsInstallOutcome::AlreadyCurrent);
+            }
+        }
     }
 
-    let endpoint = welcome_endpoint_identity(delivery, authority, device_id)?;
     let private_state = super::load_mls_key_package_identity_state(
         secure_store.as_ref(),
         authority,
@@ -428,6 +446,29 @@ pub(crate) async fn deliver_owed_keypackage_consumes(
     }
 }
 
+fn scope_needs_welcome(
+    store: &crate::state::LocalStateStore,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    scope: &arkret_sdk::ScopeRef,
+) -> Result<bool, String> {
+    let Some(checkpoint) = store.mls_checkpoint_for_scope(scope) else {
+        return Ok(true);
+    };
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let secret = super::load_device_checkpoint_secret(secure_store.as_ref(), authority, device_id)
+        .map_err(describe)?;
+    let group = crate::mls::persistence::restore_envelope(&checkpoint, &secret, checkpoint.epoch)
+        .map_err(describe)?;
+    Ok(!group.is_active()
+        || group.identity().actor_id != arkret_sdk::ActorId::account(authority.clone())
+        || group.local_endpoint_identity()
+            != arkret_sdk::MlsEndpointIdentity::human_device(
+                authority.principal_id.clone(),
+                device_id.clone(),
+            ))
+}
+
 /// Whether this endpoint retains a Welcome that still needs installation.
 pub(crate) fn has_pending_mls_welcome_for_endpoint(
     store: &crate::state::LocalStateStore,
@@ -443,9 +484,8 @@ pub(crate) fn has_pending_mls_welcome_for_endpoint(
                 device_id.clone(),
             );
             garth::mls::welcome_matches_endpoint(delivery, &endpoint)
-                && store
-                    .mls_checkpoint_for_scope(&delivery.effective_scope)
-                    .is_none()
+                && scope_needs_welcome(store, authority, device_id, &delivery.effective_scope)
+                    .unwrap_or(true)
         })
 }
 
@@ -459,7 +499,7 @@ pub(crate) fn has_pending_mls_welcome_for_endpoint(
 /// resolve each one's accepted Commit on the scope's own independent stream,
 /// and install it.
 ///
-/// Scopes this device already holds a group for are skipped: later epochs
+/// Scopes this device already holds an active leaf for are skipped: later epochs
 /// arrive as accepted transitions on that scope's stream
 /// ([`install_accepted_transition`]), never by replaying the join Welcome.
 ///
@@ -489,11 +529,9 @@ pub(crate) async fn converge_accepted_mls_artifacts(
         if !garth::mls::welcome_matches_endpoint(&delivery, &endpoint) {
             continue;
         }
-        if state.read(|store| {
-            store
-                .mls_checkpoint_for_scope(&delivery.effective_scope)
-                .is_some()
-        }) {
+        if !state.read(|store| {
+            scope_needs_welcome(store, authority, device_id, &delivery.effective_scope)
+        })? {
             continue;
         }
         let accepted_commit = match accepted_commit_for_welcome(api, &delivery).await {
