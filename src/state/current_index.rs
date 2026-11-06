@@ -2262,6 +2262,7 @@ impl CurrentIndex {
             resolved_preview_streams,
             snapshots,
             None,
+            None,
         )
         .await
     }
@@ -2275,21 +2276,28 @@ impl CurrentIndex {
         resolved_preview_streams: &std::collections::BTreeSet<arkret_sdk::CommitStreamRef>,
         snapshots: &BTreeMap<String, crate::realm_events_engine::VerifiedCurrentSnapshot>,
         account_scope_changes: Option<&dyn Fn() -> anyhow::Result<BTreeSet<String>>>,
+        verified_history: Option<&crate::realm_events_engine::VerifiedAccountFrame>,
     ) -> anyhow::Result<CurrentStage> {
         let snapshots = snapshots
             .iter()
             .map(|(realm, proof)| (realm.clone(), proof.snapshot()))
             .collect();
-        self.stage_current_install(
+        self.stage_current_install_with_history(
             committed_generation,
             Some(frame),
             None,
             resolved_preview_streams,
             &snapshots,
-            &|| Ok(()),
+            &|| {
+                if let Some(history) = verified_history {
+                    history.check_session()?;
+                }
+                Ok(())
+            },
             None,
             None,
             account_scope_changes,
+            verified_history,
         )
         .await
     }
@@ -2462,6 +2470,44 @@ impl CurrentIndex {
             >,
         >,
         account_scope_changes: Option<&dyn Fn() -> anyhow::Result<BTreeSet<String>>>,
+    ) -> anyhow::Result<CurrentStage> {
+        self.stage_current_install_with_history(
+            committed_generation,
+            frame,
+            standalone,
+            resolved_preview_streams,
+            snapshots,
+            guard,
+            bound,
+            targeted_consent,
+            account_scope_changes,
+            None,
+        )
+        .await
+    }
+
+    async fn stage_current_install_with_history(
+        &self,
+        committed_generation: impl FnOnce() -> anyhow::Result<u64>,
+        frame: Option<&AccountSubscribeFrame>,
+        standalone: Option<(String, arkret_sdk::sync::RealmSyncEntry)>,
+        resolved_preview_streams: &std::collections::BTreeSet<arkret_sdk::CommitStreamRef>,
+        snapshots: &BTreeMap<String, &arkret_sdk::RealmStateSnapshot>,
+        guard: &dyn Fn() -> anyhow::Result<()>,
+        bound: Option<
+            arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+                arkret_sdk::RealmId,
+                arkret_sdk::RealmStateSnapshot,
+            >,
+        >,
+        targeted_consent: Option<
+            arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+                arkret_sdk::ConsentCurrentReadRequestBody,
+                arkret_sdk::ConsentCurrentReadResponseBody,
+            >,
+        >,
+        account_scope_changes: Option<&dyn Fn() -> anyhow::Result<BTreeSet<String>>>,
+        verified_history: Option<&crate::realm_events_engine::VerifiedAccountFrame>,
     ) -> anyhow::Result<CurrentStage> {
         let lease = self.acquire_lease().await?;
         guard()?;
@@ -2947,6 +2993,33 @@ impl CurrentIndex {
                 }
                 progress_updates.insert(realm.clone(), plan.progress.clone());
             }
+        }
+        // Recovery scans are independently admitted originals, even when the
+        // Account crop does not repeat their Events. Index them at this same
+        // durable pointer; they supply no current authority or Account cursor.
+        if let Some(history) = verified_history {
+            history.check_session()?;
+            for page in history.own_pages() {
+                self.stage_recovered_search_rows(
+                    page.rows()?,
+                    expected_generation,
+                    &suffix,
+                    &mut writes,
+                    &mut unversioned,
+                )
+                .await?;
+            }
+            for page in history.pages() {
+                self.stage_recovered_search_rows(
+                    page.rows(),
+                    expected_generation,
+                    &suffix,
+                    &mut writes,
+                    &mut unversioned,
+                )
+                .await?;
+            }
+            history.check_session()?;
         }
         for (realm, progress) in progress_updates {
             if let Some(cut) = &progress.signed_snapshot {
@@ -5776,6 +5849,7 @@ mod tests {
                             &next_frame,
                             &Default::default(),
                             &Default::default(),
+                            None,
                             None,
                         )
                         .await

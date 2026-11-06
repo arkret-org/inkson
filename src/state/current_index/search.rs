@@ -121,6 +121,22 @@ fn target(full: &CommittedEventFullView) -> anyhow::Result<Option<MessageId>> {
 }
 
 impl CurrentIndex {
+    pub(super) async fn stage_recovered_search_rows(
+        &self,
+        rows: &[arkret_sdk::CommittedEventView],
+        committed: u64,
+        suffix: &str,
+        writes: &mut BTreeMap<String, Vec<u8>>,
+        targets: &mut BTreeMap<String, Vec<u8>>,
+    ) -> anyhow::Result<()> {
+        let incoming = arkret_sdk::sync::RealmSyncEntry {
+            committed_events: Some(rows.to_vec()),
+            ..Default::default()
+        };
+        self.stage_search_rows(&incoming, None, committed, suffix, writes, targets)
+            .await
+    }
+
     async fn stage_search_disclosure(
         &self,
         event: &arkret_sdk::EventId,
@@ -2059,7 +2075,7 @@ pub(crate) mod tests {
         revision
     }
 
-    async fn setup() -> (
+    pub(crate) async fn setup() -> (
         tempfile::TempDir,
         CurrentIndex,
         arkret_sdk::RealmStateSnapshot,

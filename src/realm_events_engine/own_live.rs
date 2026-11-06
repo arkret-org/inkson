@@ -1366,6 +1366,16 @@ pub(super) mod tests {
         arkret_sdk::RealmStateSnapshot,
         serde_json::Value,
     ) {
+        content_burst_fixture_with_membership(false)
+    }
+
+    fn content_burst_fixture_with_membership(
+        member: bool,
+    ) -> (
+        Vec<CommittedEventView>,
+        arkret_sdk::RealmStateSnapshot,
+        serde_json::Value,
+    ) {
         use crate::test_support::committed_event::{
             FixtureStation, fixture_time, verified_realm_fixture_as,
             verified_realm_fixture_from_genesis,
@@ -1402,6 +1412,15 @@ pub(super) mod tests {
         );
         let strand_id = arkret_sdk::StrandId::from_event_id(&first[0].event.event_id);
         let mut entries = vec![entry];
+        if member {
+            entries.push((
+                "ak.member.state".to_owned(),
+                serde_json::json!({
+                    "realm_id": origin.realm_id, "member_id": origin.genesis_event.actor_id,
+                    "membership":"join", "reason":"creator_membership"
+                }),
+            ));
+        }
         for number in 0..20 {
             entries.push((
                 "ak.message.create".to_owned(),
@@ -2699,6 +2718,123 @@ pub(super) mod tests {
         )
         .unwrap();
         assert_eq!(visible.chats.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn recovered_account_history_is_searchable_without_repeating_frame_rows() {
+        let (_directory, index, ..) = crate::state::current_index::search::tests::setup().await;
+        let (rows, snapshot, key) = content_burst_fixture_with_membership(true);
+        let originals = rows
+            .iter()
+            .filter_map(|row| match row {
+                CommittedEventView::Full(full) => Some(full.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let actor = originals[0].event.actor_id.clone();
+        let stream = snapshot.visible_stream_heads[0].stream_ref.clone();
+        let mut bodies = vec![
+            serde_json::to_value(&snapshot).unwrap(),
+            serde_json::json!({"committed_events": rows, "readable_floor": {
+                "oldest_position": 0, "floor_commit_id": rows[0].commit().commit_id,
+                "floor_reason": "stream_start"}, "truncated": false}),
+        ];
+        bodies.extend((0..originals.len()).map(|_| serde_json::json!({"__signer_key":key})));
+        let (client, _, server) = http(bodies);
+        let bound = client.snapshot_head(&snapshot.realm_id).await.unwrap();
+        let (_, pages) = replay(&client, &snapshot.realm_id, &stream, &bound, None)
+            .await
+            .unwrap();
+        server.join().unwrap();
+        let mut proof = VerifiedAccountFrame::test_own_context(client);
+        proof.own_pages = pages;
+        proof.current_snapshots.insert(
+            snapshot.realm_id.to_string(),
+            VerifiedCurrentSnapshot {
+                snapshot: snapshot.clone(),
+            },
+        );
+        let frame = serde_json::from_value(serde_json::json!({"kind":"delta",
+        "realms":{snapshot.realm_id.as_str():{"current":{
+            "realm_id":snapshot.realm_id,"governance_generation":"0",
+            "stream_heads":snapshot.visible_stream_heads,"entries":snapshot.current_state_entries
+        }}}}))
+        .unwrap();
+        let abandoned = index
+            .stage_committed_frame_with_snapshots(
+                || Ok(0),
+                &frame,
+                &Default::default(),
+                proof.current_snapshots(),
+                None,
+                Some(&proof),
+            )
+            .await
+            .unwrap();
+        drop(abandoned);
+        assert!(
+            index
+                .read_search_page(
+                    &actor,
+                    None,
+                    crate::test_support::committed_event::fixture_time(20)
+                )
+                .await
+                .unwrap()
+                .rows
+                .is_empty(),
+            "an abandoned recovery must not publish searchable originals"
+        );
+        let mut stage = index
+            .stage_committed_frame_with_snapshots(
+                || Ok(0),
+                &frame,
+                &Default::default(),
+                proof.current_snapshots(),
+                None,
+                Some(&proof),
+            )
+            .await
+            .unwrap();
+        assert!(
+            stage
+                .filtered_frame()
+                .unwrap()
+                .realms
+                .as_ref()
+                .unwrap()
+                .entries
+                .values()
+                .all(|entry| entry.committed_events.is_none())
+        );
+        stage.arm_account_commit();
+        stage.finish();
+        assert!(
+            index
+                .read_parent_membership_revision_at_complete_cut(&snapshot.realm_id, &actor)
+                .await
+                .unwrap()
+                .is_some(),
+            "Search runs with an authorized member at a complete current cut"
+        );
+        let page = index
+            .read_search_page(
+                &actor,
+                None,
+                crate::test_support::committed_event::fixture_time(20),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            page.rows.len(),
+            originals.len(),
+            "the recovered exact original must enter local Search at publication"
+        );
+        assert!(
+            originals
+                .iter()
+                .all(|original| page.rows.contains(original))
+        );
     }
 
     #[tokio::test]

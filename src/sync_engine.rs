@@ -1191,6 +1191,7 @@ impl InksonAccountProjector {
                 &Default::default(),
                 &Default::default(),
                 None,
+                None,
             )
             .await
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
@@ -1293,6 +1294,7 @@ impl InksonAccountProjector {
                         .state_store
                         .read(|store| store.account_scope_resets(frame))
                 }),
+                Some(verified),
             )
             .await
             .map_err(crate::state::current_index::current_stage_error)?;
