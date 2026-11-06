@@ -1531,14 +1531,78 @@ fn contact_list_rows(
 }
 
 pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
+    page_with_header(scope, context, route, Rc::new(|_| empty()))
+}
+
+pub(crate) fn page_with_header(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    route: Route,
+    header: crate::presentation::widgets::WorkspaceHeader,
+) -> View {
     let advanced = matches!(route, Route::SettingsSection { .. });
-    contacts_panel(scope, context, advanced)
+    contacts_panel_with_header(scope, context, advanced, header)
 }
 pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool) -> View {
+    contacts_panel_with_header(scope, context, advanced, Rc::new(|_| empty()))
+}
+
+fn contacts_panel_with_header(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    advanced: bool,
+    header: crate::presentation::widgets::WorkspaceHeader,
+) -> View {
     let reload = scope.cage(0_u64);
     let selected = scope.cage(String::new());
     let query = scope.cage(String::new());
     let modal = scope.cage(false);
+    let layout = {
+        let context = context.clone();
+        move |scope: &Scope, list: View, detail: View| {
+            stack(
+                "contacts-layout",
+                vec![
+                    stack(
+                        "contacts-list-pane",
+                        vec![
+                            line(
+                                "workspace-list-heading",
+                                vec![
+                                    heading(
+                                        2,
+                                        "workspace-list-title",
+                                        context.translated(scope, "contacts.title"),
+                                    ),
+                                    Box::new(
+                                        sapid::button()
+                                            .unstyled()
+                                            .class(
+                                                "btn icon add-contact-button workspace-add-button",
+                                            )
+                                            .name(context.translated(scope, "contacts.add_button"))
+                                            .fill(crate::components::ui_icon("plus"))
+                                            .on_press(move || modal.revise(|value| *value = true)),
+                                    ),
+                                ],
+                            ),
+                            crate::presentation::widgets::navigation_search(
+                                context.translated(scope, "sidebar.search_contacts"),
+                                query,
+                            ),
+                            list,
+                        ],
+                    ),
+                    crate::presentation::widgets::workspace_detail(
+                        scope,
+                        &header,
+                        "contacts-detail-pane",
+                        detail,
+                    ),
+                ],
+            )
+        }
+    };
     let load = {
         let ctx = context.clone();
         crate::presentation::widgets::resource(scope, move || {
@@ -1578,13 +1642,18 @@ pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool)
         reactive(load.data, move |scope, result| {
             let (rows, owned_agents) = match result {
                 None => {
-                    return paragraph(
+                    let loading = paragraph(
                         "muted contacts-loading",
                         ctx.translated(scope, "contacts.loading"),
                     );
+                    return if advanced {
+                        loading
+                    } else {
+                        layout(scope, empty(), loading)
+                    };
                 }
                 Some(Err(error)) => {
-                    return stack(
+                    let error = stack(
                         "event error-banner contacts-error",
                         vec![
                             paragraph("muted", error),
@@ -1599,6 +1668,11 @@ pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool)
                             ),
                         ],
                     );
+                    return if advanced {
+                        error
+                    } else {
+                        layout(scope, empty(), error)
+                    };
                 }
                 Some(Ok(rows)) => rows,
             };
@@ -1689,18 +1763,10 @@ pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool)
                 return if advanced {
                     empty_state
                 } else {
-                    stack(
-                        "contacts-layout",
-                        vec![
-                            stack(
-                                "contacts-list-pane",
-                                vec![paragraph(
-                                    "muted",
-                                    ctx.translated(scope, "contacts.empty_title"),
-                                )],
-                            ),
-                            stack("contacts-detail-pane", vec![empty_state]),
-                        ],
+                    layout(
+                        scope,
+                        paragraph("muted", ctx.translated(scope, "contacts.empty_title")),
+                        empty_state,
                     )
                 };
             }
@@ -1827,22 +1893,7 @@ pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool)
                         }
                     }
                 });
-            stack(
-                "contacts-layout",
-                vec![
-                    stack(
-                        "contacts-list-pane",
-                        vec![
-                            crate::presentation::widgets::navigation_search(
-                                ctx.translated(scope, "sidebar.search_contacts"),
-                                query,
-                            ),
-                            list,
-                        ],
-                    ),
-                    stack("contacts-detail-pane", vec![detail]),
-                ],
-            )
+            layout(scope, list, detail)
         })
     };
     let ctx = context.clone();
@@ -1873,40 +1924,7 @@ pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool)
         } else {
             "contacts-page contacts-panel"
         },
-        vec![
-            line(
-                "contacts-page-heading",
-                vec![
-                    heading(
-                        2,
-                        "workspace-list-title",
-                        context.translated(
-                            scope,
-                            if advanced {
-                                "settings.section.contacts"
-                            } else {
-                                "contacts.title"
-                            },
-                        ),
-                    ),
-                    if advanced {
-                        empty()
-                    } else {
-                        action(
-                            scope,
-                            context.clone(),
-                            "add-contact-button",
-                            "contacts.add_button",
-                            "primary",
-                            true,
-                            move || modal.revise(|v| *v = true),
-                        )
-                    },
-                ],
-            ),
-            body,
-            popup,
-        ],
+        vec![body, popup],
     )
 }
 

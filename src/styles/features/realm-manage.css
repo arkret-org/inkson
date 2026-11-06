@@ -26,8 +26,8 @@
 }
 
 .realm-manage-list-tools {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto;
+  display: flex;
+  justify-content: flex-end;
   align-items: center;
   gap: 12px;
 }

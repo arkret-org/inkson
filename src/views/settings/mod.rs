@@ -533,8 +533,17 @@ mod preferences;
 mod profile;
 
 pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
+    page_with_header(scope, context, route, Rc::new(|_| empty()))
+}
+
+pub(crate) fn page_with_header(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    route: Route,
+    header: crate::presentation::widgets::WorkspaceHeader,
+) -> View {
     if matches!(&route, Route::SettingsSection { section, .. } if section == "agents") {
-        return crate::views::agents::page(scope, context, route);
+        return crate::views::agents::page_with_header(scope, context, route, header);
     }
     let active_section = SettingsSection::from_slug(route.settings_section());
     let nav_filter = scope.cage(String::new());
@@ -691,6 +700,14 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
                 stack(
                     "settings-sidebar-column",
                     vec![
+                        line(
+                            "workspace-list-heading",
+                            vec![heading(
+                                2,
+                                "workspace-list-title",
+                                context.translated(scope, "nav.settings"),
+                            )],
+                        ),
                         stack(
                             "settings-nav-search",
                             vec![widgets::input_prompt(
@@ -719,19 +736,11 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
                         nav,
                     ],
                 ),
-                stack(
+                crate::presentation::widgets::workspace_detail(
+                    scope,
+                    &header,
                     "settings-content-column",
-                    vec![
-                        stack(
-                            "event settings-content-hero",
-                            vec![heading(
-                                2,
-                                "settings-content-title",
-                                context.translated(scope, active_section.label_key()),
-                            )],
-                        ),
-                        content,
-                    ],
+                    content,
                 ),
             ],
         )],

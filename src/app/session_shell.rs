@@ -170,8 +170,32 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
     let content = route_boundary(scope, context.clone(), {
         let context = context.clone();
         let ui = ui.clone();
-        move |scope, route| super::route_surface::surface(scope, context.clone(), route, ui.clone())
+        move |scope, route| {
+            let header_context = context.clone();
+            let header_ui = ui.clone();
+            let header: WorkspaceHeader = Rc::new(move |scope| {
+                topbar(scope, header_context.clone(), header_ui.clone(), unread)
+            });
+            super::route_surface::surface(scope, context.clone(), route, ui.clone(), header)
+        }
     });
+    let outer_header = reactive_distinct(
+        scope.bond({
+            let context = context.clone();
+            move || super::sidebar::has_page_columns(&context.route.get())
+        }),
+        {
+            let context = context.clone();
+            let ui = ui.clone();
+            move |scope, page_columns| {
+                if page_columns {
+                    empty()
+                } else {
+                    topbar(scope, context.clone(), ui.clone(), unread)
+                }
+            }
+        },
+    );
     let class = scope.bond({
         let context = context.clone();
         move || {
@@ -242,10 +266,7 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
                     }))
                     .fill(vec![
                         super::sidebar::workspace_list(scope, context.clone(), ui.clone()),
-                        block(
-                            "main realm",
-                            vec![topbar(scope, context.clone(), ui.clone(), unread), content],
-                        ),
+                        block("main realm", vec![outer_header, content]),
                     ]),
             ),
             super::notifications_drawer::notifications_drawer(
@@ -668,7 +689,11 @@ fn topbar(
                 .map(|node| node.title.clone())
                 .unwrap_or_else(|| context.tr(route_label_key(&route)));
             let mut children =
-                vec![Box::new(text().class("topbar-context-title").content(title)) as View];
+                if matches!(route, Route::Contacts) || super::sidebar::is_agents_route(&route) {
+                    Vec::new()
+                } else {
+                    vec![Box::new(text().class("topbar-context-title").content(title)) as View]
+                };
             if route_uses_realm_context(&route) && !id.is_empty() {
                 children.push(Box::new(
                     text()

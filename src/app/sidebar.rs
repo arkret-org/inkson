@@ -756,6 +756,22 @@ pub(super) fn workspace_list_kind(route: &Route) -> Option<bool> {
     }
 }
 
+pub(super) fn has_page_columns(route: &Route) -> bool {
+    matches!(
+        route,
+        Route::Contacts
+            | Route::Settings
+            | Route::SettingsDevices
+            | Route::SettingsDevicesPair
+            | Route::SettingsRecovery
+            | Route::SettingsSection { .. }
+            | Route::NotificationsSettings
+            | Route::Recovery
+            | Route::Audit
+            | Route::Developer
+    )
+}
+
 pub(super) fn sidebar(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
     let home_context = context.clone();
     let brand = Box::new(

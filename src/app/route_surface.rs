@@ -82,6 +82,7 @@ pub(super) fn surface(
     context: Rc<InksonContext>,
     route: Route,
     ui: Rc<super::shell_state::ShellState>,
+    header: WorkspaceHeader,
 ) -> View {
     let controls = context
         .state_store
@@ -139,7 +140,7 @@ pub(super) fn surface(
     }
     let content = match &route {
         Route::SettingsSection { section, .. } if section == "agents" => {
-            crate::views::agents::page(scope, context.clone(), route.clone())
+            crate::views::agents::page_with_header(scope, context.clone(), route.clone(), header)
         }
         Route::Login | Route::AuthCallback => {
             crate::views::login::page(scope, context.clone(), route.clone())
@@ -156,7 +157,9 @@ pub(super) fn surface(
                 .read(|store| personal_control_realm_id(&store.load())),
         ),
         Route::ContactsManage => super::manage_pages::contacts_page(scope, context.clone(), ui),
-        Route::Contacts => crate::views::contacts::page(scope, context.clone(), route.clone()),
+        Route::Contacts => {
+            crate::views::contacts::page_with_header(scope, context.clone(), route.clone(), header)
+        }
         Route::Setup | Route::SetupSection { .. } => {
             crate::views::setup::page(scope, context.clone(), route.clone())
         }
@@ -196,7 +199,9 @@ pub(super) fn surface(
             }
         }
         Route::Search => crate::views::global_search::page(scope, context.clone(), route.clone()),
-        _ => crate::views::settings::page(scope, context.clone(), route.clone()),
+        _ => {
+            crate::views::settings::page_with_header(scope, context.clone(), route.clone(), header)
+        }
     };
     Box::new(view().class("realm-body").fill(content))
 }

@@ -8,6 +8,7 @@ pub(crate) mod model;
 mod tests;
 
 pub use admin::page;
+pub(crate) use admin::page_with_header;
 pub use components::{
     ActionApproveDialogProps, action_approve_dialog, actor_kind_badge, draft_approval_panel,
 };

@@ -43,6 +43,15 @@ struct AgentPage {
     replace_open: Cage<bool>,
 }
 pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
+    page_with_header(scope, context, route, Rc::new(|_| empty()))
+}
+
+pub(crate) fn page_with_header(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    route: Route,
+    header: crate::presentation::widgets::WorkspaceHeader,
+) -> View {
     let filter = match route {
         Route::SettingsSection { section, filter } if section == "agents" => {
             normalize_agent_filter(&filter).to_owned()
@@ -171,9 +180,13 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
             let refresh_context = context.clone();
             let begin = state.clone();
             children.push(line(
-                "event-head",
+                "workspace-list-heading",
                 vec![
-                    plain("Agents"),
+                    heading(
+                        2,
+                        "workspace-list-title",
+                        context.translated(scope, "settings.section.agents"),
+                    ),
                     line(
                         "actions agent-admin-list-actions",
                         vec![
@@ -360,10 +373,21 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
     );
     stack(
         "agent-admin-page agent-admin",
-        vec![
-            status(controller.last_op_status),
-            line("agent-admin-layout", vec![list, detail]),
-        ],
+        vec![line(
+            "agent-admin-layout",
+            vec![
+                list,
+                crate::presentation::widgets::workspace_detail(
+                    scope,
+                    &header,
+                    "agent-admin-detail-content",
+                    stack(
+                        "agent-admin-detail-stack",
+                        vec![status(controller.last_op_status), detail],
+                    ),
+                ),
+            ],
+        )],
     )
 }
 fn agent_detail_source(

@@ -10,6 +10,20 @@ use super::context::InksonContext;
 
 pub type View = Box<dyn Widget>;
 
+pub(crate) type WorkspaceHeader = Rc<dyn Fn(&Scope) -> View>;
+
+pub(crate) fn workspace_detail(
+    scope: &Scope,
+    header: &WorkspaceHeader,
+    class: &str,
+    content: View,
+) -> View {
+    Box::new(view().class("workspace-detail-column").fill(vec![
+        header(scope),
+        Box::new(view().class(class.to_owned()).fill(content)),
+    ]))
+}
+
 /// Internal routes publish history themselves and retain mounted application state.
 pub fn internal_link() -> glory::ui::Link {
     let link = glory::ui::link();

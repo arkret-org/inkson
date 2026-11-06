@@ -167,23 +167,13 @@ pub(super) fn realms_page(scope: &Scope, context: Rc<InksonContext>, ui: Rc<Shel
                         vec![
                             block(
                                 "realm-manage-list-tools",
-                                vec![
-                                    input_field(
-                                        context.clone(),
-                                        "manage-realms",
-                                        context.translated(scope, "sidebar.search_realms"),
-                                        ui.realm_query,
-                                        Purpose::Text,
-                                    ),
-                                    nav(
-                                        context.clone(),
-                                        Route::PrincipalControl,
-                                        "btn sm secondary realm-manage-pcr-link",
-                                        context
-                                            .translated(scope, "manage.principal_control_button"),
-                                        "key",
-                                    ),
-                                ],
+                                vec![nav(
+                                    context.clone(),
+                                    Route::PrincipalControl,
+                                    "btn sm secondary realm-manage-pcr-link",
+                                    context.translated(scope, "manage.principal_control_button"),
+                                    "key",
+                                )],
                             ),
                             rows,
                         ],
