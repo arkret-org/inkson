@@ -1006,7 +1006,7 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
             });
             (
                 ui.account_open.get(),
-                (account, device, device_name, has_session),
+                (account, device, has_session),
                 (
                     labels.label,
                     labels.detail,
@@ -1025,7 +1025,7 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
         move |scope,
               (
             open,
-            (account, device, device_name, has_session),
+            (account, device, has_session),
             (label, detail, handles_label, handles_title),
             (principal, blob),
             server,
@@ -1131,25 +1131,12 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
                             block(
                                 "account-menu__value",
                                 vec![
-                                    block(
-                                        "account-menu__device-text",
-                                        vec![
-                                            account_menu_text(
-                                                "account-menu__device-name",
-                                                if device_name.trim().is_empty() {
-                                                    context.tr("settings.devices.this_device")
-                                                } else {
-                                                    device_name
-                                                },
-                                            ),
-                                            account_menu_identity(
-                                                scope,
-                                                "mono account-menu__device-id",
-                                                short_protocol_id(&device),
-                                                &device,
-                                                "account-device",
-                                            ),
-                                        ],
+                                    account_menu_identity(
+                                        scope,
+                                        "mono account-menu__device-id",
+                                        short_protocol_id(&device),
+                                        &device,
+                                        "account-device",
                                     ),
                                     account_menu_copy(
                                         scope,

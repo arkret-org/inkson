@@ -400,6 +400,7 @@ pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Vary
         if options.is_empty() {
             return empty();
         }
+        let multiple_accounts = options.len() > 1;
         let selecting = root.clone();
         let adding = root.clone();
         let busy = root.busy;
@@ -439,38 +440,48 @@ pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Vary
                 }
             }
         };
-        #[cfg(target_arch = "wasm32")]
-        let picker = Box::new(web_account_picker(
-            scope,
-            context.translated(scope, "app.account.switch"),
-            ready,
-            selection,
-            options,
-            on_select,
-        )) as View;
-        #[cfg(not(target_arch = "wasm32"))]
-        let picker = {
-            use crate::presentation::native_choice::{
-                NativeChoiceOption, NativeChoiceProps, native_choice,
-            };
-            native_choice(
-                scope,
-                NativeChoiceProps::new(
-                    "account-switcher",
+        let picker = if multiple_accounts {
+            #[cfg(target_arch = "wasm32")]
+            {
+                Box::new(web_account_picker(
+                    scope,
                     context.translated(scope, "app.account.switch"),
+                    ready,
                     selection,
-                    options
-                        .into_iter()
-                        .map(|(value, label)| NativeChoiceOption::new(value, label))
-                        .collect(),
+                    options,
                     on_select,
+                )) as View
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                use crate::presentation::native_choice::{
+                    NativeChoiceOption, NativeChoiceProps, native_choice,
+                };
+                native_choice(
+                    scope,
+                    NativeChoiceProps::new(
+                        "account-switcher",
+                        context.translated(scope, "app.account.switch"),
+                        selection,
+                        options
+                            .into_iter()
+                            .map(|(value, label)| NativeChoiceOption::new(value, label))
+                            .collect(),
+                        on_select,
+                    )
+                    .enabled(ready)
+                    .class("select account-picker__select"),
                 )
-                .enabled(ready)
-                .class("select account-picker__select"),
-            )
+            }
+        } else {
+            empty()
         };
         stack(
-            "account-picker",
+            if multiple_accounts {
+                "account-picker"
+            } else {
+                "account-picker account-picker-single"
+            },
             vec![
                 picker,
                 Box::new(

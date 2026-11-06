@@ -141,7 +141,7 @@
 
 .account-menu__row {
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
   gap: 8px;
   align-items: center;
   font-size: 12px;
@@ -168,30 +168,12 @@
   min-width: 0;
 }
 
-.account-menu__device-text {
-  display: grid;
-  flex: 1 1 auto;
-  gap: 2px;
-  min-width: 0;
-}
-
-.account-menu__device-name,
 .account-menu__device-id {
   display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.account-menu__device-name {
-  color: var(--text);
-  font-weight: 650;
-}
-
-.account-menu__device-id {
-  color: var(--text-3);
-  font-size: 11px;
 }
 
 .account-menu__copy {
@@ -209,9 +191,9 @@
 }
 
 .account-menu__actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  flex-wrap: wrap;
   padding-top: 8px;
   border-top: 1px solid var(--border);
 }
@@ -274,6 +256,10 @@
   padding-top: 12px;
   border-top: 1px solid var(--border);
 }
+
+.account-picker.account-picker-single { grid-template-columns: minmax(0, 1fr); }
+.account-picker-single .account-picker__add { width: 100%; justify-self: stretch; }
+.account-menu__actions > * { min-width: 0; justify-content: center; }
 
 @media (max-width: 480px) {
   .account-picker {

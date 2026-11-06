@@ -116,7 +116,9 @@ test("topbar account menu shows profile identity and current device", async ({ p
   await expect(byClass(menu, "who")).toHaveText("inkson");
   await expect(byClass(menu, "account-menu__avatar")).toHaveClass(/generated-avatar/);
   await expect(menu.locator("svg.account-menu__avatar")).toBeVisible();
-  await expect(byClass(menu, "account-menu__device-name")).toHaveText("Current device");
+  await expect(byClass(menu, "account-menu__device-name")).toHaveCount(0);
+  await expect(byClass(menu, "account-picker__select")).toHaveCount(0);
+  await expect(byClass(menu, "account-picker__add")).toBeVisible();
   await menu.getByRole("button", { name: "Copy device ID", exact: true }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("ak:device:01964137-0000-7000-8000-0000000000a1");
   await expect(byClass(page, "account-menu-session-state")).toHaveCount(0);
@@ -137,9 +139,29 @@ test("topbar account menu shows profile identity and current device", async ({ p
   expect(Math.abs(logoutBox!.y - settingsBox!.y)).toBeLessThan(2);
   expect(refreshBox!.x).toBeLessThan(logoutBox!.x);
   expect(logoutBox!.x).toBeLessThan(settingsBox!.x);
+  expect(Math.abs(refreshBox!.width - settingsBox!.width)).toBeLessThan(1);
+  expect(Math.abs(logoutBox!.width - settingsBox!.width)).toBeLessThan(1);
+  await page.screenshot({ path: test.info().outputPath("account-menu.png") });
   await byClass(menu, "account-menu__qr").click();
   await expect(page).toHaveURL(/\/settings$/);
   await expect(byClass(page, "settings-page")).toBeVisible();
+  await page.evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem("inkson.profiles.v1")!);
+    const current = saved.profiles.find((profile: { profile_id: string }) => profile.profile_id === saved.active_profile_id);
+    const other = structuredClone(current);
+    other.profile_id = "ak:profile:menu-other-station";
+    other.authority.station_id = "ak:did_core:web:other.local.host";
+    other.server_url = "https://other.local.host";
+    other.label = "Other saved account";
+    saved.profiles.push(other);
+    localStorage.setItem("inkson.profiles.v1", JSON.stringify(saved));
+  });
+  await page.reload();
+  await dismissBlockingRecoveryModal(page);
+  await page.locator(".account-menu-wrap .sapid-popover-trigger").click();
+  const switcher = byClass(accountMenu(page), "account-picker__select");
+  await expect(switcher).toBeVisible();
+  await expect(switcher.locator("option").filter({ hasText: "Other saved account" })).toHaveCount(1);
 });
 
 test("account menu keeps the viewer fallback handle", async ({
