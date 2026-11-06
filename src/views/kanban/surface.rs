@@ -736,7 +736,6 @@ fn column_view(
     };
     let composer = {
         let board = board.clone();
-        let column = column.clone();
         reactive(c.adding_card_to, move |scope, adding| {
             if adding.as_deref() != Some(column.get_untracked().id.as_str()) {
                 let column_id = column.get_untracked().id.clone();
@@ -759,7 +758,6 @@ fn column_view(
                 );
             }
             let save = board.clone();
-            let column = column.clone();
             stack(
                 "board-card-composer",
                 vec![
