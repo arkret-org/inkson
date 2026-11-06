@@ -757,19 +757,13 @@ pub(super) fn workspace_list_kind(route: &Route) -> Option<bool> {
 }
 
 pub(super) fn sidebar(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
-    use base64::Engine as _;
-    let logo = format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD
-            .encode(include_bytes!("../../assets/arkret-logo-512.png"))
-    );
     let home_context = context.clone();
     let brand = Box::new(
         internal_link()
             .class("rail-link rail-brand")
             .target(Route::Dashboard.to_string())
             .name(context.translated(scope, "app.brand.home"))
-            .fill(image().class("rail-logo").source(logo).alt("Arkret"))
+            .fill(arkret_logo("rail-logo"))
             .on(EventKind::Activate, move |_| {
                 home_context.navigate(Route::Dashboard)
             }),

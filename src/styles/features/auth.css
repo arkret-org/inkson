@@ -21,10 +21,6 @@
 .auth-error-content details { margin-top: 8px; font-size: 12px; }
 .auth-error-content summary { width: fit-content; cursor: pointer; color: inherit; font-weight: 700; }
 .auth-error-content code { display: block; margin-top: 6px; padding: 8px; border-radius: 6px; background: color-mix(in srgb, var(--danger) 10%, transparent); color: inherit; font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; white-space: pre-wrap; }
-.auth-restore { gap: 16px; }
-.auth-restore-indicator { width: 100%; height: 4px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--text-3) 18%, transparent); }
-.auth-restore-indicator::before { content: ""; display: block; width: 38%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); animation: auth-restore-slide 1.1s ease-in-out infinite; }
-@keyframes auth-restore-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(270%); } }
 /* ===== 8. AUTH SHELL (login / onboarding / recovery / verify) ===== */
 
 .auth-shell {

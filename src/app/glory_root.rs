@@ -5,7 +5,7 @@ use glory::Scope;
 use glory::ui::view;
 
 use crate::config::LocalConfigStore;
-use crate::presentation::widgets::{heading, paragraph, reactive_distinct, stack};
+use crate::presentation::widgets::{paragraph, reactive_distinct, stack, startup_screen};
 use crate::presentation::{BootState, InksonContext, SharedStateStore, View};
 use crate::routes::Route;
 use crate::state::LocalStateStore;
@@ -333,38 +333,9 @@ fn account_owner(scope: &Scope, context: Rc<InksonContext>) -> View {
     let invitation = crate::views::realm_admin::invite_links::landing(scope, context.clone());
     let content = reactive_distinct(surface, move |scope, surface| match surface {
         super::AuthSurface::AppShell => super::session_shell::shell(scope, context.clone()),
-        super::AuthSurface::Restoring => auth_card(
-            scope,
-            context.clone(),
-            Box::new(
-                view()
-                    .class("auth-panel auth-restore")
-                    .role(glory::render::Role::Status)
-                    .fill((
-                        view().class("auth-brand").fill((
-                            view()
-                                .class("auth-logo")
-                                .fill(glory::ui::text().content("C")),
-                            stack(
-                                "",
-                                vec![
-                                    heading(
-                                        1,
-                                        "",
-                                        context
-                                            .translated(scope, "app.boot.opening_secure_storage"),
-                                    ),
-                                    paragraph("", "Arkret"),
-                                ],
-                            ),
-                        )),
-                        view().class("auth-restore-indicator"),
-                        paragraph(
-                            "auth-status",
-                            context.translated(scope, "app.boot.loading_keys"),
-                        ),
-                    )),
-            ),
+        super::AuthSurface::Restoring => startup_screen(
+            context.translated(scope, "app.boot.opening_secure_storage"),
+            context.translated(scope, "app.boot.loading_keys"),
         ),
         _ => {
             let routed = scope.bond({

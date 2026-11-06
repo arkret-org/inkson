@@ -18,6 +18,38 @@ pub fn internal_link() -> glory::ui::Link {
     link
 }
 
+pub(crate) fn arkret_logo(class: &str) -> View {
+    use base64::Engine as _;
+    let source = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD
+            .encode(include_bytes!("../../assets/arkret-logo-512.png"))
+    );
+    Box::new(image().class(class.to_owned()).source(source).alt("Arkret"))
+}
+
+pub(crate) fn startup_screen(
+    title: impl Into<Vary<String>>,
+    message: impl Into<Vary<String>>,
+) -> View {
+    Box::new(
+        view()
+            .class("arkret-startup")
+            .role(glory::render::Role::Status)
+            .semantics(Some(Box::new(glory::render::Semantics {
+                busy: Some(true),
+                ..Default::default()
+            })))
+            .fill(vec![
+                arkret_logo("startup-logo"),
+                paragraph("startup-brand", "ARKRET"),
+                heading(1, "", title),
+                paragraph("startup-message", message),
+                Box::new(view().class("startup-spinner")) as View,
+            ]),
+    )
+}
+
 pub fn empty() -> View {
     Box::new(widget(|_| Ok(())))
 }

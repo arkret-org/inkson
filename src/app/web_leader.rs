@@ -35,10 +35,9 @@ pub(super) fn gate(scope: &Scope) -> View {
         }
         crate::presentation::widgets::reactive_distinct(state, |scope, state| match state {
             LeaderState::Leader => super::glory_root::bootstrap(scope),
-            LeaderState::Pending => gate_page(
+            LeaderState::Pending => crate::presentation::widgets::startup_screen(
                 "Opening Inkson securely",
                 "Checking whether another Inkson tab is already active…",
-                false,
             ),
             LeaderState::Follower => gate_page(
                 "Inkson is already open",
