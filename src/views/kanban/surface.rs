@@ -79,21 +79,8 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
                 })
             })
     };
-    #[cfg(target_arch = "wasm32")]
-    let switch: View = {
-        let locale = app.locale;
-        let hint = scope.bond(move || {
-            let _ = locale.get();
-            crate::i18n::tr_args("kanban.ui.switch_board_title", &[("title", title.get())])
-        });
-        Box::new(
-            sapid::tooltip("kanban-board-switch-hint")
-                .label(switch_name)
-                .text(hint)
-                .target(move |target| target.button(make_switch())),
-        )
-    };
-    #[cfg(not(target_arch = "wasm32"))]
+    // A popup trigger owns its expanded state. Tooltip targets replace that
+    // metadata and are only suitable for controls without popup relations.
     let switch: View = Box::new(make_switch());
     let popover = {
         let board = board.clone();
