@@ -185,11 +185,13 @@ pub(crate) fn validate_self_device_row(
 /// This is a query-cache freshness bound, not an authorization deadline: a
 /// previously accepted authority survives it for offline authoring, and only a
 /// verified revocation or generation replacement fences it.
+/// `attested_at` is the Station's observation time, not a client-side
+/// not-before gate. The device's authorization window is checked separately.
 pub(crate) fn projection_observation_is_fresh(
     projection: &arkret_models_crypto::VerifiedDeviceProjection,
     now: chrono::DateTime<chrono::Utc>,
 ) -> bool {
-    projection.attested_at <= now && now < projection.expires_at
+    projection.attested_at < projection.expires_at && now < projection.expires_at
 }
 
 /// Whether the device's own authorization window has opened and not closed.
@@ -764,6 +766,57 @@ mod verification_method_controller_tests {
             ),
             arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001").unwrap(),
         )
+    }
+
+    #[test]
+    fn station_observation_time_is_not_a_device_authorization_lower_bound() {
+        let (account, device) = projection_fixture_account();
+        let now = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
+        let mut projection = self_projection_fixture(
+            now + chrono::Duration::seconds(1),
+            "did:key:z6MkhHrTbtosB4xyyJM217fS4ry35F7JhZ5oA9uVHErBJDL5",
+        );
+        projection.authorization_window.not_before = now - chrono::Duration::minutes(1);
+        assert!(super::projection_observation_is_fresh(&projection, now));
+        let generation = crate::identity::authoring_generation::AuthoringGeneration {
+            authority_model:
+                crate::identity::authoring_generation::AuthoringAuthorityModel::AcceptedDevice,
+            authority_principal_id: account.principal_id.clone(),
+            generation_ref: "7".to_owned(),
+        };
+        let outcome = self_outcome_fixture(&account, &device, &projection);
+        assert!(super::accepted_device_evidence(&outcome, &account, device.as_str()).is_some());
+        assert!(
+            super::persisted_device_authoring_authority_from_outcome(
+                &outcome,
+                &account,
+                &device,
+                generation.clone(),
+            )
+            .is_some()
+        );
+
+        assert!(!super::projection_observation_is_fresh(
+            &projection,
+            projection.expires_at
+        ));
+        projection.authorization_window.not_before = now + chrono::Duration::minutes(1);
+        let not_yet_authorized = self_outcome_fixture(&account, &device, &projection);
+        assert!(
+            super::accepted_device_evidence(&not_yet_authorized, &account, device.as_str(),)
+                .is_none()
+        );
+        assert!(
+            super::persisted_device_authoring_authority_from_outcome(
+                &not_yet_authorized,
+                &account,
+                &device,
+                generation,
+            )
+            .is_none()
+        );
+        projection.expires_at = projection.attested_at;
+        assert!(!super::projection_observation_is_fresh(&projection, now));
     }
 
     #[test]
