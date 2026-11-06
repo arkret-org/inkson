@@ -38,13 +38,117 @@ pub(super) async fn activate_pending_registration_signer(
             .unwrap_or(signer),
     )
 }
-pub(super) async fn create_and_bind_identity(
+#[inline(never)]
+pub(super) fn create_and_bind_identity<'a>(
+    handoff: &'a crate::state::PendingAccountHandoff,
+    recovery_key: &'a str,
+    device: &'a str,
+    state_store: crate::presentation::SharedStateStore,
+    status: Cage<String>,
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = anyhow::Result<IdentityCreationCommandOutcome>> + 'a>,
+> {
+    // Construct recovery state outside the caller's async poll frame.
+    // The boxed boundary keeps nested work within the browser WASM stack.
+    Box::pin(create_and_bind_identity_impl(
+        handoff,
+        recovery_key,
+        device,
+        state_store,
+        status,
+    ))
+}
+
+async fn create_and_bind_identity_impl(
     handoff: &crate::state::PendingAccountHandoff,
     recovery_key: &str,
     device: &str,
     state_store: crate::presentation::SharedStateStore,
     status: Cage<String>,
 ) -> anyhow::Result<IdentityCreationCommandOutcome> {
+    // Retire registration's poll frame before entering the recovery gate.
+    let (registration, completed) =
+        match prepare_identity_binding(handoff, recovery_key, device, state_store.clone(), status)
+            .await?
+        {
+            PreparedIdentityBinding::Ready(registration, completed) => (*registration, *completed),
+            PreparedIdentityBinding::Finished(outcome) => return Ok(outcome),
+        };
+    let mut completed = completed;
+    completed.initial_mls_backup_id = match finish_principal_setup(
+        &registration,
+        recovery_key,
+        &completed,
+        &handoff.holder_jkt,
+        state_store.clone(),
+        status,
+    )
+    .await
+    {
+        Ok(backup_id) => backup_id,
+        Err(error) => {
+            let inventory = collect_bound_completion_resume_inventory(
+                handoff,
+                &registration,
+                &completed.account,
+                state_store.clone(),
+            )
+            .await;
+            let correlation =
+                crate::identity::account_auth::transition::LoginCorrelation::for_handoff(handoff);
+            crate::identity::account_auth::transition::record_onboarding_completion_transition(
+                crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeRestore,
+                crate::identity::account_auth::transition::OnboardingCompletionOutcome::Failed,
+                "onboarding_continuation_failed",
+                &correlation,
+                None,
+            );
+            return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                kind: ResumeTerminalKind::RetryableFailure,
+                reason: format!("{error:#}"),
+                inventory: inventory.checklist(),
+            }));
+        }
+    };
+    Ok(IdentityCreationCommandOutcome::Completed(Box::new(
+        completed,
+    )))
+}
+enum PreparedIdentityBinding {
+    Ready(
+        Box<crate::state::PendingPrincipalRegistration>,
+        Box<CompletedIdentityCreation>,
+    ),
+    Finished(IdentityCreationCommandOutcome),
+}
+
+#[inline(never)]
+fn prepare_identity_binding<'a>(
+    handoff: &'a crate::state::PendingAccountHandoff,
+    recovery_key: &'a str,
+    device: &'a str,
+    state_store: crate::presentation::SharedStateStore,
+    status: Cage<String>,
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = anyhow::Result<PreparedIdentityBinding>> + 'a>,
+> {
+    Box::pin(prepare_identity_binding_impl(
+        handoff,
+        recovery_key,
+        device,
+        state_store,
+        status,
+    ))
+}
+
+async fn prepare_identity_binding_impl(
+    handoff: &crate::state::PendingAccountHandoff,
+    recovery_key: &str,
+    device: &str,
+    state_store: crate::presentation::SharedStateStore,
+    status: Cage<String>,
+) -> anyhow::Result<PreparedIdentityBinding> {
+    status.revise(|value| *value = "Creating identity and authorizing this device…".into());
     let pending_device_id = arkret_sdk::DeviceId::new(device.to_owned())?;
     let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device_id);
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -217,7 +321,7 @@ pub(super) async fn create_and_bind_identity(
                         state_store.clone(),
                     )
                     .await?;
-                    return Ok(IdentityCreationCommandOutcome::Completed(Box::new(completed)));
+                    return Ok(PreparedIdentityBinding::Finished(IdentityCreationCommandOutcome::Completed(Box::new(completed))));
                 }
                 Err(error) => return Err(error),
             };
@@ -347,11 +451,13 @@ pub(super) async fn create_and_bind_identity(
                 } else {
                     inventory.read_errors.join("; ")
                 };
-                return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
-                    kind: ResumeTerminalKind::HydrationFailed,
-                    reason: detail,
-                    inventory: inventory.checklist(),
-                }));
+                return Ok(PreparedIdentityBinding::Finished(
+                    IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                        kind: ResumeTerminalKind::HydrationFailed,
+                        reason: detail,
+                        inventory: inventory.checklist(),
+                    }),
+                ));
             }
         };
         use garth::BoundCompletionResumeDisposition as Disposition;
@@ -401,11 +507,15 @@ pub(super) async fn create_and_bind_identity(
                             &correlation,
                             Some(&inventory.facts),
                         );
-                        return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
-                            kind: ResumeTerminalKind::RetryableFailure,
-                            reason: format!("Reissue the accepted onboarding session: {error:#}"),
-                            inventory: inventory.checklist(),
-                        }));
+                        return Ok(PreparedIdentityBinding::Finished(
+                            IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                                kind: ResumeTerminalKind::RetryableFailure,
+                                reason: format!(
+                                    "Reissue the accepted onboarding session: {error:#}"
+                                ),
+                                inventory: inventory.checklist(),
+                            }),
+                        ));
                     }
                     Err(AcceptedSessionReissueError::ReauthRequired(error)) => {
                         crate::identity::account_auth::transition::record_onboarding_completion_transition(
@@ -415,13 +525,15 @@ pub(super) async fn create_and_bind_identity(
                             &correlation,
                             Some(&inventory.facts),
                         );
-                        return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
-                            kind: ResumeTerminalKind::ReauthRequired,
-                            reason: format!(
-                                "A fresh sign-in is required before this accepted setup can continue: {error:#}"
-                            ),
-                            inventory: inventory.checklist(),
-                        }));
+                        return Ok(PreparedIdentityBinding::Finished(
+                            IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                                kind: ResumeTerminalKind::ReauthRequired,
+                                reason: format!(
+                                    "A fresh sign-in is required before this accepted setup can continue: {error:#}"
+                                ),
+                                inventory: inventory.checklist(),
+                            }),
+                        ));
                     }
                     Err(AcceptedSessionReissueError::Contradiction(error)) => {
                         crate::identity::account_auth::transition::record_onboarding_completion_transition(
@@ -431,13 +543,15 @@ pub(super) async fn create_and_bind_identity(
                             &correlation,
                             Some(&inventory.facts),
                         );
-                        return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
-                            kind: ResumeTerminalKind::Contradiction,
-                            reason: format!(
-                                "The accepted setup cannot issue a session for the retained account and device: {error:#}"
-                            ),
-                            inventory: inventory.checklist(),
-                        }));
+                        return Ok(PreparedIdentityBinding::Finished(
+                            IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                                kind: ResumeTerminalKind::Contradiction,
+                                reason: format!(
+                                    "The accepted setup cannot issue a session for the retained account and device: {error:#}"
+                                ),
+                                inventory: inventory.checklist(),
+                            }),
+                        ));
                     }
                 };
                 (checkpoint.clone(), completed)
@@ -459,9 +573,9 @@ pub(super) async fn create_and_bind_identity(
                 )
                 .await
                 .context("recover the accepted device with its active policy")?;
-                return Ok(IdentityCreationCommandOutcome::Completed(Box::new(
-                    completed,
-                )));
+                return Ok(PreparedIdentityBinding::Finished(
+                    IdentityCreationCommandOutcome::Completed(Box::new(completed)),
+                ));
             }
             Disposition::StrandedIdentity => {
                 crate::identity::account_auth::transition::record_onboarding_completion_transition(
@@ -471,11 +585,11 @@ pub(super) async fn create_and_bind_identity(
                     &correlation,
                     Some(&inventory.facts),
                 );
-                return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                return Ok(PreparedIdentityBinding::Finished(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
                     kind: ResumeTerminalKind::StrandedIdentity,
                     reason: "The founding device key is not present on this device, and the server confirms that no Recovery Key policy was completed for this identity. The client API has no credential that can continue it.".to_owned(),
                     inventory: inventory.checklist(),
-                }));
+                })));
             }
             Disposition::ReauthRequired => {
                 crate::identity::account_auth::transition::record_onboarding_completion_transition(
@@ -485,11 +599,11 @@ pub(super) async fn create_and_bind_identity(
                     &correlation,
                     Some(&inventory.facts),
                 );
-                return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                return Ok(PreparedIdentityBinding::Finished(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
                     kind: ResumeTerminalKind::ReauthRequired,
                     reason: "The accepted setup no longer has a live account handoff. Sign in again to obtain a fresh handoff; the accepted identity and device checkpoint will be retained.".to_owned(),
                     inventory: inventory.checklist(),
-                }));
+                })));
             }
             Disposition::Contradiction { reason } => {
                 crate::identity::account_auth::transition::record_onboarding_completion_transition(
@@ -499,55 +613,24 @@ pub(super) async fn create_and_bind_identity(
                     &correlation,
                     Some(&inventory.facts),
                 );
-                return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
-                    kind: ResumeTerminalKind::Contradiction,
-                    reason: format!(
-                        "The accepted setup contradicts the retained account state: {reason:?}."
-                    ),
-                    inventory: inventory.checklist(),
-                }));
+                return Ok(PreparedIdentityBinding::Finished(
+                    IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                        kind: ResumeTerminalKind::Contradiction,
+                        reason: format!(
+                            "The accepted setup contradicts the retained account state: {reason:?}."
+                        ),
+                        inventory: inventory.checklist(),
+                    }),
+                ));
             }
         }
     };
-    let mut completed = completed;
-    completed.initial_mls_backup_id = match finish_principal_setup(
-        &registration,
-        recovery_key,
-        &completed,
-        &handoff.holder_jkt,
-        state_store.clone(),
-    )
-    .await
-    {
-        Ok(backup_id) => backup_id,
-        Err(error) => {
-            let inventory = collect_bound_completion_resume_inventory(
-                handoff,
-                &registration,
-                &completed.account,
-                state_store.clone(),
-            )
-            .await;
-            let correlation =
-                crate::identity::account_auth::transition::LoginCorrelation::for_handoff(handoff);
-            crate::identity::account_auth::transition::record_onboarding_completion_transition(
-                crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeRestore,
-                crate::identity::account_auth::transition::OnboardingCompletionOutcome::Failed,
-                "onboarding_continuation_failed",
-                &correlation,
-                None,
-            );
-            return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
-                kind: ResumeTerminalKind::RetryableFailure,
-                reason: format!("{error:#}"),
-                inventory: inventory.checklist(),
-            }));
-        }
-    };
-    Ok(IdentityCreationCommandOutcome::Completed(Box::new(
-        completed,
-    )))
+    Ok(PreparedIdentityBinding::Ready(
+        Box::new(registration),
+        Box::new(completed),
+    ))
 }
+
 /// Drop the durable identity draft together with the handoff it is fenced to,
 /// and the short-lived account handoff credential.
 ///
@@ -719,13 +802,36 @@ pub(super) fn finish_pre_account_recovery_checkpoint(
     )?;
     Ok(())
 }
-pub(super) async fn finish_principal_setup(
+#[inline(never)]
+pub(super) fn finish_principal_setup<'a>(
+    registration: &'a crate::state::PendingPrincipalRegistration,
+    recovery_key: &'a str,
+    completed: &'a CompletedIdentityCreation,
+    expected_holder_jkt: &'a str,
+    state_store: crate::presentation::SharedStateStore,
+    status: Cage<String>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<Option<String>>> + 'a>> {
+    // Construct recovery state outside the caller's async poll frame.
+    // The boxed boundary keeps nested work within the browser WASM stack.
+    Box::pin(finish_principal_setup_impl(
+        registration,
+        recovery_key,
+        completed,
+        expected_holder_jkt,
+        state_store,
+        status,
+    ))
+}
+
+async fn finish_principal_setup_impl(
     registration: &crate::state::PendingPrincipalRegistration,
     recovery_key: &str,
     completed: &CompletedIdentityCreation,
     expected_holder_jkt: &str,
     state_store: crate::presentation::SharedStateStore,
+    status: Cage<String>,
 ) -> anyhow::Result<Option<String>> {
+    status.revise(|value| *value = "Preparing encrypted account recovery…".into());
     crate::identity::principal_registration::validate_checkpoint_recovery_key(
         registration,
         recovery_key,
@@ -864,6 +970,7 @@ pub(super) async fn finish_principal_setup(
         })
     })?;
     barrier.wait().await?;
+    status.revise(|value| *value = "Confirming the account recovery policy…".into());
     crate::recovery_flow::ensure_recovery_policy(
         &api,
         &recovery_actor,
@@ -878,7 +985,8 @@ pub(super) async fn finish_principal_setup(
     )
     .await?;
     let initial_mls_backup_id = if onboarding_may_create_account_mls_root(completed.origin) {
-        let backup_id =
+        status.revise(|value| *value = "Saving the encrypted account recovery backup…".into());
+        let backup_id = crate::runtime_helpers::boxed_future(|| {
             crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
                 &api,
                 secure_store.as_ref(),
@@ -888,8 +996,9 @@ pub(super) async fn finish_principal_setup(
                 account.device_id.as_str(),
                 &recovery_key_value,
             )
-            .await
-            .context("upload the first-enrollment account MLS recovery backup")?;
+        })
+        .await
+        .context("upload the first-enrollment account MLS recovery backup")?;
         Some(backup_id)
     } else {
         None

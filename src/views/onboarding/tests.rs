@@ -80,7 +80,7 @@ fn principal_setup_persists_exact_genesis_evidence_before_policy_publication() {
     // coordinates are persisted, and policy publication follows both steps.
     let source = include_str!("identity_setup.rs");
     let setup = source
-        .split_once("pub(super) async fn finish_principal_setup(")
+        .split_once("pub(super) fn finish_principal_setup")
         .expect("finish_principal_setup must remain defined")
         .1
         .split_once("pub(super) fn hosting_label(")

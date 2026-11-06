@@ -171,7 +171,8 @@ async fn ensure_initial_active_series(
         trust_anchor,
     )?;
     basis.check()?;
-    let accepted = submitter.submit_sdk_event(&event).await?;
+    let accepted =
+        crate::runtime_helpers::boxed_future(|| submitter.submit_sdk_event(&event)).await?;
     basis.check()?;
     if !accepted.is_committed() {
         return Err(anyhow!(
@@ -448,15 +449,17 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         .map_err(|err| anyhow!("upload account MLS secret backup: {err}"))?;
     basis.check()?;
     if creates_initial_series {
-        ensure_initial_active_series(
-            api,
-            control_realm,
-            authority,
-            actor_id,
-            device_id,
-            BackupRotationKind::SecretStorage,
-            &account_series_id,
-        )
+        crate::runtime_helpers::boxed_future(|| {
+            ensure_initial_active_series(
+                api,
+                control_realm,
+                authority,
+                actor_id,
+                device_id,
+                BackupRotationKind::SecretStorage,
+                &account_series_id,
+            )
+        })
         .await?;
     }
     basis.check()?;
@@ -480,15 +483,17 @@ pub async fn upload_mls_account_secret_backup_with_recovery_key(
     let (_recovery_private_key, recovery_public_key) =
         crate::hpke_backup::derive_recovery_keypair_from_recovery_key(recovery_key)
             .map_err(|err| anyhow!("derive recovery HPKE keypair: {err}"))?;
-    upload_mls_account_secret_backup_with_recovery_public_key(
-        api,
-        secure_store,
-        authority,
-        control_realm,
-        actor_id,
-        device_id,
-        &recovery_public_key,
-    )
+    crate::runtime_helpers::boxed_future(|| {
+        upload_mls_account_secret_backup_with_recovery_public_key(
+            api,
+            secure_store,
+            authority,
+            control_realm,
+            actor_id,
+            device_id,
+            &recovery_public_key,
+        )
+    })
     .await
 }
 
@@ -582,15 +587,17 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         .map_err(|err| anyhow!("upload recovery-key account MLS secret backup: {err}"))?;
     basis.check()?;
     if creates_initial_series {
-        ensure_initial_active_series(
-            api,
-            control_realm,
-            authority,
-            actor_id,
-            device_id,
-            BackupRotationKind::SecretStorage,
-            &account_series_id,
-        )
+        crate::runtime_helpers::boxed_future(|| {
+            ensure_initial_active_series(
+                api,
+                control_realm,
+                authority,
+                actor_id,
+                device_id,
+                BackupRotationKind::SecretStorage,
+                &account_series_id,
+            )
+        })
         .await?;
     }
     basis.check()?;
@@ -770,15 +777,17 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
     basis.check()?;
     let series_id = sent_body.series_id.to_string();
     if creates_initial_series {
-        ensure_initial_active_series(
-            api,
-            control_realm,
-            authority,
-            actor_id,
-            device_id,
-            BackupRotationKind::SecretStorage,
-            &series_id,
-        )
+        crate::runtime_helpers::boxed_future(|| {
+            ensure_initial_active_series(
+                api,
+                control_realm,
+                authority,
+                actor_id,
+                device_id,
+                BackupRotationKind::SecretStorage,
+                &series_id,
+            )
+        })
         .await?;
     }
 

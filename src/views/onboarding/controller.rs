@@ -427,6 +427,7 @@ impl IdentityCreationController {
             };
             let _=scope.owner().spawn(async move {
             let result = async {
+                status.revise(|value| *value = "Saving your Recovery Key on this device…".into());
                 if resumes_reserved_identity {
                     crate::identity::principal_registration::validate_reserved_identity_recovery_key(
                         &handoff,
@@ -460,6 +461,7 @@ impl IdentityCreationController {
 
             match result {
                 Ok(IdentityCreationCommandOutcome::Completed(completed)) => {
+                    status.revise(|value| *value = "Saving your account and session…".into());
                     if let Err(error) = commit_completed_account(
                         &completed,
                         &supplied_key,

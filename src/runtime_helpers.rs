@@ -1,5 +1,15 @@
 use std::time::Duration;
 
+/// Construct a child future outside its parent's poll frame.
+/// A factory avoids retaining the full Box::pin argument temporary on the
+/// WASM stack. The child keeps the same executor and cancellation lifetime.
+#[inline(never)]
+pub(crate) fn boxed_future<F: std::future::Future>(
+    factory: impl FnOnce() -> F,
+) -> std::pin::Pin<Box<F>> {
+    Box::pin(factory())
+}
+
 /// Bind cancellation to the explicit owner of the state used by this task.
 pub(crate) fn spawn_owned(
     scope: &glory::Scope,
