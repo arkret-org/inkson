@@ -786,7 +786,7 @@ pub(super) fn sidebar(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
     ) as View;
     let mut links = vec![brand];
     for (target, label, icon, section) in [
-        (Route::RealmsManage, "nav.realms", "folder", "realms"),
+        (Route::RealmsManage, "nav.realms", "grid-2x2", "realms"),
         (Route::Contacts, "nav.contacts", "users", "contacts"),
         (
             Route::SettingsSection {
