@@ -4,6 +4,14 @@ use serde_json::Value;
 
 use crate::state::LocalStateStore;
 
+fn observe_open_gate(digest: &arkret_sdk::Hash, gate: &'static str, passed: bool) {
+    #[cfg(feature = "spec-conformance")]
+    tracing::warn!(phase = "metadata_open_gate", payload_digest = %digest, gate, passed,
+        "encrypted metadata admission boundary");
+    #[cfg(not(feature = "spec-conformance"))]
+    let _ = (digest, gate, passed);
+}
+
 fn current_metadata_context(
     store: &LocalStateStore,
     realm: &str,
@@ -74,6 +82,7 @@ pub(crate) fn open_metadata_with_secure_store(
                 .mls_decrypted_plaintext_for(realm, digest.as_str())
                 .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         });
+    observe_open_gate(&digest, "cache", local.is_some());
     let opened = local.or_else(|| {
         if let Some((scope, context)) = current_metadata_context(store, realm, id, envelope) {
             let sender =
@@ -116,7 +125,9 @@ pub(crate) fn open_metadata_with_secure_store(
                 .or_else(|| body.pointer("/patch/encrypted_metadata/value"));
             ((creation || target.and_then(Value::as_str) == Some(id)) && candidate == Some(&cipher))
                 .then_some(event)
-        })?;
+        });
+        observe_open_gate(&digest, "original", event.is_some());
+        let event = event?;
         let signed: arkret_sdk::Event = serde_json::from_value(event.clone()).ok()?;
         if signed.realm_id.as_str() != realm {
             return None;
@@ -126,7 +137,9 @@ pub(crate) fn open_metadata_with_secure_store(
             event,
             Some(store),
             Some((account, account.principal_id.as_str(), device)),
-        )?;
+        );
+        observe_open_gate(&digest, "sender", sender.is_some());
+        let sender = sender?;
         let payload = crate::mls::runtime::encrypted_payload_from_verified_event_context(
             store,
             envelope,
@@ -134,18 +147,21 @@ pub(crate) fn open_metadata_with_secure_store(
             signed.kind.as_str(),
             &sender,
             None,
-        )?;
-        let bytes =
-            crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
-                store,
-                secure,
-                realm,
-                account,
-                device,
-                &payload,
-                &signed.scope_ref,
-                &sender,
-            )?;
+        );
+        observe_open_gate(&digest, "context", payload.is_some());
+        let payload = payload?;
+        let bytes = crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
+            store,
+            secure,
+            realm,
+            account,
+            device,
+            &payload,
+            &signed.scope_ref,
+            &sender,
+        );
+        observe_open_gate(&digest, "decrypt", bytes.is_some());
+        let bytes = bytes?;
         serde_json::from_slice(&bytes).ok()
     })?;
     if id.starts_with("ak:space:") {
