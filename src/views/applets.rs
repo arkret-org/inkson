@@ -1249,6 +1249,7 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
                     state.install_approve_actions,
                 ),
             ] {
+                let placeholder = state.context.translated(scope, label);
                 let control: View = Box::new(
                     sapid::field(key)
                         .unstyled()
@@ -1257,6 +1258,7 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
                         .control(move |field| {
                             sapid::text_field()
                                 .unstyled()
+                                .placeholder(placeholder)
                                 .class("input")
                                 .field(field)
                                 .value(value)
@@ -1269,12 +1271,7 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
                 );
                 fields.push(stack(
                     format!("applet-install-prompt {key}-prompt"),
-                    vec![input_prompt(
-                        scope,
-                        state.context.translated(scope, label).into(),
-                        value,
-                        control,
-                    )],
+                    vec![control],
                 ));
             }
             let ghost = state.install_ghost_actors_allowed;

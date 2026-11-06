@@ -1,8 +1,5 @@
 use super::*;
 
-/// Static list of jumpable destinations surfaced in the command palette.
-/// Keep in sync with `routes::Route` — only views the user can act on are
-/// listed.
 pub(super) fn palette_destinations() -> Vec<(&'static str, &'static str, Route)> {
     vec![
         ("Home", "overview, recent activity", Route::Dashboard),
@@ -37,19 +34,19 @@ pub(super) fn palette_destinations() -> Vec<(&'static str, &'static str, Route)>
             "New Realm",
             "create security boundary",
             Route::SetupSection {
-                section: "realms".to_owned(),
+                section: "realms".into(),
             },
         ),
     ]
 }
 
 pub(super) fn palette_filter(query: &str, haystack: &str) -> bool {
-    if query.is_empty() {
-        return true;
-    }
-    let needle = query.trim().to_lowercase();
-    let hay = haystack.to_lowercase();
-    needle.split_whitespace().all(|token| hay.contains(token))
+    let haystack = haystack.to_lowercase();
+    query
+        .trim()
+        .to_lowercase()
+        .split_whitespace()
+        .all(|token| haystack.contains(token))
 }
 
 pub(super) fn close_palette(ui: &super::shell_state::ShellState) {
@@ -57,108 +54,21 @@ pub(super) fn close_palette(ui: &super::shell_state::ShellState) {
     ui.search_query.revise(String::clear);
 }
 
-fn palette_semantic_ids(
-    scope: &glory::Scope,
-) -> Option<(glory::render::SemanticId, glory::render::SemanticId)> {
-    match (
-        glory::render::SemanticId::new("topbar-command-query"),
-        glory::render::SemanticId::new("topbar-command-results"),
-    ) {
-        (Ok(query), Ok(results)) => Some((query, results)),
-        (Err(error), _) | (_, Err(error)) => {
-            scope.report_error(error);
-            None
-        }
-    }
-}
-
 pub(super) fn search_trigger(
-    scope: &glory::Scope,
+    _scope: &glory::Scope,
     ui: std::rc::Rc<super::shell_state::ShellState>,
 ) -> crate::presentation::View {
-    let Some((_, results_id)) = palette_semantic_ids(scope) else {
-        return crate::presentation::widgets::empty();
-    };
-    let open = ui.search_open;
     Box::new(
-        glory::ui::button()
-            .class("btn icon")
+        sapid::button()
+            .unstyled()
+            .class("btn icon command-palette-trigger")
             .name("Search")
             .fill(crate::components::ui_icon("search"))
-            .semantics(scope.bond(move || {
-                Some(Box::new(glory::render::Semantics {
-                    controls: open.get().then(|| results_id.clone()),
-                    expanded: Some(open.get()),
-                    popup: Some(glory::render::PopupKind::Dialog),
-                    ..Default::default()
-                }))
-            }))
-            .on(glory::render::EventKind::Activate, move |_| {
+            .on_press(move || {
                 if ui.search_open.get_untracked() {
                     close_palette(&ui);
                 } else {
-                    ui.search_open.revise(|open| *open = true);
-                }
-            }),
-    )
-}
-
-pub(super) fn query_input(
-    scope: &glory::Scope,
-    context: std::rc::Rc<crate::presentation::InksonContext>,
-    ui: std::rc::Rc<super::shell_state::ShellState>,
-) -> crate::presentation::View {
-    let Some((query_id, results_id)) = palette_semantic_ids(scope) else {
-        return crate::presentation::widgets::empty();
-    };
-    let reference = scope.cage(None);
-    let focused = scope.cage(false);
-    let weak = scope.downgrade();
-    scope.effect(move || {
-        if !focused.get_untracked()
-            && let Some(node) = reference.get()
-            && let Some(scope) = weak.upgrade()
-            && scope
-                .capabilities()
-                .is_ok_and(|capabilities| capabilities.focus)
-        {
-            match scope.action(glory::render::Action::Focus(node)) {
-                Ok(()) => focused.revise(|value| *value = true),
-                Err(error) => scope.report_error(error),
-            }
-        }
-    });
-    let changed = ui.clone();
-    let keyboard_ui = ui.clone();
-    Box::new(
-        glory::ui::input()
-            .class("global-search-input command-query")
-            .name(context.translated(scope, "topbar.search_placeholder"))
-            .node_ref(reference)
-            .value(ui.search_query)
-            .semantics(Some(Box::new(glory::render::Semantics {
-                id: Some(query_id),
-                controls: Some(results_id),
-                ..Default::default()
-            })))
-            .on(glory::render::EventKind::ValueChanged, move |event| {
-                if let glory::render::Event::ValueChanged { value, .. } = event {
-                    changed.search_query.revise(|query| *query = value);
-                    changed.search_open.revise(|open| *open = true);
-                }
-            })
-            .on(glory::render::EventKind::Keyboard, move |event| {
-                if let glory::render::Event::Keyboard { command, .. } = event {
-                    match command {
-                        glory::render::KeyboardCommand::Submit
-                            if !keyboard_ui.search_query.get_untracked().trim().is_empty() =>
-                        {
-                            keyboard_ui.search_open.revise(|open| *open = false);
-                            context.navigate(Route::Directory);
-                        }
-                        glory::render::KeyboardCommand::Dismiss => close_palette(&keyboard_ui),
-                        _ => {}
-                    }
+                    ui.search_open.revise(|value| *value = true);
                 }
             }),
     )
@@ -167,143 +77,102 @@ pub(super) fn query_input(
 pub(super) fn command_palette(
     scope: &glory::Scope,
     context: std::rc::Rc<crate::presentation::InksonContext>,
-    query: String,
-    nodes: Vec<RealmTreeNode>,
     ui: std::rc::Rc<super::shell_state::ShellState>,
 ) -> crate::presentation::View {
-    use crate::presentation::widgets::*;
-    let Some((query_id, results_id)) = palette_semantic_ids(scope) else {
-        return empty();
-    };
-    let mut groups = Vec::new();
-    let mut realms = Vec::new();
-    for node in nodes
-        .into_iter()
-        .filter(|node| palette_filter(&query, &format!("{} {}", node.title, node.id)))
-        .take(10)
-    {
-        let target = node.projection_realm_id().to_owned();
+    let snapshot = scope.bond({
         let context = context.clone();
         let ui = ui.clone();
-        realms.push(Box::new(
-            sapid::button()
-                .unstyled()
-                .class("command-palette-item")
-                .label(format!("{} {}", node.title, short_protocol_id(&node.id)))
-                .on_press(move || {
-                    context
-                        .selected_realm_id
-                        .revise(|value| *value = target.clone());
-                    close_palette(&ui);
-                    context.navigate(Route::Realm {
-                        realm_id: target.clone(),
-                    });
-                }),
-        ) as crate::presentation::View);
-    }
-    if !realms.is_empty() {
-        realms.insert(
-            0,
-            paragraph(
-                "command-palette-label",
-                context.translated(scope, "command_palette.realms"),
-            ),
-        );
-        groups.push(stack("command-palette-group", realms));
-    }
-    let mut destinations = Vec::new();
-    for (label, hint, route) in palette_destinations()
-        .into_iter()
-        .filter(|(label, hint, _)| palette_filter(&query, &format!("{label} {hint}")))
-    {
-        let context = context.clone();
-        let ui = ui.clone();
-        destinations.push(Box::new(
-            sapid::button()
-                .unstyled()
-                .class("command-palette-item")
-                .name(format!("Navigate to {label}"))
-                .fill((
-                    glory::ui::text()
-                        .class("command-palette-item-title")
-                        .content(label),
-                    glory::ui::text()
-                        .class("command-palette-item-hint")
-                        .content(hint),
-                ))
-                .on_press(move || {
-                    close_palette(&ui);
-                    context.navigate(route.clone());
-                }),
-        ) as crate::presentation::View);
-    }
-    if !destinations.is_empty() {
-        destinations.insert(
-            0,
-            paragraph(
-                "command-palette-label",
-                context.translated(scope, "command_palette.jump_to"),
-            ),
-        );
-        groups.push(stack("command-palette-group", destinations));
-    }
-    if groups.is_empty() {
-        groups.push(paragraph(
-            "command-palette-empty",
-            context.translated(scope, "command_palette.empty"),
-        ));
-    }
-    let close = ui.clone();
-    groups.push(stack(
-        "command-palette-footer",
-        vec![Box::new(
-            sapid::button()
-                .unstyled()
-                .class("btn command-palette-close")
-                .label(context.translated(scope, "command_palette.close"))
-                .on_press(move || close_palette(&close)),
-        )],
-    ));
+        move || {
+            let query = ui.search_query.get();
+            let _ = context.locale.get();
+            let mut actions = Vec::new();
+            let mut targets = std::collections::BTreeMap::new();
+            if !query.trim().is_empty() {
+                actions.push(
+                    sapid::command_action("search-directory", context.tr("route.directory"))
+                        .description(query.chars().take(256).collect::<String>())
+                        .group("search"),
+                );
+                targets.insert("search-directory".to_owned(), Route::Directory);
+            }
+            for (index, node) in context
+                .realm_tree_nodes
+                .get()
+                .into_iter()
+                .enumerate()
+                .filter(|(_, node)| palette_filter(&query, &format!("{} {}", node.title, node.id)))
+                .take(10)
+            {
+                let key = format!("realm-{index}");
+                actions.push(
+                    sapid::command_action(
+                        key.clone(),
+                        node.title.chars().take(64).collect::<String>(),
+                    )
+                    .description(short_protocol_id(&node.id))
+                    .group("realms"),
+                );
+                targets.insert(
+                    key,
+                    Route::Realm {
+                        realm_id: node.projection_realm_id().to_owned(),
+                    },
+                );
+            }
+            for (index, (label, hint, route)) in palette_destinations()
+                .into_iter()
+                .enumerate()
+                .filter(|(_, (label, hint, _))| palette_filter(&query, &format!("{label} {hint}")))
+            {
+                let key = format!("destination-{index}");
+                actions.push(
+                    sapid::command_action(key.clone(), label)
+                        .description(hint)
+                        .group("destinations"),
+                );
+                targets.insert(key, route);
+            }
+            let results = sapid::CommandResults {
+                actions,
+                groups: vec![
+                    sapid::command_group("search", context.tr("route.directory")),
+                    sapid::command_group("realms", context.tr("command_palette.realms")),
+                    sapid::command_group("destinations", context.tr("command_palette.jump_to")),
+                ],
+            };
+            (sapid::CommandResponse { query, results }, targets)
+        }
+    });
+    let results = scope.bond(move || snapshot.get().0);
+    let opened = ui.clone();
+    let searched = ui.clone();
     Box::new(
-        glory::ui::view()
+        sapid::command("global-command-palette")
+            .unstyled()
             .class("command-palette")
-            .role(glory::render::Role::Dialog)
-            .name("Command palette")
-            .focus(glory::render::FocusMode::Programmatic)
-            .style(glory::style::Style::new().position(glory::style::Position::Fixed))
-            .semantics(Some(Box::new(glory::render::Semantics {
-                id: Some(results_id),
-                layer: Some(glory::render::Layer {
-                    modal: false,
-                    focus: glory::render::LayerFocus::Preserve,
-                    placement: glory::render::LayerPlacement::Anchor(
-                        glory::render::AnchorPlacement::new(
-                            glory::render::AnchorSide::Bottom,
-                            glory::render::AnchorAlign::End,
-                        )
-                        .gap(8.0),
-                    ),
-                    anchor: Some(query_id),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            })))
-            .on(glory::render::EventKind::Dismiss, {
-                let ui = ui.clone();
-                move |_| close_palette(&ui)
-            })
-            .on(glory::render::EventKind::Keyboard, move |event| {
-                if matches!(
-                    event,
-                    glory::render::Event::Keyboard {
-                        command: glory::render::KeyboardCommand::Dismiss,
-                        ..
-                    }
-                ) {
-                    close_palette(&ui);
+            .label("Command palette")
+            .open(ui.search_open)
+            .search(ui.search_query)
+            .results(results)
+            .on_open_change(move |open| {
+                if open {
+                    opened.search_open.revise(|value| *value = true);
+                } else {
+                    close_palette(&opened);
                 }
             })
-            .fill(groups),
+            .on_search_change(move |query| searched.search_query.revise(|value| *value = query))
+            .on_action(move |key| {
+                if let Some(route) = snapshot.get_untracked().1.get(&key).cloned() {
+                    if let Route::Realm { realm_id } = &route {
+                        context
+                            .selected_realm_id
+                            .revise(|value| *value = realm_id.clone());
+                    }
+                    close_palette(&ui);
+                    context.navigate(route);
+                }
+            }),
     )
 }
 

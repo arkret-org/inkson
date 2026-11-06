@@ -14,25 +14,73 @@ fn disclosure(
     open: bool,
     children: Rc<dyn Fn(&Scope) -> View>,
 ) -> View {
-    let expanded = scope.cage(open);
-    let body = reactive(
-        expanded,
-        move |scope, open| if open { children(scope) } else { empty() },
-    );
-    stack(
-        format!("event board-maintenance {key}"),
-        vec![
-            Box::new(
-                sapid::button()
-                    .unstyled()
-                    .class("board-maintenance-summary")
-                    .label(label)
-                    .on_press(move || expanded.revise(|value| *value = !*value)),
-            ),
-            body,
-        ],
+    let owner = scope.id().slot();
+    Box::new(
+        sapid::collapsible(format!("{key}-{owner}"))
+            .unstyled()
+            .class(format!("event board-maintenance {key}"))
+            .label(label)
+            .default_open(open)
+            .content(move || {
+                let children = children.clone();
+                glory::ui::widget(move |scope| children(scope).show_in(scope))
+            }),
     )
 }
+
+pub(super) fn toolbar_popover(
+    scope: &Scope,
+    state: Cage<BoardToolbarPopover>,
+    kind: BoardToolbarPopover,
+    label: glory::Vary<String>,
+    trigger: View,
+    body: View,
+) -> View {
+    let select = kind == BoardToolbarPopover::SelectBoard;
+    let open = scope.bond(move || state.get() == kind);
+    let mut trigger = Some(trigger);
+    let mut body = Some(body);
+    let host = if select {
+        "board-select-menu-host"
+    } else {
+        "board-popover-host"
+    };
+    Box::new(
+        glory::ui::view().class(host).fill(
+            sapid::popover(format!("board-toolbar-{}-{select}", scope.id().slot()))
+                .unstyled()
+                .class("board-toolbar-popover")
+                .content_policy(sapid::ContentPolicy::KeepMounted)
+                .label(label)
+                .open(open)
+                .show_close(false)
+                .width(sapid::PopoverWidth::Px(if select { 240.0 } else { 360.0 }))
+                .placement(
+                    glory::render::AnchorPlacement::new(
+                        glory::render::AnchorSide::Bottom,
+                        if select {
+                            glory::render::AnchorAlign::Start
+                        } else {
+                            glory::render::AnchorAlign::End
+                        },
+                    )
+                    .gap(8.0),
+                )
+                .on_open_change(move |next| {
+                    state.revise(|value| {
+                        if next {
+                            *value = kind;
+                        } else if *value == kind {
+                            *value = BoardToolbarPopover::None;
+                        }
+                    })
+                })
+                .trigger_content(move || trigger.take().unwrap_or_else(empty))
+                .content(move || body.take().unwrap_or_else(empty)),
+        ),
+    )
+}
+
 fn board_allowed(scope: &Scope, board: Board) -> View {
     let app = board.app.clone();
     let c = board.controller;
@@ -52,36 +100,11 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
             )
         })
     };
-    let switch_name = app.translated(scope, "kanban.ui.switch_board");
-    let switch_semantics = scope.bond(move || {
-        Some(Box::new(glory::render::Semantics {
-            expanded: Some(c.board_popover.get() == BoardToolbarPopover::SelectBoard),
-            ..Default::default()
-        }))
-    });
-    let make_switch = move || {
-        glory::ui::button()
-            .class("board-select-button board-space-select-button")
-            .name(switch_name)
-            .semantics(switch_semantics)
-            .fill(vec![
-                crate::components::ui_icon("board"),
-                super::card_detail_surface::inline_label("board-select-button-label", title),
-                crate::components::ui_icon("chevron-down"),
-            ])
-            .on(glory::render::EventKind::Activate, move |_| {
-                c.board_popover.revise(|value| {
-                    *value = if *value == BoardToolbarPopover::SelectBoard {
-                        BoardToolbarPopover::None
-                    } else {
-                        BoardToolbarPopover::SelectBoard
-                    }
-                })
-            })
-    };
-    // A popup trigger owns its expanded state. Tooltip targets replace that
-    // metadata and are only suitable for controls without popup relations.
-    let switch: View = Box::new(make_switch());
+    let switch: View = Box::new(glory::ui::group().fill(vec![
+        crate::components::ui_icon("board"),
+        super::card_detail_surface::inline_label("board-select-button-label", title),
+        crate::components::ui_icon("chevron-down"),
+    ]));
     let popover = {
         let board = board.clone();
         reactive(c.board_popover, move |scope, popover| match popover {
@@ -189,24 +212,19 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
                 line(
                     "actions board-list-compose board-add-list",
                     vec![
-                        crate::views::settings::widgets::input_prompt(
-                            scope,
-                            board
-                                .app
-                                .translated(scope, "kanban.ui.new_list_title")
-                                .into(),
-                            c.new_column_title,
-                            Box::new(
-                                sapid::text_field()
-                                    .unstyled()
-                                    .class("input new-column-input")
-                                    .name(board.app.translated(scope, "kanban.ui.new_list_title"))
-                                    .value(c.new_column_title)
-                                    .enabled(add_list_ready)
-                                    .on_value_change(move |next| {
-                                        c.new_column_title.revise(|value| *value = next)
-                                    }),
-                            ),
+                        Box::new(
+                            sapid::text_field()
+                                .placeholder(
+                                    board.app.translated(scope, "kanban.ui.new_list_title"),
+                                )
+                                .unstyled()
+                                .class("input new-column-input")
+                                .name(board.app.translated(scope, "kanban.ui.new_list_title"))
+                                .value(c.new_column_title)
+                                .enabled(add_list_ready)
+                                .on_value_change(move |next| {
+                                    c.new_column_title.revise(|value| *value = next)
+                                }),
                         ),
                         action(
                             scope,
@@ -224,23 +242,6 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
             }
         })
     };
-    let create_toggle = action(
-        scope,
-        app.clone(),
-        "new-board-toggle",
-        "kanban.ui.new_board",
-        "secondary btn board-popover-trigger",
-        true,
-        move || {
-            c.board_popover.revise(|value| {
-                *value = if *value == BoardToolbarPopover::CreateBoard {
-                    BoardToolbarPopover::None
-                } else {
-                    BoardToolbarPopover::CreateBoard
-                }
-            })
-        },
-    );
     let create_panel = {
         let board = board.clone();
         reactive(c.board_popover, move |scope, open| {
@@ -251,18 +252,13 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
             stack(
                 "board-popover-panel board-create-popover",
                 vec![
-                    input_prompt(
+                    input(
                         scope,
-                        board.app.translated(scope, "kanban.ui.board_title").into(),
+                        board.app.clone(),
+                        "new-board-title-input",
+                        "kanban.ui.board_title",
                         c.new_board_title,
-                        input(
-                            scope,
-                            board.app.clone(),
-                            "new-board-title-input",
-                            "kanban.ui.board_title",
-                            c.new_board_title,
-                            true,
-                        ),
+                        true,
                     ),
                     action(
                         scope,
@@ -277,21 +273,6 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
             )
         })
     };
-    let scrim = reactive(c.board_popover, move |_, open| {
-        if open == BoardToolbarPopover::None {
-            return empty();
-        }
-        Box::new(
-            sapid::button()
-                .unstyled()
-                .class("board-popover-scrim")
-                .name(crate::i18n::tr("common.close"))
-                .on_press(move || {
-                    c.board_popover
-                        .revise(|value| *value = BoardToolbarPopover::None)
-                }),
-        )
-    });
     let archive = action(
         scope,
         app.clone(),
@@ -316,17 +297,13 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
                             "board-select-label",
                             app.translated(scope, "kanban.board_header"),
                         ),
-                        Box::new(
-                            glory::ui::view()
-                                .class(scope.bond(move || {
-                                    if c.board_popover.get() == BoardToolbarPopover::SelectBoard {
-                                        "board-select-menu-host is-open"
-                                    } else {
-                                        "board-select-menu-host"
-                                    }
-                                    .to_owned()
-                                }))
-                                .fill(vec![switch, popover]),
+                        toolbar_popover(
+                            scope,
+                            c.board_popover,
+                            BoardToolbarPopover::SelectBoard,
+                            app.translated(scope, "kanban.ui.switch_board").into(),
+                            switch,
+                            popover,
                         ),
                         add_list,
                     ],
@@ -335,17 +312,13 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
                     "actions board-toolbar-actions",
                     vec![
                         archive,
-                        Box::new(
-                            glory::ui::view()
-                                .class(scope.bond(move || {
-                                    if c.board_popover.get() == BoardToolbarPopover::CreateBoard {
-                                        "board-popover-host is-open"
-                                    } else {
-                                        "board-popover-host"
-                                    }
-                                    .to_owned()
-                                }))
-                                .fill(vec![create_toggle, create_panel]),
+                        toolbar_popover(
+                            scope,
+                            c.board_popover,
+                            BoardToolbarPopover::CreateBoard,
+                            app.translated(scope, "kanban.ui.new_board").into(),
+                            plain(app.translated(scope, "kanban.ui.new_board")),
+                            create_panel,
                         ),
                     ],
                 ),
@@ -380,7 +353,6 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
     stack(
         "timeline kanban-panel",
         vec![
-            scrim,
             header,
             paragraph("muted board-status", status),
             grid,
@@ -763,23 +735,19 @@ fn column_view(
                 vec![
                     stack(
                         "board-card-composer-card",
-                        vec![crate::views::settings::widgets::input_prompt(
-                            scope,
-                            board.app.translated(scope, "kanban.ui.card_title").into(),
-                            c.new_card_title,
-                            Box::new(
-                                sapid::text_field()
-                                    .unstyled()
-                                    .class("board-card-composer-input new-card-title-input")
-                                    .name(crate::i18n::tr("kanban.ui.card_title"))
-                                    .value(c.new_card_title)
-                                    .multiline(true)
-                                    .on_value_change(move |next| {
-                                        if next.chars().count() <= 512 {
-                                            c.new_card_title.revise(|value| *value = next);
-                                        }
-                                    }),
-                            ),
+                        vec![Box::new(
+                            sapid::text_field()
+                                .placeholder(board.app.translated(scope, "kanban.ui.card_title"))
+                                .unstyled()
+                                .class("board-card-composer-input new-card-title-input")
+                                .name(crate::i18n::tr("kanban.ui.card_title"))
+                                .value(c.new_card_title)
+                                .multiline(true)
+                                .on_value_change(move |next| {
+                                    if next.chars().count() <= 512 {
+                                        c.new_card_title.revise(|value| *value = next);
+                                    }
+                                }),
                         )],
                     ),
                     line(

@@ -923,10 +923,9 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, pair_mode: bool) -
                 .class("field")
                 .label(context.translated(scope, "settings.devices.revoke_recovery_label"))
                 .control(move |field| {
-                    sapid::text_field()
+                    sapid::password_input()
                         .unstyled()
                         .field(field)
-                        .purpose(Purpose::Password)
                         .value(word_text)
                         .on_value_change(move |next| words.revise(|value| value.replace(next)))
                 }),

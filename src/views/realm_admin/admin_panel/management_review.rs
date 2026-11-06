@@ -61,10 +61,9 @@ fn fresh_decision_controls(
                         .class("field")
                         .label("身份控制 Recovery Key（仅本次签署，不保存）")
                         .control(move |field| {
-                            sapid::text_field()
+                            sapid::password_input()
                                 .unstyled()
                                 .field(field)
-                                .purpose(glory::prelude::Purpose::Password)
                                 .value(value)
                                 .on_value_change(move |next| {
                                     recovery.revise(|value| {

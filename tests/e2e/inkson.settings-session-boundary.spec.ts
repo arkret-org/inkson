@@ -75,7 +75,7 @@ test("root logout suppresses a pending settings query in the same page instance"
     await byClass(page, "mimi-refresh-directory").click();
     await expect.poll(() => !!queryRequest).toBe(true);
     await expect(byClass(page, "mimi-refresh-directory")).toBeDisabled();
-    await byClass(page, "account-menu-button").click();
+    await page.locator(".account-menu-wrap .sapid-popover-trigger").click();
     const logoutResponse = page.waitForResponse(response => response.request().method() === "POST"
       && new URL(response.url()).pathname === "/_arkret/gate/account/logout");
     await byClass(page, "account-menu").getByRole("button", { name: "Log out", exact: true }).click();

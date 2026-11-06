@@ -341,13 +341,23 @@ pub fn input_field(
         sapid::field(key.into())
             .unstyled()
             .label(label)
-            .control(move |field| {
-                sapid::text_field()
-                    .unstyled()
-                    .field(field)
-                    .value(value)
-                    .purpose(purpose)
-                    .on_value_change(move |next| value.revise(|value| *value = next))
+            .control(move |field| -> View {
+                if purpose == Purpose::Password {
+                    Box::new(
+                        sapid::password_input()
+                            .field(field)
+                            .value(value)
+                            .on_value_change(move |next| value.revise(|value| *value = next)),
+                    )
+                } else {
+                    Box::new(
+                        sapid::text_field()
+                            .field(field)
+                            .value(value)
+                            .purpose(purpose)
+                            .on_value_change(move |next| value.revise(|value| *value = next)),
+                    )
+                }
             }),
     )
 }

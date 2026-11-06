@@ -1,25 +1,6 @@
-//! Pure calculation helpers and cell types for the kanban due calendar.
-//!
-//! mechanically moved from `views/kanban/mod.rs` as one contiguous
-//! block. This is move-only: logic, signatures, and canonical bytes are
-//! unchanged. Visibility was raised from module-private to `pub(super)`, so
-//! after `mod.rs` re-exports with `use due_calendar::*;`, `KanbanPanel` and
-//! `tests.rs` (`use super::*`) resolution paths remain unchanged.
-
-// Re-export `NaiveDate` through this module back to the kanban root. The
-// `use due_calendar::*` in `mod.rs` makes it appear in the parent scope again,
-// so existing unqualified references in `tests.rs` (`use super::*`) still
-// resolve without changing tests.
+//! Due-date projection helpers and a thin Sapid DatePicker value adapter.
+use chrono::Datelike;
 pub(super) use chrono::NaiveDate;
-use chrono::{Datelike, Duration};
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct DueCalendarCell {
-    pub(super) date: NaiveDate,
-    pub(super) day: u32,
-    pub(super) in_current_month: bool,
-    pub(super) iso_date: String,
-}
 
 pub(super) fn default_due_calendar_month() -> NaiveDate {
     start_of_due_calendar_month(due_calendar_today())
@@ -68,31 +49,65 @@ pub(super) fn due_value_is_overdue(value: &str) -> bool {
     }
 }
 
-pub(super) fn due_calendar_month_label(month: NaiveDate) -> String {
-    month.format("%B %Y").to_string()
-}
-
-pub(super) fn add_due_calendar_months(month: NaiveDate, delta: i32) -> NaiveDate {
-    let month = start_of_due_calendar_month(month);
-    let index = month.year() * 12 + month.month0() as i32 + delta;
-    let year = index.div_euclid(12);
-    let month0 = index.rem_euclid(12);
-    NaiveDate::from_ymd_opt(year, month0 as u32 + 1, 1).unwrap_or(month)
-}
-
-pub(super) fn due_calendar_cells(month: NaiveDate) -> Vec<DueCalendarCell> {
-    let month = start_of_due_calendar_month(month);
-    let first_weekday_offset = month.weekday().num_days_from_sunday() as i64;
-    let first_cell = month - Duration::days(first_weekday_offset);
-    (0..42)
-        .map(|offset| {
-            let date = first_cell + Duration::days(offset);
-            DueCalendarCell {
-                date,
-                day: date.day(),
-                in_current_month: date.year() == month.year() && date.month() == month.month(),
-                iso_date: date.format("%Y-%m-%d").to_string(),
-            }
-        })
-        .collect()
+pub(super) fn due_calendar_widget(
+    scope: &glory::Scope,
+    locale: glory::Cage<crate::i18n::UiLocale>,
+    theme: sapid::Theme,
+    label: glory::Vary<String>,
+    value: glory::Cage<String>,
+    month: glory::Cage<NaiveDate>,
+) -> crate::presentation::View {
+    let Ok(today) =
+        sapid::CivilDate::parse_iso(&due_calendar_today().format("%Y-%m-%d").to_string())
+    else {
+        return crate::presentation::widgets::paragraph(
+            "error",
+            "The current date is outside the calendar range.",
+        );
+    };
+    let provider = scope.bond(move || {
+        sapid::DatesProvider::new(today)
+            .today(Some(today))
+            .week_start(sapid::Weekday::Sunday)
+            .locale(if locale.get() == crate::i18n::UiLocale::Zh {
+                sapid::DateLocale::ZhCn
+            } else {
+                sapid::DateLocale::En
+            })
+    });
+    let selected = scope.bond(move || {
+        sapid::DateSelection::Single(parse_due_calendar_date(&value.get()).and_then(|date| {
+            sapid::CivilDate::parse_iso(&date.format("%Y-%m-%d").to_string()).ok()
+        }))
+    });
+    let visible = scope.bond(move || {
+        sapid::CivilDate::parse_iso(&month.get().format("%Y-%m-%d").to_string())
+            .map(sapid::CivilDate::year_month)
+            .unwrap_or_else(|_| today.year_month())
+    });
+    Box::new(
+        sapid::date_picker(format!("card-due-calendar-{}", scope.id().slot()), provider)
+            .theme(theme)
+            .class("due-calendar")
+            .name(label)
+            .value(selected)
+            .month(visible)
+            .allow_deselect(false)
+            .on_month_change(move |next| {
+                if let Some(next) = parse_due_calendar_date(&next.first().to_string()) {
+                    month.revise(|month| *month = next);
+                }
+            })
+            .on_value_change(move |selection| {
+                if let sapid::DateSelection::Single(Some(date)) = selection {
+                    let iso = date.to_string();
+                    value.revise(|value| *value = iso);
+                    if let Some(first) =
+                        parse_due_calendar_date(&date.year_month().first().to_string())
+                    {
+                        month.revise(|month| *month = first);
+                    }
+                }
+            }),
+    )
 }

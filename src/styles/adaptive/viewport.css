@@ -356,8 +356,7 @@
     flex: 1 0 auto;
   }
 
-  .topbar-command-search .command-palette,
-  .command-palette {
+  .sapid-command-dialog {
     width: calc(100vw - 24px);
     max-width: calc(100vw - 24px);
   }
@@ -406,7 +405,7 @@
   }
 
   .board-select-menu-host,
-  .board-select-button,
+  .board-select-menu-host .sapid-popover-trigger,
   .board-list-compose input {
     width: 100%;
     min-width: 0;

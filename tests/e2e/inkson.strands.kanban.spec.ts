@@ -153,7 +153,7 @@ test("kanban card detail embeds discussion without boundary copy", async ({
   await byClass(detailPopup, "card-detail-cancel-edit-button").click();
   await synthesisTab.click();
   await expect(byClass(detailPopup, "card-synthesis-panel")).toBeVisible();
-  await byClass(detailPopup, "card-detail-sidebar-tab-members").click();
+  await detailPopup.locator(".card-detail-sidebar-content").getByRole("tab", { name: /^Members/ }).click();
   const selfMention = page.getByRole("button", {
     name: "Mention alice:local.host",
     exact: true,
@@ -242,7 +242,7 @@ test("fresh Sidecar rejection preserves its bound draft without publishing to th
       messageSubmissions += 1;
     }
   });
-  await byClass(detailPopup, "card-detail-sidebar-tab-members").click();
+  await detailPopup.locator(".card-detail-sidebar-content").getByRole("tab", { name: /^Members/ }).click();
   await byClass(byClass(detailPopup, "card-detail-agent-row"), "card-detail-member-mention-button")
     .click();
   await inputByClass(detailPopup, "chat-input").fill("@me/assistant hello");
@@ -323,7 +323,7 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
     "BOARD",
   );
 
-  await byClass(page, "new-board-toggle").click();
+  await page.locator(".board-popover-host .sapid-popover-trigger").click();
   await expect(inputByClass(page, "new-board-title-input")).toBeVisible();
   await page.mouse.click(12, 12);
   await expect(inputByClass(page, "new-board-title-input")).toHaveCount(0);
@@ -346,7 +346,7 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
     await route.fallback();
   });
 
-  await byClass(page, "new-board-toggle").click();
+  await page.locator(".board-popover-host .sapid-popover-trigger").click();
   await inputByClass(page, "new-board-title-input").fill("Design board");
   await byClass(page, "create-board-space-button").click();
   await expect(byClass(page, "add-column-button")).toBeVisible();
@@ -474,7 +474,7 @@ test("kanban board selector swaps projected board columns", async ({
     "Legal review for public beta",
   );
 
-  await byClass(page, "board-space-select-button").click();
+  await page.locator(".board-select-menu-host .sapid-popover-trigger").click();
   await byClass(page, "board-select-menu-panel").getByRole("button", { name: "Secondary planning board", exact:true }).click();
 
   await expect(byClass(page, "kanban-column")).toHaveCount(1);

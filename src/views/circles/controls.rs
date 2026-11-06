@@ -106,8 +106,7 @@ fn options(
                                         .collect(),
                                     move |value| change.borrow_mut()(value),
                                 )
-                                .control_id(field.id.clone())
-                                .close_label(context.translated(scope, "common.close")),
+                                .field(field.clone()),
                             )
                             .build(scope)
                         })

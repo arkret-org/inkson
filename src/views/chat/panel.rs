@@ -817,7 +817,8 @@ fn shell(
                                 body
                             };
                             Box::new(
-                                glory::ui::button()
+                                sapid::button()
+                                    .unstyled()
                                     .name(label.clone())
                                     .class("secondary pinned-bar-item")
                                     .fill(group().fill((

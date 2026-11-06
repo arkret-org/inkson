@@ -417,11 +417,10 @@ pub fn mls_unlock_prompt(scope: &Scope, context: Rc<InksonContext>) -> View {
                         .unstyled()
                         .label(context.translated(scope, "mls_unlock.placeholder"))
                         .control(move |field| {
-                            sapid::text_field()
+                            sapid::password_input()
                                 .unstyled()
                                 .class("input")
                                 .field(field)
-                                .purpose(Purpose::Password)
                                 .value(pass)
                                 .enabled(enabled)
                                 .on_value_change(move |value| try_set_state(pass, value))

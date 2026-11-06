@@ -13,13 +13,13 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     await expect(rail.locator("a.rail-link")).toHaveCount(5);
     await expect(byClass(page, "server-switch-button")).toHaveCount(0);
     await expect(byClass(page, "sidebar-collapse-toggle")).toHaveCount(0);
-    await expect(page.locator(".topbar .account-menu-button")).toHaveCount(0);
+    await expect(page.locator(".topbar .account-menu-wrap .sapid-popover-trigger")).toHaveCount(0);
     const logo = byClass(page, "rail-logo");
     await expect(logo).toBeVisible();
     await expect.poll(() => logo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
     await page.screenshot({ path: test.info().outputPath(`settings-${viewport.width}.png`) });
     const settings = byClass(page, "rail-settings");
-    const avatar = rail.locator(".account-menu-button");
+    const avatar = rail.locator(".account-menu-wrap .sapid-popover-trigger");
     const settingsBox = (await settings.boundingBox())!;
     const avatarBox = (await avatar.boundingBox())!;
     expect(settingsBox.y).toBeGreaterThan(viewport.height - 150);
@@ -34,7 +34,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(viewport.height);
     await page.screenshot({ path: test.info().outputPath(`account-${viewport.width}.png`) });
     await page.keyboard.press("Escape");
-    await expect(menu).toHaveCount(0);
+    await expect(menu).toBeHidden();
     await expect(byClass(page, "settings-nav-item-agents")).toHaveCount(0);
     await byClass(page, "rail-agents").click();
     await expect(page).toHaveURL(/\/agents(?:\?filter=)?$/);

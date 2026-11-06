@@ -909,37 +909,33 @@ pub fn global_search_panel(
     let form = line(
         "actions global-search-form",
         vec![
-            input_prompt(
-                scope,
-                context.translated(scope, "search.placeholder").into(),
-                query,
-                Box::new(
-                    sapid::text_field()
-                        .unstyled()
-                        .class("input global-search-input")
-                        .name(context.translated(scope, "search.title"))
-                        .purpose(glory::render::Purpose::Search)
-                        .value(query)
-                        .node_ref(query_reference)
-                        .on_value_change(move |value| query.revise(|current| *current = value))
-                        .on(glory::render::EventKind::Keyboard, move |event| {
-                            if matches!(
-                                event,
-                                glory::render::Event::Keyboard {
-                                    command: glory::render::KeyboardCommand::Submit,
-                                    ..
-                                }
-                            ) && enabled.get_untracked()
-                            {
-                                run_search(
-                                    query_context.clone(),
-                                    query_owner.clone(),
-                                    state,
-                                    query.get_untracked(),
-                                );
+            Box::new(
+                sapid::text_field()
+                    .placeholder(context.translated(scope, "search.placeholder"))
+                    .unstyled()
+                    .class("input global-search-input")
+                    .name(context.translated(scope, "search.title"))
+                    .purpose(glory::render::Purpose::Search)
+                    .value(query)
+                    .node_ref(query_reference)
+                    .on_value_change(move |value| query.revise(|current| *current = value))
+                    .on(glory::render::EventKind::Keyboard, move |event| {
+                        if matches!(
+                            event,
+                            glory::render::Event::Keyboard {
+                                command: glory::render::KeyboardCommand::Submit,
+                                ..
                             }
-                        }),
-                ),
+                        ) && enabled.get_untracked()
+                        {
+                            run_search(
+                                query_context.clone(),
+                                query_owner.clone(),
+                                state,
+                                query.get_untracked(),
+                            );
+                        }
+                    }),
             ),
             action(
                 scope,

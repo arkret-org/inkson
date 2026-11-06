@@ -1,3 +1,4 @@
+
 use super::*;
 
 #[derive(Clone)]
@@ -100,6 +101,7 @@ fn card_owned_agent_rows(
 
 #[cfg(test)]
 mod edit_identity_tests {
+
     use super::*;
 
     #[test]
@@ -1767,85 +1769,68 @@ fn sidebar_view(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
     let displayed = detail.card;
     let app = detail.app.clone();
     let panel_detail = detail.clone();
-    let content = reactive(
-        scope.bond(move || {
+    let data = scope.bond(move || {
+        let revision = app.state_revision.get();
+        let epoch = app.realm_live_epoch.get();
+        let card = displayed.get().unwrap_or_else(|| card.clone());
+        let (realm, rows) = panel_detail.app.state_store.read(|store| {
+            let loaded = store.load();
+            let projection = loaded
+                .realm_tree_projections
+                .get(&panel_detail.context.selected_realm_id);
             (
-                c.card_detail_sidebar_tab.get(),
-                app.state_revision.get(),
-                app.realm_live_epoch.get(),
-                displayed.get(),
-            )
-        }),
-        move |scope, (tab, _, _, current)| {
-            let card = current.unwrap_or_else(|| card.clone());
-            let (realm, rows) = panel_detail.app.state_store.read(|store| {
-                let loaded = store.load();
-                let projection = loaded
-                    .realm_tree_projections
-                    .get(&panel_detail.context.selected_realm_id);
-                (
-                    member_roster_realm_context(
-                        &panel_detail.context.selected_realm_id,
-                        &panel_detail.context.projection_realm_id,
-                        projection,
-                    ),
-                    card_member_roster(store, &panel_detail.context.selected_realm_id),
-                )
-            });
-            let mut tabs = vec![];
-            for (kind, key, label) in [
-                (
-                    CardDetailSidebarTab::Details,
-                    "card-detail-sidebar-tab-details",
-                    crate::i18n::tr("kanban.ui.details"),
+                member_roster_realm_context(
+                    &panel_detail.context.selected_realm_id,
+                    &panel_detail.context.projection_realm_id,
+                    projection,
                 ),
-                (
-                    CardDetailSidebarTab::Members,
-                    "card-detail-sidebar-tab-members",
-                    crate::i18n::tr_args(
-                        "kanban.ui.member_count",
-                        &[("count", rows.len().to_string())],
-                    ),
-                ),
-            ] {
-                tabs.push(Box::new(
-                    glory::ui::button()
-                        .class(format!(
-                            "card-detail-tab {key}{}",
-                            if kind == tab { " active" } else { "" }
-                        ))
-                        .label(label)
-                        .semantics(Some(Box::new(glory::render::Semantics {
-                            tab: true,
-                            selected: Some(kind == tab),
-                            ..Default::default()
-                        })))
-                        .on(glory::render::EventKind::Activate, move |_| {
-                            c.card_detail_sidebar_tab.revise(|value| *value = kind)
-                        }),
-                ) as View);
-            }
-            let body = match tab {
-                CardDetailSidebarTab::Details => {
-                    details_fields(scope, panel_detail.clone(), card.clone(), realm, rows)
-                }
-                CardDetailSidebarTab::Members => {
-                    member_list(scope, panel_detail.clone(), card.clone(), realm, rows)
-                }
-            };
-            stack(
-                "card-detail-sidebar-content",
-                vec![
-                    Box::new(
-                        glory::ui::view()
-                            .role(glory::render::Role::TabList)
-                            .class("card-detail-tabs card-detail-sidebar-tabs")
-                            .fill(tabs),
-                    ),
-                    body,
-                ],
+                card_member_roster(store, &panel_detail.context.selected_realm_id),
             )
-        },
+        });
+        (revision, epoch, card, realm, rows)
+    });
+    let selected = scope.bond(move || match c.card_detail_sidebar_tab.get() {
+        CardDetailSidebarTab::Details => "details".to_owned(),
+        CardDetailSidebarTab::Members => "members".to_owned(),
+    });
+    let details_label = detail.app.translated(scope, "kanban.ui.details");
+    let member_context = detail.app.clone();
+    let members_label = scope.bond(move || {
+        let _ = member_context.locale.get();
+        crate::i18n::tr_args(
+            "kanban.ui.member_count",
+            &[("count", data.get().4.len().to_string())],
+        )
+    });
+    let details = detail.clone();
+    let members = detail.clone();
+    let content: View = Box::new(
+        sapid::tabs(format!("card-sidebar-{}", scope.id().slot()))
+            .unstyled()
+            .class("card-detail-sidebar-content")
+            .value(selected)
+            .content_policy(sapid::ContentPolicy::Unmount)
+            .on_value_change(move |next| {
+                c.card_detail_sidebar_tab.revise(|tab| {
+                    *tab = if next == "members" {
+                        CardDetailSidebarTab::Members
+                    } else {
+                        CardDetailSidebarTab::Details
+                    };
+                })
+            })
+            .tab(sapid::tab("details").label(details_label).content(move || {
+                let detail = details.clone();
+                reactive(data, move |scope, (_, _, card, realm, rows)| {
+                    details_fields(scope, detail.clone(), card, realm, rows)
+                })
+            }))
+            .tab(sapid::tab("members").label(members_label).content(move || {
+                let detail = members.clone();
+                reactive(data, move |scope, (_, _, card, realm, rows)| {
+                    member_list(scope, detail.clone(), card, realm, rows)
+                })
+            })),
     );
     Box::new(
         glory::prelude::view()
@@ -2179,14 +2164,9 @@ fn assignee_picker(scope: &Scope, detail: Detail, realm: String) -> View {
                         let short_id = short_protocol_id(actor.to_string());
                         let avatar =
                             assignee_avatar(scope, detail_rows.app.clone(), &actor, &label);
-                        let semantics = scope.bond(move || {
-                            Some(Box::new(glory::render::Semantics {
-                                pressed: Some(selected.get()),
-                                ..Default::default()
-                            }))
-                        });
                         Box::new(
-                            glory::ui::button()
+                            sapid::button()
+                                .unstyled()
                                 .class(scope.bond(move || {
                                     format!(
                                         "secondary assignee-option assignee-picker-option{}",
@@ -2194,7 +2174,7 @@ fn assignee_picker(scope: &Scope, detail: Detail, realm: String) -> View {
                                     )
                                 }))
                                 .name(label.clone())
-                                .semantics(semantics)
+                                .pressed(selected)
                                 .fill(vec![
                                     inline_label(
                                         "assignee-option-check",
@@ -2231,23 +2211,18 @@ fn assignee_picker(scope: &Scope, detail: Detail, realm: String) -> View {
                     "assignee-search",
                     vec![
                         crate::components::ui_icon("search"),
-                        crate::views::settings::widgets::input_prompt(
-                            scope,
-                            detail
-                                .app
-                                .translated(scope, "kanban.ui.filter_members")
-                                .into(),
-                            c.assignee_filter,
-                            Box::new(
-                                sapid::text_field()
-                                    .unstyled()
-                                    .class("input card-detail-assignee-filter")
-                                    .name(detail.app.translated(scope, "kanban.ui.filter_members"))
-                                    .value(c.assignee_filter)
-                                    .on_value_change(move |value| {
-                                        c.assignee_filter.revise(|current| *current = value)
-                                    }),
-                            ),
+                        Box::new(
+                            sapid::text_field()
+                                .placeholder(
+                                    detail.app.translated(scope, "kanban.ui.filter_members"),
+                                )
+                                .unstyled()
+                                .class("input card-detail-assignee-filter")
+                                .name(detail.app.translated(scope, "kanban.ui.filter_members"))
+                                .value(c.assignee_filter)
+                                .on_value_change(move |value| {
+                                    c.assignee_filter.revise(|current| *current = value)
+                                }),
                         ),
                     ],
                 ),
@@ -2328,90 +2303,17 @@ fn due_picker(_scope: &Scope, detail: Detail) -> View {
 }
 fn due_picker_contents(scope: &Scope, detail: Detail) -> View {
     let c = detail.c;
-    let calendar = reactive(c.due_calendar_month, move |scope, month| {
-        let prev = Box::new(
-            sapid::button()
-                .unstyled()
-                .class("secondary due-calendar-nav due-date-month-prev")
-                .name(crate::i18n::tr("kanban.ui.previous_month"))
-                .label("‹")
-                .on_press(move || {
-                    c.due_calendar_month
-                        .revise(|value| *value = add_due_calendar_months(*value, -1))
-                }),
-        ) as View;
-        let next = Box::new(
-            sapid::button()
-                .unstyled()
-                .class("secondary due-calendar-nav due-date-month-next")
-                .name(crate::i18n::tr("kanban.ui.next_month"))
-                .label("›")
-                .on_press(move || {
-                    c.due_calendar_month
-                        .revise(|value| *value = add_due_calendar_months(*value, 1))
-                }),
-        ) as View;
-        let weekdays = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
-            .into_iter()
-            .map(|day| plain(crate::i18n::tr(&format!("kanban.ui.{day}"))))
-            .collect::<Vec<_>>();
-        let mut days = Vec::<View>::new();
-        for cell in due_calendar_cells(month) {
-            let iso = cell.iso_date.clone();
-            let selected = iso.clone();
-            let is_today = cell.date == due_calendar_today();
-            let class = scope.bond(move || {
-                format!(
-                    "secondary due-calendar-day{}{}{}",
-                    if cell.in_current_month {
-                        ""
-                    } else {
-                        " outside"
-                    },
-                    if c.due_edit_value.get() == selected {
-                        " selected"
-                    } else {
-                        ""
-                    },
-                    if is_today { " today" } else { "" }
-                )
-            });
-            let selected = iso.clone();
-            let pressed = scope.bond(move || {
-                Some(Box::new(glory::render::Semantics {
-                    pressed: Some(c.due_edit_value.get() == selected),
-                    ..Default::default()
-                }))
-            });
-            days.push(Box::new(
-                glory::ui::button()
-                    .class(class)
-                    .name(iso.clone())
-                    .label(cell.day.to_string())
-                    .semantics(pressed)
-                    .on(glory::render::EventKind::Activate, move |_| {
-                        c.due_edit_value.revise(|value| *value = iso.clone());
-                        c.due_calendar_month
-                            .revise(|value| *value = due_calendar_month_for_value(&iso));
-                    }),
-            ));
-        }
-        stack(
-            "due-calendar",
-            vec![
-                line(
-                    "due-calendar-header",
-                    vec![
-                        prev,
-                        paragraph("due-calendar-title", due_calendar_month_label(month)),
-                        next,
-                    ],
-                ),
-                line("due-calendar-weekdays", weekdays),
-                stack("due-calendar-grid", days),
-            ],
-        )
-    });
+    let calendar = due_calendar_widget(
+        scope,
+        detail.app.locale,
+        detail.app.theme_tokens(),
+        detail
+            .app
+            .translated(scope, "kanban.ui.due_date_calendar")
+            .into(),
+        c.due_edit_value,
+        c.due_calendar_month,
+    );
     let save = detail.clone();
     let heading = stack(
         "due-date-modal-title",
@@ -3182,6 +3084,38 @@ mod production_retention_tests {
         c.card_detail_sidebar_visible
             .revise(|visible| *visible = true);
         settle(&app, &executor);
+        let sidebar_tabs = class_node(&app, "sapid-tab-list");
+        let tab_triggers = nodes(&app)
+            .into_iter()
+            .filter(|id| {
+                app.tree()
+                    .node(*id)
+                    .unwrap()
+                    .descriptor
+                    .view()
+                    .classes
+                    .iter()
+                    .any(|class| class == "sapid-tab")
+            })
+            .collect::<Vec<_>>();
+        context.state_revision.revise(|revision| *revision += 1);
+        settle(&app, &executor);
+        assert_eq!(class_node(&app, "sapid-tab-list"), sidebar_tabs);
+        assert_eq!(
+            nodes(&app)
+                .into_iter()
+                .filter(|id| app
+                    .tree()
+                    .node(*id)
+                    .unwrap()
+                    .descriptor
+                    .view()
+                    .classes
+                    .iter()
+                    .any(|class| class == "sapid-tab"))
+                .collect::<Vec<_>>(),
+            tab_triggers
+        );
         app.dispatch(
             class_node(&app, "card-detail-assignee-add"),
             Event::Activate,
@@ -3228,6 +3162,7 @@ mod production_retention_tests {
         concurrent.title = "Updated card presentation".into();
         c.selected_card.revise(|value| *value = Some(concurrent));
         settle(&app, &executor);
+        assert_eq!(class_node(&app, "sapid-tab-list"), sidebar_tabs);
         assert!(
             !c.assignee_selected_actor_ids
                 .get_untracked()
@@ -3279,7 +3214,7 @@ mod production_retention_tests {
                     .view()
                     .classes
                     .iter()
-                    .any(|class| class == "due-calendar-day"))
+                    .any(|class| class == "sapid-calendar-day"))
                 .count(),
             42
         );
@@ -3293,7 +3228,11 @@ mod production_retention_tests {
                     .view()
                     .name
                     .as_deref()
-                    == Some("2026-10-20")
+                    == Some(
+                        sapid::DateLocale::En
+                            .date_label(sapid::CivilDate::parse_iso("2026-10-20").unwrap())
+                            .as_str(),
+                    )
             })
             .unwrap();
         app.dispatch(day, Event::Activate).unwrap();

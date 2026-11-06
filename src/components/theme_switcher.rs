@@ -62,49 +62,6 @@ pub fn theme_switcher(
 ) -> View {
     let theme = props.theme;
     let on_persist = props.on_persist;
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let mut choices = Vec::new();
-        for mode in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
-            let persist = on_persist.clone();
-            let selected = scope.bond(move || ThemeMode::from_persisted_str(&theme.get()) == mode);
-            let classes = scope.bond(move || {
-                format!(
-                    "button theme-switcher-option {}",
-                    if selected.get() {
-                        "primary"
-                    } else {
-                        "secondary"
-                    }
-                )
-            });
-            let semantics = scope.bond(move || {
-                Some(Box::new(glory::render::Semantics {
-                    pressed: Some(selected.get()),
-                    ..Default::default()
-                }))
-            });
-            choices.push(Box::new(
-                button()
-                    .class(classes)
-                    .name(mode.label())
-                    .label(mode.label())
-                    .semantics(semantics)
-                    .on(glory::render::EventKind::Activate, move |_| {
-                        let next = mode.as_persisted_str().to_owned();
-                        theme.revise(|value| *value = next.clone());
-                        persist(next);
-                    }),
-            ) as View);
-        }
-        Box::new(
-            view()
-                .class("theme-switcher")
-                .name(context.translated(scope, "theme.switcher_aria_label"))
-                .fill(choices),
-        )
-    }
-    #[cfg(target_arch = "wasm32")]
     {
         let selected = scope.bond(move || {
             ThemeMode::from_persisted_str(&theme.get())

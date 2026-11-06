@@ -432,7 +432,7 @@ test("dashboard summarizes unread notifications from sync projection", async ({
 
 test("server identity lives in the account menu", async ({ page }) => {
   await dismissBlockingRecoveryModal(page);
-  await page.locator(".navigation-rail .account-menu-button").click();
+  await page.locator(".navigation-rail .account-menu-wrap .sapid-popover-trigger").click();
   await expect(page.locator(".account-menu__server")).toHaveText("https://local.host");
   await expect(page.locator(".server-switch-menu, .server-switch-button")).toHaveCount(0);
 });

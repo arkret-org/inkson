@@ -114,7 +114,7 @@ test("bootstrap login and sync shows the connected realm", async ({ page }) => {
     .filter({ hasText: "Launch Realm" }), false);
   await page.locator('[class~="sidebar"] a.sidebar-nav-item[href="/"]').click();
   await expect(byClass(page, "dashboard-panel")).toBeVisible();
-  await byClass(page, "account-menu-button").click();
+  await page.locator(".account-menu-wrap .sapid-popover-trigger").click();
   await expect(page.locator(".account-menu .who")).toHaveText(
     "inkson",
   );
@@ -149,7 +149,7 @@ test("bootstrap login and sync shows the connected realm", async ({ page }) => {
   await expect(byClass(page, "topbar-current-surface")).toContainText(
     "Board",
   );
-  await expect(byClass(page, "realm-nav-menu-button")).toBeVisible();
+  await expect(page.locator(".realm-nav-menu-host .sapid-popover-trigger")).toBeVisible();
 });
 
 test("a second browser tab is blocked until the active Inkson tab closes", async ({
@@ -406,7 +406,7 @@ test("connect refresh canonicalizes a stale locator while retaining the accepted
 
   await refreshServer(page);
 
-  await byClass(page, "account-menu-button").last().click();
+  await page.locator(".account-menu-wrap .sapid-popover-trigger").last().click();
   await expect(page.locator(".account-menu .who").last()).toHaveText(
     "inkson",
   );

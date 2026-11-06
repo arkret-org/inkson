@@ -51,29 +51,63 @@ fn due_calendar_parses_date_and_rfc3339_values() {
     assert_eq!(parse_due_calendar_date("unscheduled"), None);
 }
 
-#[test]
-fn due_calendar_month_navigation_crosses_years() {
-    let jan_2026 = NaiveDate::from_ymd_opt(2026, 1, 17).unwrap();
-    assert_eq!(
-        add_due_calendar_months(jan_2026, -1),
-        NaiveDate::from_ymd_opt(2025, 12, 1).unwrap()
-    );
-    let dec_2026 = NaiveDate::from_ymd_opt(2026, 12, 9).unwrap();
-    assert_eq!(
-        add_due_calendar_months(dec_2026, 1),
-        NaiveDate::from_ymd_opt(2027, 1, 1).unwrap()
-    );
+fn calendar_nodes(app: &glory::App) -> Vec<glory::render::NodeId> {
+    fn visit(
+        tree: &glory::render::memory::Memory,
+        id: glory::render::NodeId,
+        found: &mut Vec<glory::render::NodeId>,
+    ) {
+        found.push(id);
+        for child in &tree.node(id).unwrap().children {
+            visit(tree, *child, found);
+        }
+    }
+    let tree = app.tree();
+    let mut found = Vec::new();
+    for root in tree.roots() {
+        visit(&tree, *root, &mut found);
+    }
+    found
 }
-
+fn exercise_due_calendar(app: glory::App) {
+    let value = app.scope().cage("2026-06-09T18:30:00.000Z".to_owned());
+    let month = app
+        .scope()
+        .cage(NaiveDate::from_ymd_opt(2026, 6, 1).unwrap());
+    let locale = app.scope().cage(crate::i18n::UiLocale::En);
+    app.mount(due_calendar_widget(
+        app.scope(),
+        locale,
+        sapid::Theme::default(),
+        "Due date".to_owned().into(),
+        value,
+        month,
+    ))
+    .unwrap();
+    app.flush().unwrap();
+    assert_eq!(value.get_untracked(), "2026-06-09T18:30:00.000Z");
+    let day = calendar_nodes(&app).into_iter().find(|id| {
+        let tree = app.tree(); let descriptor = tree.node(*id).unwrap().descriptor.view();
+        descriptor.classes.iter().any(|class| class == "sapid-calendar-day")
+            && matches!(descriptor.props, glory::render::Props::Button(button) if button.label == "10")
+    }).expect("June 10 in the Sapid calendar");
+    app.dispatch(day, glory::render::Event::Activate).unwrap();
+    app.flush().unwrap();
+    assert_eq!(value.get_untracked(), "2026-06-10");
+    assert_eq!(
+        month.get_untracked(),
+        NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()
+    );
+    locale.revise(|locale| *locale = crate::i18n::UiLocale::Zh);
+    app.flush().unwrap();
+    assert_eq!(value.get_untracked(), "2026-06-10");
+}
 #[test]
-fn due_calendar_cells_cover_sunday_first_six_week_grid() {
-    let month = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
-    let cells = due_calendar_cells(month);
-    assert_eq!(cells.len(), 42);
-    assert_eq!(cells.first().unwrap().iso_date, "2026-05-31");
-    assert_eq!(cells[1].iso_date, "2026-06-01");
-    assert_eq!(cells.last().unwrap().iso_date, "2026-07-11");
-    assert!(!cells[0].in_current_month);
-    assert!(cells[1].in_current_month);
-    assert!(!cells.last().unwrap().in_current_month);
+fn due_calendar_sapid_selection_preserves_imported_value_until_explicit_choice() {
+    exercise_due_calendar(glory::App::memory());
+}
+#[cfg(feature = "desktop")]
+#[test]
+fn actual_apace_due_calendar_uses_the_production_sapid_date_picker() {
+    exercise_due_calendar(glory::App::new(glory::apace::Renderer::new));
 }

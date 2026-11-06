@@ -185,7 +185,7 @@
   display: none;
 }
 
-.realm-nav-menu-button {
+.realm-nav-menu-host .sapid-popover-trigger {
   position: relative;
   width: 36px;
   min-width: 36px;
@@ -197,7 +197,7 @@
   color: var(--accent);
 }
 
-.realm-nav-menu-button::after {
+.realm-nav-menu-host .sapid-popover-trigger::after {
   content: "";
   position: absolute;
   right: 6px;
@@ -209,28 +209,14 @@
   box-shadow: 0 0 0 2px var(--surface);
 }
 
-.realm-nav-menu-host.is-open .realm-nav-menu-button {
+.realm-nav-menu-host.is-open .sapid-popover-trigger {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
-.realm-nav-menu-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: var(--layer-local-popover);
-  border: 0;
-  padding: 0;
-  background: transparent;
-  cursor: default;
-}
-
 .realm-nav-menu-panel {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 50%;
   z-index: calc(var(--layer-local-popover) + 1);
   width: 190px;
-  transform: translateX(-50%);
   display: grid;
   gap: 4px;
   padding: 6px;
@@ -306,11 +292,6 @@
     display: none;
   }
 
-  .realm-header .realm-nav-menu-panel {
-    left: auto;
-    right: 0;
-    transform: none;
-  }
 }
 
 .realm-header .actions .btn,
@@ -465,53 +446,6 @@
   align-items: center;
 }
 
-.topbar-command-search.is-open {
-  width: min(34vw, 360px);
-  min-width: 260px;
-}
-
-.topbar-command-search-field {
-  width: 100%;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0 7px 0 10px;
-  background: var(--surface);
-  color: var(--text-2);
-}
-
-.topbar-command-search-field:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
-  background: color-mix(in srgb, var(--accent-soft) 18%, var(--surface));
-}
-
-.topbar-command-search input {
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 100%;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--text);
-  outline: none;
-  font-size: 12px;
-}
-
-.topbar-command-search kbd {
-  flex: 0 0 auto;
-}
-
-.topbar-command-search .command-palette {
-  left: auto;
-  right: 0;
-  top: calc(100% + 8px);
-  width: min(420px, calc(100vw - 32px));
-  z-index: var(--layer-global-popover);
-}
-
 .realm-header .actions .pill {
   display: inline-flex;
   align-items: center;
@@ -541,3 +475,6 @@
   border-color: color-mix(in srgb, var(--border) 86%, var(--accent) 14%);
   background: color-mix(in srgb, var(--surface) 94%, white);
 }
+
+.realm-nav-menu-host .sapid-popover-trigger { display: inline-flex; align-items: center; justify-content: center; padding: 6px; border-width: 1px; border-style: solid; border-radius: 7px; cursor: pointer; }
+.realm-nav-menu-items { display: grid; gap: 4px; }

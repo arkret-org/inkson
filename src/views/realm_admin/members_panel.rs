@@ -568,23 +568,17 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, realm: String) -> 
                 },
             ));
             let search = if view.show_search {
-                crate::views::settings::widgets::input_prompt(
-                    scope,
-                    context
-                        .translated(scope, "realm_admin.roster.search")
-                        .into(),
-                    query,
-                    Box::new(
-                        sapid::text_field()
-                            .unstyled()
-                            .class("input member-search-input")
-                            .name(context.translated(scope, "realm_admin.roster.search"))
-                            .value(query)
-                            .on_value_change(move |next| {
-                                query.revise(|value| *value = next);
-                                visible.revise(|value| *value = MEMBER_PAGE_SIZE);
-                            }),
-                    ),
+                Box::new(
+                    sapid::text_field()
+                        .placeholder(context.translated(scope, "realm_admin.roster.search"))
+                        .unstyled()
+                        .class("input member-search-input")
+                        .name(context.translated(scope, "realm_admin.roster.search"))
+                        .value(query)
+                        .on_value_change(move |next| {
+                            query.revise(|value| *value = next);
+                            visible.revise(|value| *value = MEMBER_PAGE_SIZE);
+                        }),
                 )
             } else {
                 empty()
@@ -1274,20 +1268,16 @@ fn invite_modal(_scope: &Scope, state: &MembersPage) -> View {
                                 .translated(scope, "realm_admin.roster.invite_target_placeholder");
                             move |field| {
                                 glory::ui::widget(move |scope| {
-                                    input_prompt(
-                                        scope,
-                                        prompt.into(),
-                                        target,
-                                        Box::new(
-                                            sapid::text_field()
-                                                .unstyled()
-                                                .class("input")
-                                                .field(field.clone())
-                                                .value(target)
-                                                .on_value_change(move |next| {
-                                                    target.revise(|value| *value = next)
-                                                }),
-                                        ),
+                                    Box::new(
+                                        sapid::text_field()
+                                            .placeholder(prompt)
+                                            .unstyled()
+                                            .class("input")
+                                            .field(field.clone())
+                                            .value(target)
+                                            .on_value_change(move |next| {
+                                                target.revise(|value| *value = next)
+                                            }),
                                     )
                                     .build(scope)
                                 })
@@ -1328,7 +1318,7 @@ fn invite_modal(_scope: &Scope, state: &MembersPage) -> View {
                             context.translated(scope, "realm_admin.roster.invite_member"),
                         ),
                         Box::new(
-                            glory::ui::button()
+                            sapid::button().unstyled()
                                 .class("secondary icon-button close invite-modal-close")
                                 .name(context.translated(scope, "common.close"))
                                 .fill(glory::ui::text().content("✕"))

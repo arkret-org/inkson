@@ -101,7 +101,7 @@ async function selectLanguage(page: Page, language: "en" | "zh") {
 test("topbar account menu shows profile identity and current device", async ({ page }) => {
   await refreshServer(page);
   await dismissBlockingRecoveryModal(page);
-  await byClass(page, "account-menu-button").click();
+  await page.locator(".account-menu-wrap .sapid-popover-trigger").click();
   const menu = accountMenu(page);
   const didRow = byClass(menu, "account-menu__row").first();
   await expect(didRow.locator(".mono")).toHaveText(
@@ -149,7 +149,7 @@ test("account menu keeps the viewer fallback handle", async ({
   await expect(page.locator(".shell.app").last()).toBeVisible({ timeout: 120_000 });
   await refreshServer(page);
   await dismissBlockingRecoveryModal(page);
-  await byClass(page, "account-menu-button").last().click();
+  await page.locator(".account-menu-wrap .sapid-popover-trigger").last().click();
 
   await expect(byClass(accountMenu(page), "account-menu__row").nth(1).locator(".mono")).toHaveText("alice:local.host");
 });

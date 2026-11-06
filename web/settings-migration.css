@@ -3,7 +3,6 @@
    corresponding row/label classes directly. */
 .settings-nav-item { text-align: left; justify-items: start; }
 .settings-nav-item-title { color: var(--text, var(--ak-ink)); font-size: 13px; font-weight: 700; }
-.settings-nav-search .input-empty-prompt { padding: 8px 12px; white-space: nowrap; }
 .settings-avatar-card .settings-avatar-preview { width: 128px; height: 128px; font-size: 42px; }
 .settings-avatar-card .settings-avatar-preview .content-block-image,
 .settings-avatar-card .settings-avatar-preview .content-block-image img {
@@ -145,7 +144,6 @@
 .directory-panel > .directory-title { margin-block: .83em; }
 .directory-panel > .directory-description { margin-block: 1em; }
 .directory-panel > .actions { align-items: center; }
-.directory-panel .input-prompt-host { min-width: 0; }
 .directory-panel .directory-search-button { height: 36px; min-height: 36px; white-space: nowrap; }
 /* Dashboard intrinsic table and operation sections retain their original structure. */
 .dashboard-panel .surface-head > :first-child { font-weight: 700; }
@@ -197,7 +195,6 @@
 .invite-policy-panel .invite-policy-domain-field .input { width: 100%; }
 .invite-policy-panel :is(.invite-policy-handle-behavior,.invite-policy-explicit-behavior).field { align-items: flex-start; width: fit-content; }
 .invite-policy-panel :is(.invite-policy-handle-behavior,.invite-policy-explicit-behavior) .sapid-select { width: max-content; max-width: 100%; }
-.invite-policy-panel .invite-policy-domain-field .input-empty-prompt { padding: 8px 12px; white-space: nowrap; overflow: hidden; max-width: 100%; box-sizing: border-box; }
 .realm-preference-picker { width: fit-content; max-width: 100%; align-items: center; }
 .settings .realm-preference-picker > .sapid-select { width: fit-content; max-width: 100%; }
 .privacy-settings .presence-visibility-select.field { display: flex; flex-direction: row; align-items: center; width: fit-content; max-width: 100%; gap: 8px; }

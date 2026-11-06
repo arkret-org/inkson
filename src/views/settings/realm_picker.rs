@@ -87,8 +87,7 @@ pub fn realm_preference_picker(
                     },
                 )
                 .class(format!("select {key}"))
-                .enabled(has_options)
-                .close_label(context.translated(scope, "common.close")),
+                .enabled(has_options),
             )
         }
         #[cfg(target_arch = "wasm32")]

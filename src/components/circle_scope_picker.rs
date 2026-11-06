@@ -38,8 +38,6 @@ pub fn circle_scope_picker(
         let key = key.clone();
         let circles = circles.clone();
         let handler = handler.clone();
-        #[cfg(not(target_arch = "wasm32"))]
-        let close_label = picker_context.tr("common.close");
         Box::new(
             sapid::field(format!("{key}-field"))
                 .unstyled()
@@ -55,7 +53,6 @@ pub fn circle_scope_picker(
                         let circles = circles.clone();
                         let key = key.clone();
                         let realm_label = realm_label.clone();
-                        let close_label = close_label.clone();
                         widget(move |scope| {
                             let mut options =
                                 vec![NativeChoiceOption::new("__realm__", realm_label.clone())];
@@ -86,8 +83,7 @@ pub fn circle_scope_picker(
                                     },
                                 )
                                 .class("select")
-                                .control_id(field.id.clone())
-                                .close_label(close_label.clone()),
+                                .field(field.clone()),
                             )
                             .build(scope)
                         })

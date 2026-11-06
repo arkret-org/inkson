@@ -118,22 +118,6 @@ pub(super) fn context_bar(
         } else {
             ("Settings", "settings")
         });
-    let popup = reactive(menu, move |_, open| {
-        if !open {
-            return empty();
-        }
-        block(
-            "realm-nav-menu-overlay",
-            vec![
-                super::session_shell::action(
-                    "realm-nav-menu-scrim",
-                    "Close Realm view menu",
-                    move || menu.revise(|value| *value = false),
-                ),
-                block("realm-nav-menu-panel", links(true)),
-            ],
-        )
-    });
     block(
         "realm-context-bar",
         vec![
@@ -147,18 +131,28 @@ pub(super) fn context_bar(
                             "realm-nav-menu-host".to_owned()
                         }
                     }))
-                    .fill(vec![
-                        super::session_shell::icon_action(
-                            "btn icon realm-nav-menu-button",
-                            format!(
+                    .fill(
+                        sapid::popover("realm-view-menu")
+                            .unstyled()
+                            .class("realm-nav-menu-panel")
+                            .label(format!(
                                 "Switch view: {}",
                                 current.map(RealmSurface::title).unwrap_or(label)
-                            ),
-                            icon,
-                            move || menu.revise(|value| *value = !*value),
-                        ),
-                        popup,
-                    ]),
+                            ))
+                            .open(menu)
+                            .on_open_change(move |open| menu.revise(|value| *value = open))
+                            .show_close(false)
+                            .placement(
+                                glory::render::AnchorPlacement::new(
+                                    glory::render::AnchorSide::Bottom,
+                                    glory::render::AnchorAlign::End,
+                                )
+                                .gap(8.0),
+                            )
+                            .width(sapid::PopoverWidth::Px(190.0))
+                            .trigger_content(move || crate::components::ui_icon(icon))
+                            .content(move || block("realm-nav-menu-items", links(true))),
+                    ),
             ),
         ],
     )

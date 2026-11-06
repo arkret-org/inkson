@@ -399,14 +399,15 @@ fn theme_toggle_button(scope: &Scope, context: Rc<InksonContext>) -> View {
     let name = scope.bond(move || chrome.get().1);
     let sun = scope.bond(move || chrome.get().0 == "sun");
     Box::new(
-        glory::ui::button()
+        sapid::button()
+            .unstyled()
             .class("btn icon theme-toggle-button")
             .name(name)
             .fill(
                 glory::ui::when(sun, || crate::components::ui_icon("sun"))
                     .otherwise(|| crate::components::ui_icon("moon")),
             )
-            .on(EventKind::Activate, move |_| {
+            .on_press(move || {
                 let next = super::next_manual_theme(&context.theme.get());
                 context.theme.revise(|value| *value = next.clone());
                 context
@@ -817,40 +818,7 @@ fn topbar(
     });
     let search = Box::new(view().class("topbar-command-search").fill(vec![
         super::command_palette::search_trigger(scope, ui.clone()),
-        reactive(ui.search_open, {
-            let context = context.clone();
-            let ui = ui.clone();
-            move |scope, open| {
-                if !open {
-                    empty()
-                } else {
-                    let source = scope.bond({
-                        let context = context.clone();
-                        let ui = ui.clone();
-                        move || (ui.search_query.get(), context.realm_tree_nodes.get())
-                    });
-                    block(
-                        "topbar-command-search-field",
-                        vec![
-                            super::command_palette::query_input(scope, context.clone(), ui.clone()),
-                            reactive(source, {
-                                let context = context.clone();
-                                let ui = ui.clone();
-                                move |scope, (query, nodes)| {
-                                    super::command_palette::command_palette(
-                                        scope,
-                                        context.clone(),
-                                        query,
-                                        nodes,
-                                        ui.clone(),
-                                    )
-                                }
-                            }),
-                        ],
-                    )
-                }
-            }
-        }),
+        super::command_palette::command_palette(scope, context.clone(), ui.clone()),
     ])) as View;
     block(
         "topbar realm-header",
@@ -1239,92 +1207,80 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
                 let ui = ui.clone();
                 move || super::session_commands::logout(context.clone(), ui.session_status)
             });
-            let scrim = Box::new(
-                glory::ui::button()
-                    .class("account-menu-scrim")
-                    .name(context.translated(scope, "common.close"))
-                    .on(EventKind::Activate, {
-                        let ui = ui.clone();
-                        move |_| ui.account_open.revise(|value| *value = false)
-                    }),
-            ) as View;
-            Box::new(glory::ui::group().fill(vec![
-                scrim,
-                block(
-                    "account-menu",
-                    vec![
-                        head,
-                        identity_rows,
-                        super::account_switch::account_switcher(
-                            scope,
-                            context.clone(),
-                            true.into(),
-                        ),
-                        {
-                            let settings_context = context.clone();
-                            let close = ui.account_open;
-                            let settings = Box::new(
-                                internal_link()
-                                    .class("btn sm account-menu-settings")
-                                    .target(Route::Settings.to_string())
-                                    .name(context.translated(scope, "nav.settings"))
-                                    .fill((
-                                        crate::components::ui_icon("settings"),
-                                        text().content(context.translated(scope, "nav.settings")),
-                                    ))
-                                    .on(EventKind::Activate, move |_| {
-                                        close.revise(|value| *value = false);
-                                        settings_context.navigate(Route::Settings);
-                                    }),
-                            ) as View;
-                            block("account-menu__actions", vec![refresh, logout, settings])
-                        },
-                    ],
-                ),
-            ]))
+            block(
+                "account-menu-content",
+                vec![
+                    head,
+                    identity_rows,
+                    super::account_switch::account_switcher(scope, context.clone(), true.into()),
+                    {
+                        let settings_context = context.clone();
+                        let close = ui.account_open;
+                        let settings = Box::new(
+                            internal_link()
+                                .class("btn sm account-menu-settings")
+                                .target(Route::Settings.to_string())
+                                .name(context.translated(scope, "nav.settings"))
+                                .fill((
+                                    crate::components::ui_icon("settings"),
+                                    text().content(context.translated(scope, "nav.settings")),
+                                ))
+                                .on(EventKind::Activate, move |_| {
+                                    close.revise(|value| *value = false);
+                                    settings_context.navigate(Route::Settings);
+                                }),
+                        ) as View;
+                        block("account-menu__actions", vec![refresh, logout, settings])
+                    },
+                ],
+            )
         }
     });
     let online = scope.bond({
         let context = context.clone();
         move || !context.token.get().is_empty()
     });
-    let expanded = ui.account_open;
+    let mut visual: Option<View> = Some(Box::new(glory::ui::group().fill((
+        avatar,
+        reactive(online, move |_, online| {
+            if online {
+                Box::new(text().class("dot-online").content("")) as View
+            } else {
+                empty()
+            }
+        }),
+    ))));
+    let mut body = Some(body);
     block(
         "account-menu-wrap",
-        vec![
-            Box::new(
-                glory::ui::button()
-                    .class("btn icon account-menu-button")
-                    .name(context.translated(scope, "topbar.account_menu"))
-                    .semantics(scope.bond(move || {
-                        Some(Box::new(glory::render::Semantics {
-                            expanded: Some(expanded.get()),
-                            ..Default::default()
-                        }))
-                    }))
-                    .fill(glory::ui::group().fill((
-                        avatar,
-                        reactive(online, move |_, online| {
-                            if online {
-                                Box::new(text().class("dot-online").content("")) as View
-                            } else {
-                                empty()
-                            }
-                        }),
-                    )))
-                    .on(EventKind::Activate, {
-                        let ui = ui.clone();
-                        move |_| {
-                            ui.search_open.revise(|value| *value = false);
-                            ui.search_query.revise(String::clear);
-                            ui.account_open.revise(|value| *value = !*value);
-                        }
-                    }),
-            ),
-            body,
-        ],
+        vec![Box::new(
+            sapid::popover("account-menu")
+                .unstyled()
+                .class("account-menu")
+                .label(context.translated(scope, "topbar.account_menu"))
+                .open(ui.account_open)
+                .show_close(false)
+                .placement(
+                    glory::render::AnchorPlacement::new(
+                        glory::render::AnchorSide::Right,
+                        glory::render::AnchorAlign::End,
+                    )
+                    .gap(16.0),
+                )
+                .width(sapid::PopoverWidth::Auto)
+                .content_policy(sapid::ContentPolicy::KeepMounted)
+                .trigger_content(move || visual.take().unwrap_or_else(empty))
+                .on_open_change(move |open| {
+                    if open {
+                        super::command_palette::close_palette(&ui);
+                    }
+                    ui.account_open.revise(|value| *value = open);
+                })
+                .content(move || body.take().unwrap_or_else(empty)),
+        )],
     )
 }
+
 fn filtered_mobile_realm_items<'a>(
     realm_tree: &'a [crate::realm_tree::RealmTreeItem],
     query: &str,
@@ -1855,7 +1811,7 @@ mod tests {
             found
         }
         fn trigger(app: &glory::App) -> glory::render::NodeId {
-            *class_nodes(app, "account-menu-button")
+            *class_nodes(app, "sapid-popover-trigger")
                 .first()
                 .expect("account trigger")
         }
@@ -1911,11 +1867,17 @@ mod tests {
         for row in rows {
             assert_eq!(app.tree().node(row).unwrap().children.iter().count(), 2);
         }
-        let scrim = class_nodes(&app, "account-menu-scrim")[0];
-        assert!(app.dispatch(scrim, glory::render::Event::Activate).unwrap());
+        let panel = class_nodes(&app, "account-menu")[0];
+        assert!(
+            app.dispatch(
+                panel,
+                glory::render::Event::Dismiss(glory::render::DismissReason::Outside)
+            )
+            .unwrap()
+        );
         app.flush().unwrap();
         assert!(!ui.account_open.get_untracked());
-        assert!(class_nodes(&app, "account-menu").is_empty());
+        assert!(app.tree().node(panel).unwrap().descriptor.view().hidden());
         assert_eq!(trigger(&app), button);
     }
 
@@ -1973,7 +1935,7 @@ mod tests {
         ))
         .unwrap();
         app.flush().unwrap();
-        let trigger = nodes(&app, "realm-nav-menu-button")[0];
+        let trigger = nodes(&app, "sapid-popover-trigger")[0];
         app.dispatch(trigger, glory::render::Event::Activate)
             .unwrap();
         app.flush().unwrap();
@@ -1982,7 +1944,7 @@ mod tests {
         for _ in 0..3 {
             context.state_revision.revise(|revision| *revision += 1);
             app.flush().unwrap();
-            assert_eq!(nodes(&app, "realm-nav-menu-button"), vec![trigger]);
+            assert_eq!(nodes(&app, "sapid-popover-trigger"), vec![trigger]);
             assert_eq!(
                 nodes(&app, "realm-nav-menu-panel"),
                 panel,
@@ -2014,8 +1976,16 @@ mod tests {
             .selected_realm_id
             .revise(|value| *value = second.clone());
         app.flush().unwrap();
-        assert!(nodes(&app, "realm-nav-menu-panel").is_empty());
-        let next_trigger = nodes(&app, "realm-nav-menu-button")[0];
+        let next_panel = nodes(&app, "realm-nav-menu-panel")[0];
+        assert!(
+            app.tree()
+                .node(next_panel)
+                .unwrap()
+                .descriptor
+                .view()
+                .hidden()
+        );
+        let next_trigger = nodes(&app, "sapid-popover-trigger")[0];
         assert_ne!(next_trigger, trigger);
         app.dispatch(next_trigger, glory::render::Event::Activate)
             .unwrap();

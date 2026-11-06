@@ -1611,10 +1611,13 @@ mod locale_tests {
                 {
                     result.push(id);
                 }
-                assert!(!matches!(
+                if matches!(
                     node.descriptor.view().props,
                     glory::render::Props::Select(_)
-                ));
+                ) {
+                    let parent = node.parent.expect("Sapid form proxy parent");
+                    assert!(tree.node(parent).unwrap().descriptor.view().hidden());
+                }
                 for child in &node.children {
                     visit(tree, *child, class, result);
                 }
@@ -1653,7 +1656,7 @@ mod locale_tests {
                     .unwrap()
             );
             app.flush().unwrap();
-            let options = nodes(&app, "native-choice-option");
+            let options = nodes(&app, "sapid-select-option");
             assert_eq!(options.len(), 2);
             assert!(
                 app.dispatch(options[index], glory::render::Event::Activate)

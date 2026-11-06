@@ -38,20 +38,16 @@ pub(super) fn input_field(
             .enabled(enabled)
             .control(move |field| {
                 glory::ui::widget(move |scope| {
-                    input_prompt(
-                        scope,
-                        prompt.into(),
-                        value,
-                        Box::new(
-                            sapid::text_field()
-                                .unstyled()
-                                .class("input")
-                                .field(field.clone())
-                                .value(value)
-                                .multiline(props.multiline)
-                                .enabled(enabled)
-                                .on_value_change(move |next| value.revise(|value| *value = next)),
-                        ),
+                    Box::new(
+                        sapid::text_field()
+                            .placeholder(prompt)
+                            .unstyled()
+                            .class("input")
+                            .field(field.clone())
+                            .value(value)
+                            .multiline(props.multiline)
+                            .enabled(enabled)
+                            .on_value_change(move |next| value.revise(|value| *value = next)),
                     )
                     .build(scope)
                 })
@@ -125,8 +121,7 @@ fn choose_axis(scope: &Scope, context: Rc<InksonContext>, props: &Axis, forbid_o
                 publish,
             )
             .enabled(props.enabled)
-            .class(format!("select {}", props.key))
-            .close_label(context.translated(scope, "common.close")),
+            .class(format!("select {}", props.key)),
         )
     }
 }
@@ -363,10 +358,23 @@ mod tests {
                 .count(),
             7
         );
-        assert!(!nodes(&app).into_iter().any(|id| matches!(
-            app.tree().node(id).unwrap().descriptor.view().props,
-            Props::Select(_)
-        )));
+        assert!(
+            nodes(&app)
+                .into_iter()
+                .filter(|id| matches!(
+                    app.tree().node(*id).unwrap().descriptor.view().props,
+                    Props::Select(_)
+                ))
+                .all(|id| {
+                    let tree = app.tree();
+                    let parent = tree
+                        .node(id)
+                        .unwrap()
+                        .parent
+                        .expect("Sapid form proxy parent");
+                    tree.node(parent).unwrap().descriptor.view().hidden()
+                })
+        );
         let trigger = class(&app, "sapid-collapsible-trigger");
         assert_eq!(
             app.tree()
@@ -421,7 +429,19 @@ mod tests {
         )
         .unwrap();
         app.flush().unwrap();
-        let open = nodes(&app).into_iter().find(|id| matches!(app.tree().node(*id).unwrap().descriptor.view().props, Props::Button(value) if value.label == "Open")).unwrap();
+        let open = nodes(&app)
+            .into_iter()
+            .find(|id| {
+                app.tree()
+                    .node(*id)
+                    .unwrap()
+                    .descriptor
+                    .view()
+                    .name
+                    .as_deref()
+                    == Some("Open")
+            })
+            .unwrap();
         assert!(
             matches!(app.tree().node(open).unwrap().descriptor.view().props, Props::Button(value) if !value.enabled)
         );

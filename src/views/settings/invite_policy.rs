@@ -65,19 +65,15 @@ fn domain_field(
         "field invite-policy-domain-field",
         vec![
             plain(context.translated(scope, label_key)),
-            input_prompt(
-                scope,
-                context.translated(scope, example_key).into(),
-                value,
-                Box::new(
-                    sapid::text_field()
-                        .unstyled()
-                        .class(format!("input {key}"))
-                        .name(context.translated(scope, label_key))
-                        .value(value)
-                        .enabled(enabled)
-                        .on_value_change(move |next| value.revise(|value| *value = next)),
-                ),
+            Box::new(
+                sapid::text_field()
+                    .placeholder(context.translated(scope, example_key))
+                    .unstyled()
+                    .class(format!("input {key}"))
+                    .name(context.translated(scope, label_key))
+                    .value(value)
+                    .enabled(enabled)
+                    .on_value_change(move |next| value.revise(|value| *value = next)),
             ),
         ],
     )

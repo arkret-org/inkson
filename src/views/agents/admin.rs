@@ -292,17 +292,15 @@ pub(crate) fn page_with_header(
                     },
                 );
                 agent_rows.push(Box::new(
-                    glory::ui::button()
+                    sapid::button()
+                        .unstyled()
                         .class(if selected {
                             "agent-admin-list-row agent-admin-row active"
                         } else {
                             "agent-admin-list-row agent-admin-row"
                         })
                         .name(slug.clone())
-                        .semantics(Some(Box::new(glory::render::Semantics {
-                            pressed: Some(selected),
-                            ..Default::default()
-                        })))
+                        .pressed(selected)
                         .fill(
                             glory::ui::group().fill((
                                 avatar,
@@ -327,7 +325,7 @@ pub(crate) fn page_with_header(
                                     ),
                             )),
                         )
-                        .on(glory::render::EventKind::Activate, move |_| {
+                        .on_press(move || {
                             create.revise(|value| *value = false);
                             choose.revise(|value| *value = target.clone());
                         }),

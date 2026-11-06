@@ -273,9 +273,6 @@
   gap: 10px;
   justify-items: start;
 }
-.card-detail-sidebar-tabs {
-  margin-bottom: 8px;
-}
 .card-detail-actor-list {
   display: grid;
   gap: 6px;
@@ -689,3 +686,9 @@
   flex-wrap: nowrap;
   overflow: hidden;
 }
+
+/* Sidebar tabs use Sapid keyboard navigation and panel ownership. */
+.card-detail-sidebar-content > .sapid-tab-list { display: flex; align-items: center; gap: 6px; }
+.card-detail-sidebar-content .sapid-tab { padding: 7px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); font: inherit; font-weight: 600; cursor: pointer; }
+.card-detail-sidebar-content .sapid-tab[aria-selected=true] { background: var(--accent-soft); color: var(--accent-ink); }
+.card-detail-sidebar-content .sapid-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

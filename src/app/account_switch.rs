@@ -466,8 +466,7 @@ pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Vary
                     on_select,
                 )
                 .enabled(ready)
-                .class("select account-picker__select")
-                .close_label(context.translated(scope, "common.close")),
+                .class("select account-picker__select"),
             )
         };
         stack(

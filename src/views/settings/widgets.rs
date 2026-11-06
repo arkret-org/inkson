@@ -19,15 +19,17 @@ pub(crate) fn field(
 ) -> View {
     let enabled = enabled.into();
     let changed = Rc::new(RefCell::new(changed));
+    let label = context.translated(scope, label_key);
     Box::new(
         sapid::field(key)
             .unstyled()
             .class(format!("field form-field {key}"))
-            .label(context.translated(scope, label_key))
+            .label(label)
             .control(move |field| {
                 let changed = changed.clone();
                 sapid::text_field()
                     .unstyled()
+                    .placeholder(label)
                     .class("input")
                     .field(field)
                     .value(value)
@@ -152,7 +154,6 @@ pub(crate) fn choice(
         let handler = Rc::new(RefCell::new(handler));
         let select_key = format!("{key}-options");
         let label = context.translated(scope, label_key);
-        let close = context.translated(scope, "common.close");
         let selected = scope.bond(move || Some(value.get()));
         Box::new(
             sapid::field(key)
@@ -184,10 +185,9 @@ pub(crate) fn choice(
                                     }
                                 },
                             )
-                            .control_id(field.id.clone())
+                            .field(field.clone())
                             .class("select")
-                            .enabled(enabled.clone())
-                            .close_label(close),
+                            .enabled(enabled.clone()),
                         )
                         .build(scope)
                     })
@@ -302,29 +302,6 @@ pub(crate) fn stack(class: impl Into<String>, children: Vec<View>) -> View {
 }
 pub(crate) fn line(class: impl Into<String>, children: Vec<View>) -> View {
     crate::presentation::widgets::line(class, children)
-}
-
-/// Keeps empty-field guidance visible on hosts without a placeholder property.
-pub(crate) fn input_prompt(
-    scope: &Scope,
-    prompt: Vary<String>,
-    value: Cage<String>,
-    control: View,
-) -> View {
-    let visible = scope.bond(move || value.get().is_empty());
-    crate::presentation::widgets::stack(
-        "input-prompt-host",
-        vec![
-            control,
-            reactive(visible, move |_, visible| {
-                if visible {
-                    paragraph("input-empty-prompt", prompt.clone())
-                } else {
-                    empty()
-                }
-            }),
-        ],
-    )
 }
 
 #[cfg(test)]
@@ -455,7 +432,7 @@ mod select_mapping_tests {
             };
             let trigger = find_class("native-choice-trigger")[0];
             assert!(app.dispatch(trigger, Event::Activate).unwrap());
-            let choices = find_class("native-choice-option");
+            let choices = find_class("sapid-select-option");
             assert_eq!(choices.len(), 2);
             assert!(app.dispatch(choices[0], Event::Activate).unwrap());
             assert_eq!(selected.get(), first);

@@ -58,7 +58,6 @@ web/theme-migration.css
 web/applets-migration.css
 web/circle-migration.css
 web/key-backup-migration.css
-web/command-palette.css
 web/setup-migration.css
 web/workspace-navigation.css
 web/startup.css

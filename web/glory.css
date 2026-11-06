@@ -312,8 +312,6 @@ html, body, #app { min-width: 0; min-height: 100%; }
 .message-context-menu .message-context-menu-item:not(:disabled):hover,.message-context-menu .message-context-menu-item:focus-visible{color:var(--text);background:color-mix(in srgb,var(--accent) 12%,var(--surface-2));outline:none}
 .message-context-menu .message-context-menu-item.danger{margin-top:2px;border-top:1px solid var(--border-faint);border-radius:0 0 6px 6px;color:var(--danger)}
 .message-context-menu .message-context-menu-item.danger:not(:disabled):hover,.message-context-menu .message-context-menu-item.danger:focus-visible{background:color-mix(in srgb,var(--danger) 12%,var(--surface-2))}
-.chat-message-menu-button .sapid-menu-trigger{position:relative;width:32px;min-width:32px;height:32px;min-height:32px;padding:0;font-size:0;line-height:0;border:0;border-radius:6px;background:transparent;color:var(--muted)}
-.chat-message-menu-button .sapid-menu-trigger::before{content:'';position:absolute;inset:8px;width:16px;height:16px;background:radial-gradient(circle at 3px 8px,currentColor 1.3px,transparent 1.5px),radial-gradient(circle at 8px 8px,currentColor 1.3px,transparent 1.5px),radial-gradient(circle at 13px 8px,currentColor 1.3px,transparent 1.5px)}
 @media(max-width:640px){.message-context-menu .message-context-menu-item{min-height:40px;padding:9px 10px}}
 
 /* Conformance fixtures exercise the same semantic content and production menus. */
@@ -332,8 +330,6 @@ html, body, #app { min-width: 0; min-height: 100%; }
 .direct-title-field.has-value > .sapid-field-label { opacity: 0; }
 
 /* Empty-field guidance for native semantic inputs. */
-.input-prompt-host { display: block; position: relative; min-width: 0; width: 100%; }
-.input-prompt-host > .input-empty-prompt { position: absolute; inset: 0 auto auto 0; margin: 0; padding: 10px 12px; color: var(--ak-muted, var(--text-3)); font: inherit; pointer-events: none; white-space: pre-wrap; }
 
 /* Preserve the original compact sidebar toolbar with an associated Field. */
 .sidebar-tab-controls { display: contents; }
@@ -577,3 +573,11 @@ button.btn-secondary { font-size: 13px; font-weight: 700; line-height: 1.5; }
   background: var(--inkson-original-control-surface);
   color: var(--inkson-original-control-text);
 }
+.sapid-text-field-editor { width: 100%; min-width: 0; }
+.sapid-password-toggle { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-2); cursor: pointer; }
+.sapid-password-toggle:hover { background: var(--surface-2); color: var(--text); }
+.sapid-password-toggle svg path { stroke: currentColor; }
+.sapid-select-listbox { background: var(--surface-solid, var(--surface)); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px; box-shadow: var(--shadow-lg); }
+.sapid-select-option { width: 100%; padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; color: var(--text); font: inherit; text-align: start; cursor: pointer; }
+.sapid-select-option[aria-selected="true"], .sapid-select-option[data-active="true"] { background: var(--accent-soft); color: var(--accent-ink); }
+.sapid-select-option[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }

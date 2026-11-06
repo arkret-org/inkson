@@ -286,7 +286,7 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   await dismissMlsBackupModal(page);
   await expect(byClass(page, "sidebar")).toContainText("Setup Strand Space");
   await expect(byClass(page, "kanban-panel")).toBeVisible();
-  await byClass(page, "account-menu-button").click();
+  await page.locator(".account-menu-wrap .sapid-popover-trigger").click();
   await expect(byClass(page, "who")).toHaveText(
     "inkson",
   );

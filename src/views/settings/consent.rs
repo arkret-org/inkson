@@ -688,42 +688,31 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
                         "consent-request-title",
                         context.translated(scope, "consent.request"),
                     ),
-                    input_prompt(
-                        scope,
-                        context.translated(scope, "consent.holder").into(),
-                        editor.request_holder,
-                        Box::new(
-                            sapid::text_field()
-                                .unstyled()
-                                .class("input consent-request-holder-input")
-                                .name(context.translated(scope, "consent.holder"))
-                                .value(editor.request_holder)
-                                .enabled(enabled)
-                                .on_value_change(move |next| {
-                                    editor.request_holder.revise(|value| *value = next)
-                                }),
-                        ),
+                    Box::new(
+                        sapid::text_field()
+                            .placeholder(context.translated(scope, "consent.holder"))
+                            .unstyled()
+                            .class("input consent-request-holder-input")
+                            .name(context.translated(scope, "consent.holder"))
+                            .value(editor.request_holder)
+                            .enabled(enabled)
+                            .on_value_change(move |next| {
+                                editor.request_holder.revise(|value| *value = next)
+                            }),
                     ),
-                    input_prompt(
-                        scope,
-                        context
-                            .translated(scope, "consent.request.holder_station_label")
-                            .into(),
-                        editor.request_station,
-                        Box::new(
-                            sapid::text_field()
-                                .unstyled()
-                                .class("input consent-request-holder-station-input")
-                                .name(
-                                    context
-                                        .translated(scope, "consent.request.holder_station_label"),
-                                )
-                                .value(editor.request_station)
-                                .enabled(enabled)
-                                .on_value_change(move |next| {
-                                    editor.request_station.revise(|value| *value = next)
-                                }),
-                        ),
+                    Box::new(
+                        sapid::text_field()
+                            .placeholder(
+                                context.translated(scope, "consent.request.holder_station_label"),
+                            )
+                            .unstyled()
+                            .class("input consent-request-holder-station-input")
+                            .name(context.translated(scope, "consent.request.holder_station_label"))
+                            .value(editor.request_station)
+                            .enabled(enabled)
+                            .on_value_change(move |next| {
+                                editor.request_station.revise(|value| *value = next)
+                            }),
                     ),
                     choice(
                         scope,

@@ -55,7 +55,7 @@ fn production_rail_routes_and_account_menu_remain_mounted() {
         .unwrap();
     assert!(nodes(&app, "server-switch-button").is_empty());
     assert_eq!(nodes(&app, "rail-logo").len(), 1);
-    let avatar = nodes(&app, "account-menu-button")[0];
+    let avatar = nodes(&app, "sapid-popover-trigger")[0];
     for (class, target) in [
         ("rail-realms", Route::RealmsManage),
         ("rail-contacts", Route::Contacts),
@@ -73,7 +73,7 @@ fn production_rail_routes_and_account_menu_remain_mounted() {
             .unwrap();
         app.flush().unwrap();
         assert_eq!(context.route.get_untracked(), target);
-        assert_eq!(nodes(&app, "account-menu-button"), vec![avatar]);
+        assert_eq!(nodes(&app, "sapid-popover-trigger"), vec![avatar]);
     }
     for open in [true, false, true, false] {
         app.dispatch(avatar, glory::render::Event::Activate)

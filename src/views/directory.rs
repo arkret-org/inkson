@@ -66,36 +66,28 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
             line(
                 "actions",
                 vec![
-                    input_prompt(
-                        scope,
-                        "https://directory.example".into(),
-                        address,
-                        Box::new(
-                            sapid::text_field()
-                                .unstyled()
-                                .class("input directory-address-input")
-                                .name("Directory HTTPS address")
-                                .value(address)
-                                .on_value_change(move |next| {
-                                    address.revise(|value| *value = next);
-                                    generation.revise(|value| *value = value.wrapping_add(1));
-                                    results.revise(|value| value.clear());
-                                    next_cursor.revise(|value| *value = None);
-                                }),
-                        ),
+                    Box::new(
+                        sapid::text_field()
+                            .placeholder("https://directory.example")
+                            .unstyled()
+                            .class("input directory-address-input")
+                            .name("Directory HTTPS address")
+                            .value(address)
+                            .on_value_change(move |next| {
+                                address.revise(|value| *value = next);
+                                generation.revise(|value| *value = value.wrapping_add(1));
+                                results.revise(|value| value.clear());
+                                next_cursor.revise(|value| *value = None);
+                            }),
                     ),
-                    input_prompt(
-                        scope,
-                        "Search public Realms".into(),
-                        query,
-                        Box::new(
-                            sapid::text_field()
-                                .unstyled()
-                                .class("input directory-search-input")
-                                .name("Search public Realms")
-                                .value(query)
-                                .on_value_change(move |next| query.revise(|value| *value = next)),
-                        ),
+                    Box::new(
+                        sapid::text_field()
+                            .placeholder("Search public Realms")
+                            .unstyled()
+                            .class("input directory-search-input")
+                            .name("Search public Realms")
+                            .value(query)
+                            .on_value_change(move |next| query.revise(|value| *value = next)),
                     ),
                     action(
                         scope,

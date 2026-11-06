@@ -710,23 +710,13 @@ pub(super) fn privacy(scope: &Scope, context: Rc<InksonContext>) -> View {
                                 true,
                                 move |next| manual.revise(|value| *value = next),
                             ),
-                            input_prompt(
+                            input(
                                 scope,
-                                context
-                                    .translated(
-                                        scope,
-                                        "settings.privacy.status_message_placeholder",
-                                    )
-                                    .into(),
+                                context.clone(),
+                                "presence-status-message-input",
+                                "settings.privacy.status_message_placeholder",
                                 message,
-                                input(
-                                    scope,
-                                    context.clone(),
-                                    "presence-status-message-input",
-                                    "settings.privacy.status_message_placeholder",
-                                    message,
-                                    true,
-                                ),
+                                true,
                             ),
                         ],
                     ),
@@ -1113,20 +1103,13 @@ fn remarks(scope: &Scope, context: Rc<InksonContext>) -> View {
         vec![
             list,
             realm_picker::picker(scope, context.clone(), chosen, "realm-remark-realm-select"),
-            input_prompt(
+            input(
                 scope,
-                context
-                    .translated(scope, "settings.realm_remarks.local_name")
-                    .into(),
+                context.clone(),
+                "realm-remark-add-name",
+                "settings.realm_remarks.local_name",
                 name,
-                input(
-                    scope,
-                    context.clone(),
-                    "realm-remark-add-name",
-                    "settings.realm_remarks.local_name",
-                    name,
-                    true,
-                ),
+                true,
             ),
             action(
                 scope,

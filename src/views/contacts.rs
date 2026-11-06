@@ -1228,23 +1228,17 @@ fn contact_row(
             ),
         ));
     }
-    let mut actions = vec![];
+    let mut actions: Vec<View> = vec![];
     if advanced && accepted && human {
-        actions.push(crate::views::settings::widgets::input_prompt(
-            scope,
-            context
-                .translated(scope, "contacts.petname.placeholder")
-                .into(),
-            petname,
-            Box::new(
-                sapid::text_field()
-                    .unstyled()
-                    .class("input contact-petname")
-                    .name(context.translated(scope, "contacts.petname.placeholder"))
-                    .value(petname)
-                    .enabled(enabled)
-                    .on_value_change(move |next| petname.revise(|value| *value = next)),
-            ),
+        actions.push(Box::new(
+            sapid::text_field()
+                .placeholder(context.translated(scope, "contacts.petname.placeholder"))
+                .unstyled()
+                .class("input contact-petname")
+                .name(context.translated(scope, "contacts.petname.placeholder"))
+                .value(petname)
+                .enabled(enabled)
+                .on_value_change(move |next| petname.revise(|value| *value = next)),
         ));
         let st = state.clone();
         actions.push(action(

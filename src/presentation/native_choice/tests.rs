@@ -51,7 +51,7 @@ fn exercise(app: glory::App) {
     let trigger = nodes(&app, "native-choice-trigger")[0];
     assert!(app.dispatch(trigger, Event::Activate).unwrap());
     app.flush().unwrap();
-    let choices = nodes(&app, "native-choice-option");
+    let choices = nodes(&app, "sapid-select-option");
     assert_eq!(choices.len(), 3);
     assert!(!app.dispatch(choices[1], Event::Activate).unwrap());
     assert!(changes.get_untracked().is_empty());
@@ -62,11 +62,11 @@ fn exercise(app: glory::App) {
     assert_eq!(nodes(&app, "native-choice-trigger"), vec![trigger]);
     assert!(app.dispatch(trigger, Event::Activate).unwrap());
     app.flush().unwrap();
-    let panel = nodes(&app, "native-choice-panel")[0];
+    let panel = nodes(&app, "sapid-select-listbox")[0];
     {
         let tree = app.tree();
         let descriptor = tree.node(panel).unwrap().descriptor.view();
-        assert_eq!(descriptor.role, Some(Role::Dialog));
+        assert_eq!(descriptor.role, Some(Role::Listbox));
         let layer = descriptor
             .semantics
             .as_ref()
@@ -75,7 +75,18 @@ fn exercise(app: glory::App) {
             .as_ref()
             .unwrap();
         assert!(layer.escape && layer.outside);
-        assert!(layer.return_focus.is_some());
+        assert_eq!(layer.focus, glory::render::LayerFocus::Preserve);
+        assert_eq!(
+            layer.anchor,
+            tree.node(trigger)
+                .unwrap()
+                .descriptor
+                .view()
+                .semantics
+                .as_ref()
+                .unwrap()
+                .id
+        );
     }
     assert!(
         app.dispatch(panel, Event::Dismiss(DismissReason::Escape))
@@ -85,7 +96,7 @@ fn exercise(app: glory::App) {
     assert_eq!(nodes(&app, "native-choice-trigger"), vec![trigger]);
     assert!(app.dispatch(trigger, Event::Activate).unwrap());
     app.flush().unwrap();
-    let previous_choices = nodes(&app, "native-choice-option");
+    let previous_choices = nodes(&app, "sapid-select-option");
     enabled.revise(|enabled| *enabled = false);
     app.flush().unwrap();
     assert!(!app.dispatch(trigger, Event::Activate).unwrap());
@@ -104,6 +115,6 @@ fn native_choice_preserves_values_permissions_dismissal_and_trigger_identity() {
 
 #[cfg(feature = "desktop")]
 #[test]
-fn actual_blitz_accepts_and_operates_the_native_choice_without_select_or_menu_descriptors() {
+fn actual_apace_operates_sapid_select_with_listbox_and_form_proxy() {
     exercise(glory::App::new(glory::apace::Renderer::new));
 }

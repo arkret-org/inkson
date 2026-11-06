@@ -710,27 +710,18 @@ pub(crate) fn page_with_header(
                         ),
                         stack(
                             "settings-nav-search",
-                            vec![widgets::input_prompt(
-                                scope,
-                                context
-                                    .translated(scope, "settings.search.placeholder")
-                                    .into(),
-                                nav_filter,
-                                Box::new(
-                                    sapid::text_field()
-                                        .unstyled()
-                                        .class(
-                                            "input settings-nav-search-input settings-nav-search",
-                                        )
-                                        .name(
-                                            context
-                                                .translated(scope, "settings.search.placeholder"),
-                                        )
-                                        .value(nav_filter)
-                                        .on_value_change(move |next| {
-                                            nav_filter.revise(|value| *value = next)
-                                        }),
-                                ),
+                            vec![Box::new(
+                                sapid::text_field()
+                                    .placeholder(
+                                        context.translated(scope, "settings.search.placeholder"),
+                                    )
+                                    .unstyled()
+                                    .class("input settings-nav-search-input settings-nav-search")
+                                    .name(context.translated(scope, "settings.search.placeholder"))
+                                    .value(nav_filter)
+                                    .on_value_change(move |next| {
+                                        nav_filter.revise(|value| *value = next)
+                                    }),
                             )],
                         ),
                         nav,
@@ -835,17 +826,12 @@ fn theme_page(scope: &Scope, context: Rc<InksonContext>) -> View {
                 if selected.get() { "primary" } else { "ghost" }
             )
         });
-        let semantics = scope.bond(move || {
-            Some(Box::new(glory::render::Semantics {
-                pressed: Some(selected.get()),
-                ..Default::default()
-            }))
-        });
         icons.push(Box::new(
-            glory::prelude::button()
+            sapid::button()
+                .unstyled()
                 .class(classes)
                 .name(context.translated(scope, label))
-                .semantics(semantics)
+                .pressed(selected)
                 .fill(crate::components::ui_icon(icon))
                 .on(glory::render::EventKind::Activate, move |_| {
                     theme.revise(|theme| *theme = value.to_owned());

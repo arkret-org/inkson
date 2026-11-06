@@ -11,11 +11,12 @@ fn primary_send_action(
     label: impl Into<Vary<String>>,
     enabled: impl Into<Vary<bool>>,
     busy: impl Into<Vary<bool>>,
-    mut send: impl FnMut() + 'static,
+    send: impl FnMut() + 'static,
 ) -> View {
     let busy = busy.into();
     Box::new(
-        glory::ui::button()
+        sapid::button()
+            .unstyled()
             .label(label)
             .enabled(enabled)
             .class(scope.bond({
@@ -28,13 +29,8 @@ fn primary_send_action(
                     }
                 }
             }))
-            .semantics(scope.bond(move || {
-                Some(Box::new(glory::render::Semantics {
-                    busy: Some(busy.get()),
-                    ..Default::default()
-                }))
-            }))
-            .on(glory::render::EventKind::Activate, move |_| send()),
+            .loading(busy)
+            .on_press(send),
     )
 }
 
@@ -1001,7 +997,8 @@ pub(super) fn chat_composer(
                             }))),
                     ));
                     children.push(Box::new(
-                        glory::ui::button()
+                        sapid::button()
+                            .unstyled()
                             .name(remove_label)
                             .class("mention-chip-remove")
                             .fill(text().content("×"))
@@ -1053,7 +1050,8 @@ pub(super) fn chat_composer(
     });
     let retry_app = app.clone();
     let retry: View = Box::new(
-        glory::ui::button()
+        sapid::button()
+            .unstyled()
             .label("Retry attachments")
             .class("retry-attachment-upload")
             .on(glory::render::EventKind::Activate, move |_| {
@@ -1382,7 +1380,7 @@ fn mention_picker(
                             children.push(Box::new(text().class("mention-suggestion-subtitle").content(candidate.subtitle.clone())));
                         }
                         Box::new(
-                            glory::ui::button()
+                            sapid::button().unstyled()
                                 .name(label)
                                 .class("secondary mention-suggestion")
                                 .fill(group().fill(children))

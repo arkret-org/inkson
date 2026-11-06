@@ -45,36 +45,16 @@ pub(super) fn field(
 ) -> View {
     let label = label.into();
     let value = value.into();
-    let class = class.into();
-    let change = Rc::new(std::cell::RefCell::new(change));
-    Box::new(widget(move |scope| {
-        let empty_value = value.clone();
-        let empty = scope.bond(move || empty_value.get().is_empty());
-        let prompt = label.clone();
-        let change = change.clone();
-        block(
-            "input-prompt-host chat-field-prompt-host",
-            vec![
-                Box::new(
-                    sapid::text_field()
-                        .unstyled()
-                        .name(label.clone())
-                        .class(class.clone())
-                        .value(value.clone())
-                        .multiline(multiline)
-                        .on_value_change(move |next| change.borrow_mut()(next)),
-                ),
-                crate::presentation::widgets::reactive_distinct(empty, move |_, empty| {
-                    if empty {
-                        Box::new(text().class("input-empty-prompt").content(prompt.clone()))
-                    } else {
-                        crate::presentation::widgets::empty()
-                    }
-                }),
-            ],
-        )
-        .build(scope)
-    }))
+    Box::new(
+        sapid::text_field()
+            .unstyled()
+            .name(label.clone())
+            .placeholder(label)
+            .class(class.into())
+            .value(value)
+            .multiline(multiline)
+            .on_value_change(change),
+    )
 }
 
 pub(super) fn date_time(
@@ -199,11 +179,19 @@ mod field_tests {
         .unwrap();
         app.flush().unwrap();
         let input = class_node(&app, "poll-question-input").unwrap();
-        let prompt = class_node(&app, "input-empty-prompt").unwrap();
-        assert!(matches!(
-            app.tree().node(prompt).unwrap().descriptor.view().props,
-            Props::Text(props) if props.content == "Question"
-        ));
+        assert_eq!(
+            app.tree()
+                .node(input)
+                .unwrap()
+                .descriptor
+                .view()
+                .semantics
+                .as_ref()
+                .unwrap()
+                .placeholder
+                .as_deref(),
+            Some("Question")
+        );
         edit(&app, input, "literal {number} 原文");
         assert!(class_node(&app, "input-empty-prompt").is_none());
         label.revise(|label| *label = "问题".to_owned());
@@ -211,11 +199,19 @@ mod field_tests {
         assert_eq!(class_node(&app, "poll-question-input"), Some(input));
         assert_eq!(value.get_untracked(), "literal {number} 原文");
         edit(&app, input, "");
-        let prompt = class_node(&app, "input-empty-prompt").unwrap();
-        assert!(matches!(
-            app.tree().node(prompt).unwrap().descriptor.view().props,
-            Props::Text(props) if props.content == "问题"
-        ));
+        assert_eq!(
+            app.tree()
+                .node(input)
+                .unwrap()
+                .descriptor
+                .view()
+                .semantics
+                .as_ref()
+                .unwrap()
+                .placeholder
+                .as_deref(),
+            Some("问题")
+        );
         assert_eq!(class_node(&app, "poll-question-input"), Some(input));
     }
 }
