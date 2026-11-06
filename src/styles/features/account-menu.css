@@ -136,6 +136,7 @@
 
 .account-menu__rows {
   display: grid;
+  grid-auto-rows: minmax(32px, 1fr);
   gap: 6px;
 }
 

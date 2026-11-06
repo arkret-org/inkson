@@ -103,6 +103,17 @@ test("topbar account menu shows profile identity and current device", async ({ p
   await dismissBlockingRecoveryModal(page);
   await page.locator(".account-menu-wrap .sapid-popover-trigger").click();
   const menu = accountMenu(page);
+  await expect(menu).toBeVisible();
+  const rowBoxes = await byClass(menu, "account-menu__row").evaluateAll(rows => rows.map(row => {
+    const { y, height } = row.getBoundingClientRect();
+    return { center: y + height / 2, height };
+  }));
+  expect(rowBoxes).toHaveLength(4);
+  expect(rowBoxes[0].height).toBeGreaterThan(0);
+  for (let index = 1; index < rowBoxes.length; index++) {
+    expect(Math.abs(rowBoxes[index].height - rowBoxes[0].height)).toBeLessThan(0.5);
+    expect(Math.abs((rowBoxes[index].center - rowBoxes[index - 1].center) - (rowBoxes[1].center - rowBoxes[0].center))).toBeLessThan(0.5);
+  }
   const didRow = byClass(menu, "account-menu__row").first();
   await expect(didRow.locator(".mono")).toHaveText(
     /^ak:did_core:webvh:.+\.\.\..+$/,
