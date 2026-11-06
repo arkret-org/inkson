@@ -103,6 +103,17 @@ impl Drop for PendingLogout {
 
 impl PendingLogout {
     fn storage_key(&self) -> anyhow::Result<String> {
+        use base64::Engine as _;
+        use sha2::Digest as _;
+        let holder = sha2::Sha256::digest(self.grant_jwt.as_deref().unwrap_or("").as_bytes());
+        Ok(format!(
+            "{}.{}",
+            self.account_storage_key()?,
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(holder)
+        ))
+    }
+
+    fn account_storage_key(&self) -> anyhow::Result<String> {
         Ok(format!(
             "{PENDING_LOGOUT_STORAGE_PREFIX}{}.{}",
             crate::secure_key_store::account_id_storage_digest(&self.authority)
@@ -234,11 +245,11 @@ async fn clear_completed_logout(
     record: &PendingLogout,
     store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> LogoutRunOutcome {
-    match pending_logout_slot_matches(record, store) {
+    let key = match matching_pending_logout_key(record, store) {
         // Completion of an older captured intent must never clear a newer
         // logout journal written for the same account/device secure-store slot.
-        Ok(false) => return LogoutRunOutcome::Completed,
-        Ok(true) => {}
+        Ok(None) => return LogoutRunOutcome::Completed,
+        Ok(Some(key)) => key,
         Err(error) => {
             tracing::warn!(
                 ?error,
@@ -246,14 +257,11 @@ async fn clear_completed_logout(
             );
             return LogoutRunOutcome::Retain;
         }
-    }
-    let result = match record.storage_key() {
-        Ok(key) => store
-            .delete_secret_durable(&key)
-            .await
-            .map_err(anyhow::Error::from),
-        Err(error) => Err(error),
     };
+    let result = store
+        .delete_secret_durable(&key)
+        .await
+        .map_err(anyhow::Error::from);
     match result {
         Ok(()) => LogoutRunOutcome::Completed,
         Err(error) => {
@@ -266,16 +274,21 @@ async fn clear_completed_logout(
     }
 }
 
-fn pending_logout_slot_matches(
+fn matching_pending_logout_key(
     record: &PendingLogout,
     store: &dyn crate::secure_key_store::SecureKeyStore,
-) -> anyhow::Result<bool> {
-    let Some(mut encoded) = store.get_secret(&record.storage_key()?)? else {
-        return Ok(false);
-    };
-    let decoded = serde_json::from_str::<PendingLogout>(&encoded);
-    encoded.zeroize();
-    Ok(decoded? == *record)
+) -> anyhow::Result<Option<String>> {
+    // Existing v1 records keep their original physical slot until completion.
+    for key in [record.storage_key()?, record.account_storage_key()?] {
+        if let Some(mut encoded) = store.get_secret(&key)? {
+            let decoded = serde_json::from_str::<PendingLogout>(&encoded);
+            encoded.zeroize();
+            if decoded? == *record {
+                return Ok(Some(key));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// T1.Y3 — single hard logout to `{gate_account_base_url}/logout` with the grant
@@ -379,6 +392,16 @@ pub fn persist_pending_logout(
     Ok(())
 }
 
+pub(crate) async fn persist_pending_logout_durable(
+    record: &PendingLogout,
+    store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> anyhow::Result<()> {
+    let key = record.storage_key()?;
+    let json = serde_json::to_string(record)?;
+    store.store_secret_durable(&key, &json).await?;
+    Ok(())
+}
+
 /// Read the journalled logout intent, if any.
 pub fn restore_pending_logouts(
     store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -402,11 +425,11 @@ pub fn clear_pending_logout(
     record: &PendingLogout,
     store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> anyhow::Result<()> {
-    if !pending_logout_slot_matches(record, store)? {
+    let Some(key) = matching_pending_logout_key(record, store)? else {
         return Ok(());
-    }
+    };
     store
-        .delete_secret(&record.storage_key()?)
+        .delete_secret(&key)
         .map_err(|error| anyhow::anyhow!("failed to clear pending logout: {error}"))?;
     Ok(())
 }
@@ -434,6 +457,7 @@ pub async fn run_pending_logout_with_store(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::secure_key_store::SecureKeyStore as _;
 
     pub(super) fn base_record(created_at: DateTime<Utc>) -> PendingLogout {
         PendingLogout {
@@ -829,5 +853,46 @@ mod tests {
             assert!(!account_logout_error_is_terminal(&error));
             assert!(account_logout_error_requires_repair(&error));
         }
+    }
+
+    #[tokio::test]
+    async fn separate_grants_keep_independent_durable_logout_obligations() {
+        let store = crate::secure_key_store::MemorySecureKeyStore::new();
+        let old = isolated_record(Utc::now(), "parallel-grants");
+        let mut newer = old.clone();
+        newer.grant_jwt = Some("a-different-session-grant".into());
+        persist_pending_logout_durable(&old, &store).await.unwrap();
+        persist_pending_logout_durable(&newer, &store)
+            .await
+            .unwrap();
+        assert_eq!(restore_pending_logouts(&store).unwrap().len(), 2);
+        assert_eq!(
+            execute_pending_logout_with(&old, &store, Utc::now(), || async {
+                Ok(AccountLogoutRunOutcome::Terminated)
+            })
+            .await,
+            LogoutRunOutcome::Completed
+        );
+        assert_eq!(restore_pending_logouts(&store).unwrap(), vec![newer]);
+    }
+
+    #[tokio::test]
+    async fn existing_account_device_journal_is_still_completed_in_its_original_slot() {
+        let store = crate::secure_key_store::MemorySecureKeyStore::new();
+        let record = isolated_record(Utc::now(), "original-slot");
+        store
+            .store_secret(
+                &record.account_storage_key().unwrap(),
+                &serde_json::to_string(&record).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            execute_pending_logout_with(&record, &store, Utc::now(), || async {
+                Ok(AccountLogoutRunOutcome::Terminated)
+            })
+            .await,
+            LogoutRunOutcome::Completed
+        );
+        assert!(restore_pending_logouts(&store).unwrap().is_empty());
     }
 }

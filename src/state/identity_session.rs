@@ -105,7 +105,6 @@ impl LocalStateStore {
     /// after it signs in again. Plaintext sidecars are cleared from memory and
     /// restored from the encrypted checkpoint only after the next sign-in.
     pub fn clear_session_scoped_for_logout(&mut self) {
-        self.invalidate_e2ee_cache_clear_rollback();
         #[cfg(not(test))]
         {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -131,6 +130,11 @@ impl LocalStateStore {
                 }
             }
         }
+        self.clear_session_memory_for_logout();
+    }
+
+    pub(crate) fn clear_session_memory_for_logout(&mut self) {
+        self.invalidate_e2ee_cache_clear_rollback();
         self.ensure_cached_loaded();
         self.cached.session_grant = None;
         self.cached.dpop_device_key = None;

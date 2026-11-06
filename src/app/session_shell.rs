@@ -849,7 +849,7 @@ fn topbar(
         ],
     )
 }
-fn account_menu_avatar(
+pub(super) fn account_menu_avatar(
     scope: &Scope,
     context: Rc<InksonContext>,
     principal: String,
@@ -1026,7 +1026,7 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
               (
             open,
             (account, device, has_session),
-            (label, detail, handles_label, handles_title),
+            (label, _detail, handles_label, handles_title),
             (principal, blob),
             server,
             _,
@@ -1060,13 +1060,7 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
                         label.clone(),
                         "avatar-img account-menu__avatar",
                     ),
-                    block(
-                        "grow",
-                        vec![
-                            account_menu_text("who", label),
-                            account_menu_text("handle", detail),
-                        ],
-                    ),
+                    block("grow", vec![account_menu_text("who", label)]),
                     settings_link("btn icon sm ghost account-menu__qr", "qr-code"),
                 ],
             );
@@ -1162,43 +1156,38 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
                     ),
                 ],
             );
-            let refresh = {
-                let weak = scope.downgrade();
+            let busy = context.account_busy;
+            let ready = scope.bond(move || has_session && !busy.get());
+            let logout = {
                 let context = context.clone();
-                let ui = ui.clone();
+                let status = ui.session_status;
                 Box::new(
                     sapid::button()
                         .unstyled()
-                        .class("btn")
-                        .label(context.translated(scope, "common.refresh"))
-                        .name(context.translated(scope, "app.account.refresh_session"))
-                        .enabled(has_session)
+                        .class("btn btn-ghost account-menu-sign-out-current")
+                        .label(context.translated(scope, "app.account.sign_out_current"))
+                        .enabled(ready)
+                        .on_press(move || super::session_commands::logout(context.clone(), status)),
+                ) as View
+            };
+            let logout_all = {
+                let context = context.clone();
+                let status = ui.session_status;
+                Box::new(
+                    sapid::button()
+                        .unstyled()
+                        .class("btn btn-ghost account-menu-sign-out-all")
+                        .label(context.translated(scope, "app.account.sign_out_all"))
+                        .enabled(ready)
                         .on_press(move || {
-                            if let Some(scope) = weak.upgrade() {
-                                super::connection_handlers::refresh_current_session(
-                                    &scope,
-                                    context.base_url.get(),
-                                    super::connection_handlers::ManualSessionRefreshContext {
-                                        context: context.clone(),
-                                        account_session_state: ui.session_status,
-                                        personal_handles_lookup_key: ui.handles_key,
-                                        account_identity_lookup_key: ui.identity_key,
-                                    },
-                                );
-                            }
+                            super::session_commands::logout_all(context.clone(), status)
                         }),
                 ) as View
             };
-            let logout = action("btn", context.translated(scope, "app.account.log_out"), {
-                let context = context.clone();
-                let ui = ui.clone();
-                move || super::session_commands::logout(context.clone(), ui.session_status)
-            });
             block(
                 "account-menu-content",
                 vec![
-                    head,
-                    identity_rows,
+                    block("account-menu-current", vec![head, identity_rows, logout]),
                     super::account_switch::account_switcher(scope, context.clone(), true.into()),
                     {
                         let settings_context = context.clone();
@@ -1217,7 +1206,7 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
                                     settings_context.navigate(Route::Settings);
                                 }),
                         ) as View;
-                        block("account-menu__actions", vec![refresh, logout, settings])
+                        block("account-menu__actions", vec![settings, logout_all])
                     },
                 ],
             )

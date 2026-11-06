@@ -3998,8 +3998,10 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.account.open_settings", "打开设置");
     dict.set("app.account.did", "DID");
     dict.set("app.account.server", "服务器");
-    dict.set("app.account.refresh_session", "刷新会话");
-    dict.set("app.account.log_out", "退出登录");
+    dict.set("app.account.sign_out_current", "退出当前账号");
+    dict.set("app.account.sign_out_all", "退出所有账号");
+    dict.set("app.account.signing_out", "正在退出登录…");
+    dict.set("app.account.sign_out_failed", "未能完成退出登录，请重试。");
     dict.set("app.account.switching", "正在切换账号…");
     dict.set("app.account.switch", "切换账号");
     dict.set("app.account.unnamed", "未命名账号");

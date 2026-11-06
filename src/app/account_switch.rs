@@ -98,7 +98,7 @@ impl AccountSessionRoot {
         context.spawn(async move { done(self.add_account().await) })
     }
 
-    fn retire(&mut self) {
+    pub(super) fn retire(&mut self) {
         self.services.session.suspend();
         self.services.session.clear_invalidator();
         self.services.effects.retire_all();
@@ -134,7 +134,7 @@ impl AccountSessionRoot {
             .revise(|value| *value = actual != expected || configured != expected);
     }
 
-    fn remount(&mut self) {
+    pub(super) fn remount(&mut self) {
         crate::event_signer::clear_active_device_signer();
         match self.account.get_untracked().as_ref() {
             Some(account) => match crate::secure_key_store::UserLocalStore::new(
@@ -298,80 +298,6 @@ impl AccountSessionRoot {
     }
 }
 
-pub fn account_picker_options(profiles: &MultiProfileConfig) -> Vec<(String, String)> {
-    profiles
-        .profiles
-        .iter()
-        .enumerate()
-        .map(|(index, profile)| {
-            let label = if profile.label.trim().is_empty() {
-                format!("{} {}", crate::i18n::tr("app.account.unnamed"), index + 1)
-            } else {
-                profile.label.clone()
-            };
-            let server = profile.account.server_url.as_str().trim_end_matches('/');
-            let server = server
-                .strip_prefix("https://")
-                .or_else(|| server.strip_prefix("http://"))
-                .unwrap_or(server);
-            (
-                profile.account.profile_id.clone(),
-                format!("{label} · {server}"),
-            )
-        })
-        .collect()
-}
-
-#[cfg(any(target_arch = "wasm32", test))]
-fn web_account_picker(
-    scope: &Scope,
-    label: impl Into<Vary<String>>,
-    enabled: impl Into<Vary<bool>>,
-    selection: glory::Bond<Option<String>>,
-    options: Vec<(String, String)>,
-    mut on_select: impl FnMut(Option<String>) + 'static,
-) -> impl glory::ui::Widget {
-    // The renderer's keys are bounded ASCII tokens. The persisted profile
-    // IDs are opaque and remain the HTML option values and selection targets.
-    let entries: Rc<Vec<_>> = Rc::new(
-        options
-            .into_iter()
-            .enumerate()
-            .map(|(index, (id, label))| (format!("profile-{index}"), id, label))
-            .collect(),
-    );
-    let selected_key = {
-        let entries = entries.clone();
-        scope.bond(move || {
-            let selected = selection.get()?;
-            entries
-                .iter()
-                .find(|(_, id, _)| id == &selected)
-                .map(|(key, ..)| key.clone())
-        })
-    };
-    let choices: Vec<_> = entries
-        .iter()
-        .map(|(key, id, label)| sapid::select_option(key.clone(), label.clone()).value(id.clone()))
-        .collect();
-    sapid::native_select("account-switcher")
-        .unstyled()
-        .class("select account-picker__select")
-        .label(label)
-        .enabled(enabled)
-        .value(selected_key)
-        .options(choices)
-        .on_value_change(move |selected| {
-            let id = selected.and_then(|key| {
-                entries
-                    .iter()
-                    .find(|(candidate, ..)| candidate == &key)
-                    .map(|(_, id, _)| id.clone())
-            });
-            on_select(id);
-        })
-}
-
 pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Vary<bool>) -> View {
     let root = AccountSessionRoot::from_context(context.clone());
     let source = scope.bond({
@@ -382,11 +308,11 @@ pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Vary
                 context.account_view_retired.get(),
                 context.token.get(),
                 context.account_primary_handle.get(),
+                context.locale.get(),
             )
         }
     });
     reactive(source, move |scope, _| {
-        let context = context.clone();
         let profiles = match root.config.with(LocalConfigStore::load_profile_metadata) {
             Ok(profiles) => profiles,
             Err(_) => {
@@ -396,94 +322,89 @@ pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Vary
                 );
             }
         };
-        let options = account_picker_options(&profiles);
-        if options.is_empty() {
-            return empty();
-        }
-        let multiple_accounts = options.len() > 1;
-        let selecting = root.clone();
-        let adding = root.clone();
         let busy = root.busy;
         let ready = scope.bond({
             let enabled = enabled.clone();
             move || enabled.get() && !busy.get()
         });
-        let selection = scope.bond({
-            let context = context.clone();
-            move || {
-                if context.account_blocked.get() {
-                    None
-                } else {
-                    context
-                        .active_account
-                        .get()
-                        .map(|account| account.profile_id)
-                }
+        let active = context
+            .active_account
+            .get_untracked()
+            .map(|account| account.profile_id);
+        let mut rows = Vec::new();
+        for (index, profile) in profiles.profiles.into_iter().enumerate() {
+            if active.as_deref() == Some(&profile.account.profile_id) {
+                continue;
             }
-        });
-        let selected_context = context.clone();
+            let handle = if profile.label.trim().is_empty() {
+                format!("{} {}", context.tr("app.account.unnamed"), index + 1)
+            } else {
+                profile.label
+            };
+            let did = profile.account.principal_id().to_string();
+            let name = format!(
+                "{}: {} ({}, {})",
+                context.tr("app.account.switch"),
+                handle,
+                did,
+                profile.account.server_url
+            );
+            let avatar = super::session_shell::account_menu_avatar(
+                scope,
+                context.clone(),
+                did.clone(),
+                String::new(),
+                handle.clone(),
+                "account-switch-avatar",
+            );
+            let handle_text = glory::ui::text()
+                .class("account-switch-handle")
+                .content(handle);
+            let did_text = glory::ui::text()
+                .class("account-switch-did mono")
+                .content(did);
+            let selecting = root.clone();
+            let selected_context = context.clone();
+            let id = profile.account.profile_id;
+            rows.push(Box::new(
+                sapid::button()
+                    .unstyled()
+                    .class("account-switch-row")
+                    .label("")
+                    .name(name)
+                    .enabled(ready)
+                    .fill((avatar, handle_text, did_text))
+                    .on_press(move || {
+                        let context = selected_context.clone();
+                        let failure = context.clone();
+                        if let Err(error) = selecting
+                            .clone()
+                            .start_select_profile(id.clone(), move |result| {
+                                finish_switch(context, result, Route::Dashboard)
+                            })
+                        {
+                            failure
+                                .account_error
+                                .revise(|value| *value = Some(error.to_string()));
+                        }
+                    }),
+            ) as View);
+        }
+        let accounts = if rows.is_empty() {
+            empty()
+        } else {
+            stack("account-switch-list", rows)
+        };
+        let adding = root.clone();
         let add_context = context.clone();
         let errors = reactive(root.error, |_, error| match error {
             Some(error) => crate::presentation::widgets::paragraph("error", error),
             None => empty(),
         });
-        let on_select = move |id: Option<String>| {
-            if let Some(id) = id {
-                let context = selected_context.clone();
-                let failure = context.clone();
-                if let Err(error) = selecting.clone().start_select_profile(id, move |result| {
-                    finish_switch(context, result, Route::Dashboard)
-                }) {
-                    failure
-                        .account_error
-                        .revise(|value| *value = Some(error.to_string()));
-                }
-            }
-        };
-        let picker = if multiple_accounts {
-            #[cfg(target_arch = "wasm32")]
-            {
-                Box::new(web_account_picker(
-                    scope,
-                    context.translated(scope, "app.account.switch"),
-                    ready,
-                    selection,
-                    options,
-                    on_select,
-                )) as View
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                use crate::presentation::native_choice::{
-                    NativeChoiceOption, NativeChoiceProps, native_choice,
-                };
-                native_choice(
-                    scope,
-                    NativeChoiceProps::new(
-                        "account-switcher",
-                        context.translated(scope, "app.account.switch"),
-                        selection,
-                        options
-                            .into_iter()
-                            .map(|(value, label)| NativeChoiceOption::new(value, label))
-                            .collect(),
-                        on_select,
-                    )
-                    .enabled(ready)
-                    .class("select account-picker__select"),
-                )
-            }
-        } else {
-            empty()
-        };
         stack(
-            if multiple_accounts {
-                "account-picker"
-            } else {
-                "account-picker account-picker-single"
-            },
+            "account-picker",
             vec![
-                picker,
+                accounts,
                 Box::new(
                     sapid::button()
                         .unstyled()

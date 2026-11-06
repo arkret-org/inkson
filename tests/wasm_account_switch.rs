@@ -186,22 +186,25 @@ async fn mount(
     (element, (), app, case, a, b)
 }
 
-async fn choose(element: &web_sys::Element, value: &str, expected: &str) {
-    let select = element.query_selector("select").unwrap().unwrap();
-    js_sys::Reflect::set(select.as_ref(), &"value".into(), &value.into()).unwrap();
-    let event_init = web_sys::EventInit::new();
-    event_init.set_bubbles(true);
-    select
-        .dispatch_event(&web_sys::Event::new_with_event_init_dict("change", &event_init).unwrap())
-        .unwrap();
+async fn choose(element: &web_sys::Element, account: &ActiveAccountContext, expected: &str) {
+    let rows = element.query_selector_all(".account-switch-row").unwrap();
+    let row = (0..rows.length())
+        .filter_map(|index| rows.item(index))
+        .map(|node| node.dyn_into::<web_sys::Element>().unwrap())
+        .find(|row| {
+            row.get_attribute("aria-label")
+                .unwrap_or_default()
+                .contains(account.server_url.as_str())
+        })
+        .expect("saved account card");
+    row.dyn_into::<web_sys::HtmlElement>().unwrap().click();
     for _ in 0..300 {
         if element
             .query_selector(".private-view")
             .unwrap()
-            .unwrap()
-            .text_content()
-            .unwrap()
-            == expected
+            .and_then(|view| view.text_content())
+            .as_deref()
+            == Some(expected)
         {
             return;
         }
@@ -219,7 +222,7 @@ async fn browser_warm_switch_a_b_a_keeps_exact_accounts_keys_and_rejects_late_de
     let (root, _) = case.handles.borrow().as_ref().unwrap().clone();
     let old_generation = root.conformance_session_generation();
     let old_store = case.store.clone();
-    choose(&element, &b.profile_id, "private-b").await;
+    choose(&element, &b, "private-b").await;
     {
         assert_eq!(root.active_account().unwrap().authority, b.authority);
         assert_eq!(
@@ -238,7 +241,7 @@ async fn browser_warm_switch_a_b_a_keeps_exact_accounts_keys_and_rejects_late_de
     assert!(!element.text_content().unwrap().contains("private-a"));
     assert!(!element.inner_html().contains("browser-grant"));
     assert!(!element.inner_html().contains("browser-credential"));
-    choose(&element, &a.profile_id, "private-a").await;
+    choose(&element, &a, "private-a").await;
     assert_eq!(
         LocalConfigStore::default()
             .load()
@@ -317,7 +320,7 @@ async fn browser_add_account_can_return_without_promoting_pending_secrets() {
     };
     let snapshot = pending.read(Clone::clone);
     commit_browser_switch_storage(&snapshot).await.unwrap();
-    choose(&element, &a.profile_id, "private-a").await;
+    choose(&element, &a, "private-a").await;
     assert!(
         storage
             .get_item("inkson.oidc_scaffold.v1.retired-b")

@@ -13,7 +13,7 @@ for (const language of ["en", "zh"] as const) {
     await page.locator(".account-menu-wrap .sapid-popover-trigger").click();
     const logoutResponse = page.waitForResponse(response => response.request().method() === "POST"
       && new URL(response.url()).pathname === "/_arkret/gate/account/logout");
-    await byClass(page, "account-menu").getByRole("button", { name: language === "zh" ? "退出登录" : "Log out", exact: true }).click();
+    await byClass(page, "account-menu").getByRole("button", { name: language === "zh" ? "退出当前账号" : "Sign out of this account", exact: true }).click();
     expect((await logoutResponse).status()).toBe(200);
     await expect(page).toHaveURL(/\/login(?:[?#]|$)/);
     const login = byClass(page, "auth-panel");

@@ -27,7 +27,6 @@ pub(super) struct ShellState {
     pub device_name: Cage<String>,
     pub session_status: Cage<String>,
     pub identity_key: Cage<String>,
-    pub handles_key: Cage<String>,
     pub pending_leave: Cage<Option<(String, String)>>,
     pub pending_delete: Cage<Option<(String, String)>>,
 }
@@ -56,7 +55,6 @@ impl ShellState {
             device_name: scope.cage(String::new()),
             session_status: scope.cage(String::new()),
             identity_key: scope.cage(String::new()),
-            handles_key: scope.cage(String::new()),
             pending_leave: scope.cage(None),
             pending_delete: scope.cage(None),
         })

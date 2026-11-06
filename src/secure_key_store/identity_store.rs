@@ -202,6 +202,14 @@ impl UserLocalStore {
         store.delete_secret(&self.key(logical_key))
     }
 
+    pub(crate) async fn delete_secret_durable(
+        &self,
+        store: &dyn SecureKeyStore,
+        logical_key: &str,
+    ) -> Result<(), SecureKeyStoreError> {
+        store.delete_secret_durable(&self.key(logical_key)).await
+    }
+
     pub(crate) fn load_secret(
         &self,
         store: &dyn SecureKeyStore,
@@ -310,6 +318,15 @@ impl UserLocalStore {
         store: &dyn SecureKeyStore,
     ) -> Result<Option<SigningSeedMaterial>, SecureKeyStoreError> {
         load_signing_seed_at(store, &self.key(GRANT_BINDING_SEED_ENTRY))
+    }
+
+    pub(crate) async fn delete_grant_binding_seed_durable(
+        &self,
+        store: &dyn SecureKeyStore,
+    ) -> Result<(), SecureKeyStoreError> {
+        store
+            .delete_secret_durable(&self.key(GRANT_BINDING_SEED_ENTRY))
+            .await
     }
 
     /// Logout-only; the sole caller sits under `cfg(not(test))`, so this carries

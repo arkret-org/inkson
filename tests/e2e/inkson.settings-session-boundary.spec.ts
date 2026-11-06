@@ -10,6 +10,8 @@ registerStrandsBeforeEach();
 test("root logout suppresses a pending settings query in the same page instance", async ({
   page,
 }, testInfo) => {
+  const runtimeErrors: string[] = [];
+  page.on("pageerror", error => runtimeErrors.push(String(error)));
   await gotoAndDismissRecovery(page, "/settings/mimi");
   const marker = "old-session-directory-read-late-500";
   let releaseQuery!: () => void;
@@ -78,7 +80,7 @@ test("root logout suppresses a pending settings query in the same page instance"
     await page.locator(".account-menu-wrap .sapid-popover-trigger").click();
     const logoutResponse = page.waitForResponse(response => response.request().method() === "POST"
       && new URL(response.url()).pathname === "/_arkret/gate/account/logout");
-    await byClass(page, "account-menu").getByRole("button", { name: "Log out", exact: true }).click();
+    await byClass(page, "account-menu").getByRole("button", { name: "Sign out of this account", exact: true }).click();
     expect((await logoutResponse).status()).toBe(200);
     await expect(page).toHaveURL(/\/login(?:[?#]|$)/);
     await expect(byClass(page, "auth-panel")).toBeVisible();
@@ -105,6 +107,7 @@ test("root logout suppresses a pending settings query in the same page instance"
     }));
     expect(witness.timeOrigin).toBe(timeOrigin);
     expect(witness.state).toEqual({ observedMimiError: false, observedReceipt: false });
+    expect(runtimeErrors).toEqual([]);
     await expect(byClass(page, "auth-panel")).toBeVisible();
     await expect(byClass(page, "mimi-directory-result")).toHaveCount(0);
     await expect(byClass(page, "toast-body").filter({ hasText: /MIMI request failed|MIMI 请求失败/ })).toHaveCount(0);

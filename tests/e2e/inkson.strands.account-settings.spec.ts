@@ -129,6 +129,9 @@ test("topbar account menu shows profile identity and current device", async ({ p
   await expect(menu.locator("svg.account-menu__avatar")).toBeVisible();
   await expect(byClass(menu, "account-menu__device-name")).toHaveCount(0);
   await expect(byClass(menu, "account-picker__select")).toHaveCount(0);
+  await expect(byClass(menu, "account-switch-list")).toHaveCount(0);
+  await expect(menu.locator(".account-menu__head .handle")).toHaveCount(0);
+  await expect(menu.getByRole("button", { name: "Refresh session", exact: true })).toHaveCount(0);
   await expect(byClass(menu, "account-picker__add")).toBeVisible();
   await menu.getByRole("button", { name: "Copy device ID", exact: true }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("ak:device:01964137-0000-7000-8000-0000000000a1");
@@ -137,21 +140,14 @@ test("topbar account menu shows profile identity and current device", async ({ p
   await expect(menu.getByRole("link", { name: "Settings", exact: true })).toBeVisible();
   const menuBox = await byClass(page, "account-menu").boundingBox();
   const qrBox = await byClass(menu, "account-menu__qr").boundingBox();
-  const refreshBox = await menu.getByRole("button", { name: "Refresh session", exact: true }).boundingBox();
-  const logoutBox = await menu.getByRole("button", { name: "Log out", exact: true }).boundingBox();
-  const settingsBox = await menu.getByRole("link", { name: "Settings", exact: true }).boundingBox();
+  const logoutBox = (await byClass(menu, "account-menu-sign-out-current").boundingBox())!;
+  const settingsBox = (await byClass(menu, "account-menu-settings").boundingBox())!;
+  const allBox = (await byClass(menu, "account-menu-sign-out-all").boundingBox())!;
   expect(menuBox).not.toBeNull();
   expect(qrBox).not.toBeNull();
-  expect(refreshBox).not.toBeNull();
-  expect(logoutBox).not.toBeNull();
-  expect(settingsBox).not.toBeNull();
   expect(qrBox!.x + qrBox!.width).toBeGreaterThan(menuBox!.x + menuBox!.width - 48);
-  expect(Math.abs(refreshBox!.y - settingsBox!.y)).toBeLessThan(2);
-  expect(Math.abs(logoutBox!.y - settingsBox!.y)).toBeLessThan(2);
-  expect(refreshBox!.x).toBeLessThan(logoutBox!.x);
-  expect(logoutBox!.x).toBeLessThan(settingsBox!.x);
-  expect(Math.abs(refreshBox!.width - settingsBox!.width)).toBeLessThan(1);
-  expect(Math.abs(logoutBox!.width - settingsBox!.width)).toBeLessThan(1);
+  expect(logoutBox.y).toBeLessThan(settingsBox.y);
+  expect(settingsBox.y).toBeLessThan(allBox.y);
   await page.screenshot({ path: test.info().outputPath("account-menu.png") });
   await byClass(menu, "account-menu__qr").click();
   await expect(page).toHaveURL(/\/settings$/);
@@ -170,9 +166,31 @@ test("topbar account menu shows profile identity and current device", async ({ p
   await page.reload();
   await dismissBlockingRecoveryModal(page);
   await page.locator(".account-menu-wrap .sapid-popover-trigger").click();
-  const switcher = byClass(accountMenu(page), "account-picker__select");
+  const switcher = byClass(accountMenu(page), "account-switch-row");
+  await expect(switcher).toHaveCount(1);
   await expect(switcher).toBeVisible();
-  await expect(switcher.locator("option").filter({ hasText: "Other saved account" })).toHaveCount(1);
+  await expect(byClass(switcher, "account-switch-handle")).toHaveText("Other saved account");
+  await expect(byClass(switcher, "account-switch-avatar")).toBeVisible();
+  await expect(byClass(switcher, "account-switch-did")).toHaveText(CURRENT_PRINCIPAL_CORE_ID);
+  await page.screenshot({ path: test.info().outputPath("other-account-list.png") });
+});
+
+test("account menu signs out all saved sessions and remains signed out after reload", async ({ page }) => {
+  const runtimeErrors: string[] = [];
+  page.on("pageerror", error => runtimeErrors.push(String(error)));
+  await gotoAndDismissRecovery(page, "/contacts");
+  await page.addInitScript(() => localStorage.setItem("inkson.test.session_injection.v1", "{}"));
+  await page.evaluate(() => localStorage.setItem("inkson.test.session_injection.v1", "{}"));
+  await page.locator(".account-menu-wrap .sapid-popover-trigger").click();
+  const response = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/_arkret/gate/account/logout");
+  await byClass(accountMenu(page), "account-menu-sign-out-all").click();
+  expect((await response).status()).toBe(200);
+  await expect(page).toHaveURL(/\/login(?:[?#]|$)/);
+  await expect(byClass(page, "auth-panel")).toBeVisible();
+  await page.reload();
+  await expect(byClass(page, "auth-panel")).toBeVisible();
+  await expect(byClass(page, "navigation-rail")).toHaveCount(0);
+  expect(runtimeErrors).toEqual([]);
 });
 
 test("account menu keeps the viewer fallback handle", async ({

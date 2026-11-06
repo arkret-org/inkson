@@ -118,9 +118,7 @@ test("bootstrap login and sync shows the connected realm", async ({ page }) => {
   await expect(page.locator(".account-menu .who")).toHaveText(
     "inkson",
   );
-  await expect(page.locator(".account-menu__head .handle")).toContainText(
-    "alice:local.host · Current device",
-  );
+  await expect(page.locator(".account-menu__head .handle")).toHaveCount(0);
   await expect(byClass(page, "account-menu__device-name")).toHaveCount(0);
   await expect(byClass(page, "account-menu-frontier")).toHaveCount(0);
   await expect(byClass(page, "account-menu-push")).toHaveCount(0);

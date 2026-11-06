@@ -4,52 +4,35 @@ use crate::config::{AccountProfile, ClientConfig};
 use crate::presentation::{BootState, InksonContext, SharedStateStore};
 
 #[test]
-fn web_picker_mounts_opaque_profile_ids_and_selects_the_exact_account() {
-    use glory::render::{Event, Props};
-
-    let app = glory::ui::App::memory();
-    let first = "ak:profile:019b0000-0000-7000-8000-000000000001".to_owned();
-    let second = "ak:profile:019b0000-0000-7000-8000-000000000002".to_owned();
-    let scope = app.scope();
-    let active = scope.cage(Some(first.clone()));
-    let chosen = scope.cage(None::<String>);
-    app.mount(web_account_picker(
-        scope,
-        "Switch account",
-        true,
-        scope.bond(move || active.get()),
-        vec![
-            (first.clone(), "First".into()),
-            (second.clone(), "Second".into()),
-        ],
-        move |id| chosen.revise(|value| *value = id),
-    ))
-    .unwrap();
-    let (node, props) = {
-        let tree = app.tree();
-        let mut pending = tree.roots().to_vec();
-        loop {
-            let id = pending.pop().expect("mounted web account picker");
-            let node = tree.node(id).unwrap();
-            if let Props::Select(props) = &node.descriptor.view().props {
-                break (id, props.clone());
-            }
-            pending.extend(node.children.iter().copied());
+fn saved_account_cards_exclude_current_and_target_the_other_exact_station() {
+    let f = fixture();
+    f.dom
+        .mount(account_switcher(
+            f.dom.scope(),
+            f.root.context.clone(),
+            true.into(),
+        ))
+        .unwrap();
+    let tree = f.dom.tree();
+    let mut pending = tree.roots().to_vec();
+    let mut rows = Vec::new();
+    while let Some(id) = pending.pop() {
+        let node = tree.node(id).unwrap();
+        let descriptor = node.descriptor.view();
+        assert!(!matches!(descriptor.props, glory::render::Props::Select(_)));
+        if descriptor
+            .classes
+            .iter()
+            .any(|class| class == "account-switch-row")
+        {
+            rows.push(descriptor.name.clone().unwrap());
         }
-    };
-    let entries: Vec<_> = props.options().map(|(option, _)| option).collect();
-    assert_eq!(entries[0].value, first);
-    assert_eq!(entries[1].value, second);
-    assert_eq!(props.selection.keys, [entries[0].key.clone()]);
-    app.dispatch(
-        node,
-        Event::SelectChanged {
-            keys: vec![entries[1].key.clone()],
-            revision: props.selection.revision,
-        },
-    )
-    .unwrap();
-    assert_eq!(chosen.get(), Some(second));
+        pending.extend(node.children.iter().copied());
+    }
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].contains(f.b.server_url.as_str()));
+    assert!(!rows[0].contains(f.a.server_url.as_str()));
+    assert_eq!(f.root.active_account().unwrap().authority, f.a.authority);
 }
 
 struct Fixture {

@@ -495,21 +495,6 @@ fn current_authed_api(
     crate::transport::auth::authed_api(base, session_credential.to_owned())
 }
 
-/// ②(A+②) — build a `/_arkret/self/*`-ready client: the credential
-/// (`ak.session.grant` JWT) in the HTTP Bearer authorization slot plus the
-/// grant-binding (DPoP) key so each request carries a per-request `DPoP` proof
-/// (api-conventions.md §3.3).
-/// Used by standalone (non-`connect`) self-path call sites that build their own
-/// `TransportClient`. Best-effort on the DPoP key: if it cannot be loaded the
-/// credential is still attached while the request remains server-authenticated
-/// by the active session grant.
-pub(super) fn self_authed_api(
-    base: &str,
-    session_credential: impl Into<String>,
-) -> anyhow::Result<TransportClient> {
-    crate::transport::auth::authed_api(base, session_credential.into())
-}
-
 pub(super) fn adopt_live_token_for_api(
     base: &str,
     state_store: &crate::presentation::SharedStateStore,

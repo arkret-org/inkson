@@ -4681,8 +4681,13 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.account.open_settings", "Open settings");
     dict.set("app.account.did", "DID");
     dict.set("app.account.server", "Server");
-    dict.set("app.account.refresh_session", "Refresh session");
-    dict.set("app.account.log_out", "Log out");
+    dict.set("app.account.sign_out_current", "Sign out of this account");
+    dict.set("app.account.sign_out_all", "Sign out of all accounts");
+    dict.set("app.account.signing_out", "Signing out…");
+    dict.set(
+        "app.account.sign_out_failed",
+        "Sign out could not be completed. Please retry.",
+    );
     dict.set("app.account.switching", "Switching account…");
     dict.set("app.account.switch", "Switch account");
     dict.set("app.account.unnamed", "Unnamed account");
