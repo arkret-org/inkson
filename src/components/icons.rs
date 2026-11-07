@@ -105,6 +105,13 @@ fn icon(name: &str, class: &str, fixed_size: bool) -> View {
             "M10 8h.01M14 8h.01M18 8h.01M6 8h.01M8 12h.01M12 12h.01M16 12h.01M20 12h.01M7 16h10M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"
         }
         "lock" => "M6 10V8a6 6 0 0 1 12 0v2M5 10h14v10H5V10Zm7 4v2",
+        "log-out" => "M9 5H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4M9 12h12m-4-4 4 4-4 4",
+        "log-out-all" => {
+            "M8 3H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M12 6H8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4M12 12h10m-4-4 4 4-4 4"
+        }
+        "user-plus" => {
+            "M15 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M12 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Zm7 1v6m-3-3h6"
+        }
         "menu" => "M4 6h16M4 12h16M4 18h16",
         "maximize" => "M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7",
         "minimize" => "M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7",
@@ -151,7 +158,6 @@ fn icon(name: &str, class: &str, fixed_size: bool) -> View {
         }
         "unlock" => "M7 10V8a5 5 0 0 1 9.58-2M5 10h14v10H5V10Zm7 4v2",
         "user" => "M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z",
-        "user-plus" => "M16 21a6 6 0 0 0-12 0M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm9-4v6m-3-3h6",
         "users" => {
             "M16 21a6 6 0 0 0-12 0M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm12 10a5 5 0 0 0-5-5M17 3.3a4 4 0 0 1 0 7.4"
         }

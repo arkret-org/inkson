@@ -48,7 +48,7 @@
 .navigation-rail .rail-settings { margin-top: auto; }
 .navigation-rail .account-menu-wrap { flex-shrink: 0; padding: 4px 0; }
 .navigation-rail .account-menu {
-  width: min(420px, calc(100vw - 88px));
+  width: min(var(--account-menu-w), calc(100vw - 88px));
   max-height: calc(100dvh - 24px);
   overflow-y: auto;
 }
@@ -164,7 +164,7 @@
   .workspace-shell .topbar.realm-header { display: flex; }
   .workspace-shell .topbar { flex-wrap: wrap; height: auto; min-height: 52px; padding: 8px; gap: 8px; }
   .workspace-shell .topbar > .actions { gap: 4px; flex-direction: row; flex-wrap: wrap; }
-  .navigation-rail .account-menu { width: min(420px, calc(100vw - 24px)); max-height: calc(100dvh - 84px - env(safe-area-inset-bottom)); }
+  .navigation-rail .account-menu { width: min(var(--account-menu-w), calc(100vw - 24px)); max-height: calc(100dvh - 84px - env(safe-area-inset-bottom)); }
 }
 @media (max-width: 860px) and (max-height: 480px) {
   .workspace-list,

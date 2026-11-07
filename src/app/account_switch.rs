@@ -405,23 +405,22 @@ pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Vary
             "account-picker",
             vec![
                 accounts,
-                Box::new(
-                    sapid::button()
-                        .unstyled()
-                        .class("btn btn-ghost account-picker__add")
-                        .enabled(ready)
-                        .label(context.translated(scope, "app.account.add"))
-                        .on_press(move || {
-                            let context = add_context.clone();
-                            let failure = context.clone();
-                            if let Err(error) = adding.clone().start_add_account(move |result| {
-                                finish_switch(context, result, Route::Login)
-                            }) {
-                                failure
-                                    .account_error
-                                    .revise(|value| *value = Some(error.to_string()));
-                            }
-                        }),
+                super::session_shell::account_menu_action(
+                    "account-picker__add",
+                    "user-plus",
+                    context.translated(scope, "app.account.add"),
+                    ready,
+                    move || {
+                        let context = add_context.clone();
+                        let failure = context.clone();
+                        if let Err(error) = adding.clone().start_add_account(move |result| {
+                            finish_switch(context, result, Route::Login)
+                        }) {
+                            failure
+                                .account_error
+                                .revise(|value| *value = Some(error.to_string()));
+                        }
+                    },
                 ),
                 errors,
             ],

@@ -55,6 +55,8 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     const menu = byClass(page, "account-menu");
     await expect(menu).toBeVisible();
     const menuBox = (await menu.boundingBox())!;
+    expect(menuBox.width).toBeLessThanOrEqual(320);
+    await expect(byClass(menu, "account-menu-settings")).toHaveCount(0);
     if (!mobile) expect(menuBox.x).toBeGreaterThan(avatarBox.x);
     expect(menuBox.x).toBeGreaterThanOrEqual(0);
     expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(viewport.width);
@@ -65,7 +67,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     await expect(menu).toBeHidden();
     if (mobile) {
       await avatar.click();
-      await byClass(page, "account-menu-settings").click();
+      await byClass(page, "account-menu__qr").click();
       await expect(byClass(page, "settings-shell")).toBeVisible();
       await expect(menu).toBeHidden();
     }

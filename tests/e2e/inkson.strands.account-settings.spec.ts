@@ -137,17 +137,26 @@ test("topbar account menu shows profile identity and current device", async ({ p
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("ak:device:01964137-0000-7000-8000-0000000000a1");
   await expect(byClass(page, "account-menu-session-state")).toHaveCount(0);
   await expect(byClass(menu, "account-menu__qr")).toBeVisible();
-  await expect(menu.getByRole("link", { name: "Settings", exact: true })).toBeVisible();
+  await expect(menu.getByRole("link", { name: "Settings", exact: true })).toHaveCount(0);
   const menuBox = await byClass(page, "account-menu").boundingBox();
   const qrBox = await byClass(menu, "account-menu__qr").boundingBox();
   const logoutBox = (await byClass(menu, "account-menu-sign-out-current").boundingBox())!;
-  const settingsBox = (await byClass(menu, "account-menu-settings").boundingBox())!;
+  const addBox = (await byClass(menu, "account-picker__add").boundingBox())!;
   const allBox = (await byClass(menu, "account-menu-sign-out-all").boundingBox())!;
   expect(menuBox).not.toBeNull();
   expect(qrBox).not.toBeNull();
   expect(qrBox!.x + qrBox!.width).toBeGreaterThan(menuBox!.x + menuBox!.width - 48);
-  expect(logoutBox.y).toBeLessThan(settingsBox.y);
-  expect(settingsBox.y).toBeLessThan(allBox.y);
+  expect(menuBox!.width).toBeCloseTo(320, 0);
+  expect(logoutBox.y).toBeLessThan(addBox.y);
+  expect(addBox.y).toBeLessThan(allBox.y);
+  const actions = byClass(menu, "account-menu-action");
+  await expect(actions).toHaveCount(3);
+  for (const button of await actions.all()) {
+    await expect(button.locator(".account-menu-action-icon")).toHaveCount(1);
+    const box = (await button.boundingBox())!;
+    expect(Math.abs(box.height - logoutBox.height)).toBeLessThan(1);
+    expect(Math.abs(box.width - logoutBox.width)).toBeLessThan(1);
+  }
   await page.screenshot({ path: test.info().outputPath("account-menu.png") });
   await byClass(menu, "account-menu__qr").click();
   await expect(page).toHaveURL(/\/settings$/);

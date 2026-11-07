@@ -57,7 +57,8 @@
 
 .account-menu {
   z-index: var(--layer-global-popover);
-  width: min(420px, 92vw);
+  --account-menu-w: 320px;
+  width: min(var(--account-menu-w), 92vw);
   display: grid;
   gap: 10px;
   padding: 12px;
@@ -194,10 +195,12 @@
 .account-menu-current { display: grid; gap: 6px; min-width: 0; }
 .account-menu__actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
 .account-menu__actions > *, .account-menu-sign-out-current { min-width: 0; width: 100%; justify-content: flex-start; }
-.account-menu-sign-out-all { background: var(--surface-2); }
+.account-menu .account-menu-action { display: flex; align-items: center; justify-content: flex-start; gap: 8px; min-height: 36px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text-2); font-size: 13px; line-height: 20px; text-align: start; white-space: normal; }
+.account-menu .account-menu-action:hover { background: var(--surface-2); color: var(--text); }
+.account-menu-action-icon { width: 18px; height: 18px; flex: 0 0 18px; }
+.account-menu-action-label { min-width: 0; }
 .account-picker { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
 .account-menu .account-picker { padding-top: 8px; border-top: 1px solid var(--border); }
-.account-picker .account-picker__add { min-height: 36px; width: 100%; padding-inline: 12px; white-space: normal; justify-content: flex-start; }
 .account-switch-list { display: grid; gap: 4px; min-width: 0; }
 .account-switch-row { display: grid; grid-template-columns: 30px minmax(0, 1fr); grid-template-rows: auto auto; gap: 4px 10px; align-items: center; width: 100%; min-width: 0; padding: 8px 10px; text-align: start; border: 0; border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; }
 .account-switch-row:hover { background: var(--surface-2); }

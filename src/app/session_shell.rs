@@ -27,6 +27,31 @@ pub(super) fn action(
             .on_press(handler),
     )
 }
+pub(super) fn account_menu_action(
+    class: &str,
+    icon: &str,
+    label: impl Into<Vary<String>>,
+    enabled: impl Into<Vary<bool>>,
+    handler: impl FnMut() + 'static,
+) -> View {
+    let label = label.into();
+    Box::new(
+        sapid::button()
+            .unstyled()
+            .class(format!("btn btn-ghost account-menu-action {class}"))
+            .label("")
+            .name(label.clone())
+            .enabled(enabled)
+            .fill((
+                crate::components::icons::ui_icon_with_class(
+                    icon,
+                    "ui-icon account-menu-action-icon",
+                ),
+                text().class("account-menu-action-label").content(label),
+            ))
+            .on_press(handler),
+    )
+}
 pub(super) fn icon_action(
     class: &str,
     label: impl Into<Vary<String>>,
@@ -1161,53 +1186,31 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
             let logout = {
                 let context = context.clone();
                 let status = ui.session_status;
-                Box::new(
-                    sapid::button()
-                        .unstyled()
-                        .class("btn btn-ghost account-menu-sign-out-current")
-                        .label(context.translated(scope, "app.account.sign_out_current"))
-                        .enabled(ready)
-                        .on_press(move || super::session_commands::logout(context.clone(), status)),
-                ) as View
+                account_menu_action(
+                    "account-menu-sign-out-current",
+                    "log-out",
+                    context.translated(scope, "app.account.sign_out_current"),
+                    ready,
+                    move || super::session_commands::logout(context.clone(), status),
+                )
             };
             let logout_all = {
                 let context = context.clone();
                 let status = ui.session_status;
-                Box::new(
-                    sapid::button()
-                        .unstyled()
-                        .class("btn btn-ghost account-menu-sign-out-all")
-                        .label(context.translated(scope, "app.account.sign_out_all"))
-                        .enabled(ready)
-                        .on_press(move || {
-                            super::session_commands::logout_all(context.clone(), status)
-                        }),
-                ) as View
+                account_menu_action(
+                    "account-menu-sign-out-all",
+                    "log-out-all",
+                    context.translated(scope, "app.account.sign_out_all"),
+                    ready,
+                    move || super::session_commands::logout_all(context.clone(), status),
+                )
             };
             block(
                 "account-menu-content",
                 vec![
                     block("account-menu-current", vec![head, identity_rows, logout]),
                     super::account_switch::account_switcher(scope, context.clone(), true.into()),
-                    {
-                        let settings_context = context.clone();
-                        let close = ui.account_open;
-                        let settings = Box::new(
-                            internal_link()
-                                .class("btn sm account-menu-settings")
-                                .target(Route::Settings.to_string())
-                                .name(context.translated(scope, "nav.settings"))
-                                .fill((
-                                    crate::components::ui_icon("settings"),
-                                    text().content(context.translated(scope, "nav.settings")),
-                                ))
-                                .on(EventKind::Activate, move |_| {
-                                    close.revise(|value| *value = false);
-                                    settings_context.navigate(Route::Settings);
-                                }),
-                        ) as View;
-                        block("account-menu__actions", vec![settings, logout_all])
-                    },
+                    block("account-menu__actions", vec![logout_all]),
                 ],
             )
         }
