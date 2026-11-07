@@ -312,4 +312,33 @@ fn settings_search_disclosure_filters_on_edits_and_clears_when_closed() {
     assert!(
         matches!(app.tree().node(class(&app, "workspace-navigation-search-input")).unwrap().descriptor.view().props, Props::Input(value) if value.value.is_empty())
     );
+    for value in ["language", ""] {
+        type_into(&app, "workspace-navigation-search-input", value);
+        let input = class(&app, "workspace-navigation-search-input");
+        app.dispatch(
+            input,
+            Event::Keyboard {
+                from: input,
+                command: glory::render::KeyboardCommand::Dismiss,
+            },
+        )
+        .unwrap();
+        app.flush().unwrap();
+        assert!(!nodes(&app).iter().any(|id| {
+            app.tree()
+                .node(*id)
+                .unwrap()
+                .descriptor
+                .view()
+                .classes
+                .iter()
+                .any(|class| class == "workspace-navigation-search-input")
+        }));
+        class(&app, "settings-nav-item-account");
+        app.dispatch(trigger, Event::Activate).unwrap();
+        app.flush().unwrap();
+        assert!(
+            matches!(app.tree().node(class(&app, "workspace-navigation-search-input")).unwrap().descriptor.view().props, Props::Input(value) if value.value.is_empty())
+        );
+    }
 }
