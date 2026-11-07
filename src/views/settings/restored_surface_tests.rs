@@ -285,11 +285,11 @@ fn settings_search_disclosure_filters_on_edits_and_clears_when_closed() {
             .view()
             .classes
             .iter()
-            .any(|class| class == "settings-nav-search-input")
+            .any(|class| class == "workspace-navigation-search-input")
     }));
     app.dispatch(trigger, Event::Activate).unwrap();
     app.flush().unwrap();
-    type_into(&app, "settings-nav-search-input", "language");
+    type_into(&app, "workspace-navigation-search-input", "language");
     assert!(nodes(&app).contains(&class(&app, "settings-nav-item-theme")));
     assert!(!nodes(&app).iter().any(|id| {
         app.tree()
@@ -301,7 +301,7 @@ fn settings_search_disclosure_filters_on_edits_and_clears_when_closed() {
             .iter()
             .any(|class| class == "settings-nav-item-account")
     }));
-    type_into(&app, "settings-nav-search-input", "no-such-control");
+    type_into(&app, "workspace-navigation-search-input", "no-such-control");
     class(&app, "settings-nav-empty");
     app.dispatch(trigger, Event::Activate).unwrap();
     app.flush().unwrap();
@@ -310,6 +310,6 @@ fn settings_search_disclosure_filters_on_edits_and_clears_when_closed() {
     app.dispatch(trigger, Event::Activate).unwrap();
     app.flush().unwrap();
     assert!(
-        matches!(app.tree().node(class(&app, "settings-nav-search-input")).unwrap().descriptor.view().props, Props::Input(value) if value.value.is_empty())
+        matches!(app.tree().node(class(&app, "workspace-navigation-search-input")).unwrap().descriptor.view().props, Props::Input(value) if value.value.is_empty())
     );
 }

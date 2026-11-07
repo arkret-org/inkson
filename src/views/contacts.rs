@@ -1480,7 +1480,13 @@ fn contact_list_rows(
                         empty()
                     },
                 ])
-                .on_press(move || selected.revise(|value| *value = id.clone())),
+                .on_press({
+                    let navigation = list_context.workspace_navigation.clone();
+                    move || {
+                        selected.revise(|value| *value = id.clone());
+                        navigation.open_detail();
+                    }
+                }),
         ) as View);
     }
     for agent in list_agents {
@@ -1512,7 +1518,13 @@ fn contact_list_rows(
                         ),
                     ),
                 ])
-                .on_press(move || selected.revise(|value| *value = id.clone())),
+                .on_press({
+                    let navigation = list_context.workspace_navigation.clone();
+                    move || {
+                        selected.revise(|value| *value = id.clone());
+                        navigation.open_detail();
+                    }
+                }),
         ) as View);
     }
     if items.is_empty() {
@@ -1557,18 +1569,21 @@ fn contacts_panel_with_header(
             stack(
                 "contacts-layout",
                 vec![
-                    stack(
-                        "contacts-list-pane",
-                        vec![
-                            line(
-                                "workspace-list-heading",
-                                vec![
-                                    heading(
-                                        2,
-                                        "workspace-list-title",
-                                        context.translated(scope, "contacts.title"),
-                                    ),
-                                    Box::new(
+                    crate::presentation::widgets::workspace_pane(
+                        scope,
+                        &context,
+                        false,
+                        stack(
+                            "contacts-list-pane",
+                            vec![
+                                crate::presentation::widgets::navigation_heading(
+                                    scope,
+                                    context.clone(),
+                                    "contacts-navigation-search",
+                                    "contacts.title",
+                                    "sidebar.search_contacts",
+                                    query,
+                                    vec![Box::new(
                                         sapid::button()
                                             .unstyled()
                                             .class(
@@ -1577,18 +1592,15 @@ fn contacts_panel_with_header(
                                             .name(context.translated(scope, "contacts.add_button"))
                                             .fill(crate::components::ui_icon("plus"))
                                             .on_press(move || modal.revise(|value| *value = true)),
-                                    ),
-                                ],
-                            ),
-                            crate::presentation::widgets::navigation_search(
-                                context.translated(scope, "sidebar.search_contacts"),
-                                query,
-                            ),
-                            list,
-                        ],
+                                    )],
+                                ),
+                                list,
+                            ],
+                        ),
                     ),
                     crate::presentation::widgets::workspace_detail(
                         scope,
+                        &context,
                         &header,
                         "contacts-detail-pane",
                         detail,
@@ -1631,45 +1643,38 @@ fn contacts_panel_with_header(
             }
         })
     };
-    let body = {
+    let render = {
         let ctx = context.clone();
-        reactive(load.data, move |scope, result| {
-            let (rows, owned_agents) = match result {
-                None => {
-                    let loading = paragraph(
-                        "muted contacts-loading",
-                        ctx.translated(scope, "contacts.loading"),
-                    );
-                    return if advanced {
-                        loading
-                    } else {
-                        layout(scope, empty(), loading)
-                    };
-                }
-                Some(Err(error)) => {
-                    let error = stack(
-                        "event error-banner contacts-error",
-                        vec![
-                            paragraph("muted", error),
-                            action(
-                                scope,
-                                ctx.clone(),
-                                "contacts-retry-button",
-                                "contacts.retry",
-                                "secondary",
-                                true,
-                                move || reload.revise(|v| *v += 1),
-                            ),
-                        ],
-                    );
-                    return if advanced {
-                        error
-                    } else {
-                        layout(scope, empty(), error)
-                    };
-                }
-                Some(Ok(rows)) => rows,
-            };
+        Rc::new(move |scope: &Scope, result, detail_side: bool| {
+            let (rows, owned_agents): (Vec<ContactView>, Vec<arkret_sdk::AgentProjection>) =
+                match result {
+                    None => {
+                        let loading = paragraph(
+                            "muted contacts-loading",
+                            ctx.translated(scope, "contacts.loading"),
+                        );
+                        return loading;
+                    }
+                    Some(Err(error)) => {
+                        let error = stack(
+                            "event error-banner contacts-error",
+                            vec![
+                                paragraph("muted", error),
+                                action(
+                                    scope,
+                                    ctx.clone(),
+                                    "contacts-retry-button",
+                                    "contacts.retry",
+                                    "secondary",
+                                    true,
+                                    move || reload.revise(|v| *v += 1),
+                                ),
+                            ],
+                        );
+                        return error;
+                    }
+                    Some(Ok(rows)) => rows,
+                };
             let blocklist = ctx.state_store.read(|s| s.client_blocklist());
             let rows = rows
                 .into_iter()
@@ -1754,14 +1759,10 @@ fn contacts_panel_with_header(
                         },
                     ],
                 );
-                return if advanced {
+                return if advanced || detail_side {
                     empty_state
                 } else {
-                    layout(
-                        scope,
-                        paragraph("muted", ctx.translated(scope, "contacts.empty_title")),
-                        empty_state,
-                    )
+                    paragraph("muted", ctx.translated(scope, "contacts.empty_title"))
                 };
             }
             if advanced {
@@ -1820,6 +1821,9 @@ fn contacts_panel_with_header(
                     )
                 },
             );
+            if !detail_side {
+                return list;
+            }
             let detail_context = ctx.clone();
             let detail =
                 crate::presentation::widgets::reactive_distinct(selected, move |scope, id| {
@@ -1887,9 +1891,26 @@ fn contacts_panel_with_header(
                         }
                     }
                 });
-            layout(scope, list, detail)
+            detail
         })
     };
+    let body = if advanced {
+        crate::presentation::widgets::reactive(load.data, move |scope, result| {
+            render(scope, result, true)
+        })
+    } else {
+        let list_render = render.clone();
+        layout(
+            scope,
+            crate::presentation::widgets::reactive(load.data, move |scope, result| {
+                list_render(scope, result, false)
+            }),
+            crate::presentation::widgets::reactive(load.data, move |scope, result| {
+                render(scope, result, true)
+            }),
+        )
+    };
+
     let ctx = context.clone();
     let popup = reactive(modal, move |scope, open| {
         if !open {

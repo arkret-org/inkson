@@ -740,6 +740,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.group.advanced.hint", "数据、连接与协议诊断。");
     // Settings-nav filter (design 3.4).
     dict.set("settings.search.label", "搜索设置");
+    dict.set("workspace.back_to_list", "返回列表");
+    dict.set("workspace.collapse_list", "折叠列表");
+    dict.set("workspace.expand_list", "展开列表");
+    dict.set("agents.search", "搜索智能体…");
     dict.set("settings.search.placeholder", "搜索设置…");
     // T1.3 - event signature / proof mode status display.
     dict.set("settings.proof_mode.label", "事件签名");

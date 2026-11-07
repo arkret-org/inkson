@@ -45,6 +45,7 @@ pub struct InksonContext {
     pub chat_state: crate::views::chat::ChatStatePool,
     pub kanban_state: crate::views::kanban::KanbanStatePool,
     pub route: Cage<Route>,
+    pub workspace_navigation: super::workspace_navigation::WorkspaceNavigation,
     pub locale: Cage<UiLocale>,
     pub theme: Cage<String>,
     pub system_theme_is_night: Cage<bool>,
@@ -198,6 +199,9 @@ impl InksonContext {
             hosted_sidecar: scope.cage(None),
             chat_state: crate::views::chat::ChatStatePool::new(scope),
             kanban_state: crate::views::kanban::KanbanStatePool::new(scope),
+            workspace_navigation: super::workspace_navigation::WorkspaceNavigation::new(
+                scope, &route,
+            ),
             route: scope.cage(route),
             locale: scope.cage(locale),
             theme: scope.cage(theme),
@@ -404,6 +408,7 @@ impl InksonContext {
                 }
             }
         }
+        self.workspace_navigation.navigate(&route);
         self.route.revise(|current| *current = route);
     }
 
@@ -425,6 +430,7 @@ impl InksonContext {
             }
         }
         if self.route.with_untracked(|current| current != &route) {
+            self.workspace_navigation.navigate(&route);
             self.route.revise(|current| *current = route);
         }
     }

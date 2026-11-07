@@ -931,14 +931,25 @@ pub(super) fn workspace_list(
                 },
             )
         };
-        block(
-            "workspace-list",
-            vec![
-                block(
-                    "workspace-list-heading",
-                    vec![
-                        heading(2, "workspace-list-title", context.translated(scope, title)),
-                        icon_link(
+        workspace_pane(
+            scope,
+            &context,
+            false,
+            block(
+                "workspace-list",
+                vec![
+                    navigation_heading(
+                        scope,
+                        context.clone(),
+                        if direct {
+                            "direct-navigation-search"
+                        } else {
+                            "realms-navigation-search"
+                        },
+                        title,
+                        label,
+                        value,
+                        vec![icon_link(
                             context.clone(),
                             add,
                             "sidebar-toolbar-action",
@@ -951,15 +962,11 @@ pub(super) fn workspace_list(
                                 },
                             ),
                             "plus",
-                        ),
-                    ],
-                ),
-                block(
-                    "workspace-list-search",
-                    vec![navigation_search(context.translated(scope, label), value)],
-                ),
-                block("workspace-list-rows", vec![rows, paging]),
-            ],
+                        )],
+                    ),
+                    block("workspace-list-rows", vec![rows, paging]),
+                ],
+            ),
         )
     })
 }

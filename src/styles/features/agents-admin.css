@@ -85,12 +85,6 @@
   min-width: 0;
 }
 
-.agent-admin-list-actions {
-  margin-left: auto;
-  justify-content: flex-end;
-  flex-wrap: nowrap;
-}
-
 .agent-admin-filter-bar {
   display: flex;
   flex-wrap: wrap;

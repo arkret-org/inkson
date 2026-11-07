@@ -231,14 +231,38 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
                 false,
                 false,
             );
-            format!("{} workspace-shell", chrome.shell_class)
+            let navigation = &context.workspace_navigation;
+            format!(
+                "{} workspace-shell{}{}",
+                chrome.shell_class,
+                if navigation.layout.mobile().get() {
+                    " workspace-mobile"
+                } else {
+                    ""
+                },
+                if !navigation.list_expanded.get() {
+                    " workspace-list-collapsed"
+                } else {
+                    ""
+                }
+            )
         }
     });
     #[cfg(not(target_arch = "wasm32"))]
     let keyboard_ui = ui.clone();
     #[cfg(not(target_arch = "wasm32"))]
     let keyboard_ctx = context.clone();
-    let frame = view().class(class).role(Role::Group);
+    let measured = context.workspace_navigation.layout.clone();
+    let frame = view()
+        .class(class)
+        .role(Role::Group)
+        .on(EventKind::Resize, move |event| {
+            if let glory::render::Event::Resize { size, .. } = event {
+                if let Err(error) = measured.observe_width(size.width) {
+                    tracing::warn!(%error, "workspace measurement failed");
+                }
+            }
+        });
     #[cfg(not(target_arch = "wasm32"))]
     let frame = frame.on(EventKind::Keyboard, move |event| {
         if let Event::Keyboard { command, .. } = event {
@@ -291,7 +315,15 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
                     }))
                     .fill(vec![
                         super::sidebar::workspace_list(scope, context.clone(), ui.clone()),
-                        block("main realm", vec![outer_header, content]),
+                        Box::new(view().class(scope.bond({
+                            let context = context.clone();
+                            move || {
+                                let external = super::sidebar::workspace_list_kind(&context.route.get()).is_some();
+                                format!("main realm{}", if external {
+                                    if context.workspace_navigation.pane_visible(true) { " workspace-pane workspace-pane-detail is-visible" } else { " workspace-pane workspace-pane-detail is-hidden" }
+                                } else { "" })
+                            }
+                        })).semantics(scope.bond({let context=context.clone();move || Some(Box::new(glory::render::Semantics { hidden: super::sidebar::workspace_list_kind(&context.route.get()).is_some() && !context.workspace_navigation.pane_visible(true), ..Default::default() }))})).fill(vec![outer_header,content])),
                     ]),
             ),
             super::notifications_drawer::notifications_drawer(
@@ -848,7 +880,23 @@ fn topbar(
     block(
         "topbar realm-header",
         vec![
-            block("topbar-left", vec![title]),
+            block(
+                "topbar-left",
+                vec![
+                    workspace_navigation_button(
+                        scope,
+                        context.clone(),
+                        scope.bond({
+                            let context = context.clone();
+                            move || {
+                                super::sidebar::workspace_list_kind(&context.route.get()).is_some()
+                                    || super::sidebar::has_page_columns(&context.route.get())
+                            }
+                        }),
+                    ),
+                    title,
+                ],
+            ),
             realm_navigation,
             block(
                 "actions",

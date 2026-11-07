@@ -9,10 +9,13 @@
   display: block; width: 100%; height: 100%; max-width: none; max-height: none;
   border-radius: 50%; object-fit: cover;
 }
-.agent-admin-list-row { grid-template-columns: 36px minmax(0, 1fr) auto auto; align-items: center; column-gap: 10px; }
+.agent-admin-list-row { grid-template-columns: 36px auto minmax(0, 1fr); align-items: center; column-gap: 10px; }
 .agent-admin-list-row > .agent-admin-row-avatar { width: 36px; height: 36px; }
-.agent-admin-row-title { min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-admin-row-id { grid-column: 1 / -1; text-align: left; }
+.agent-admin-list-row > .agent-admin-row-avatar { grid-row: 1 / span 2; }
+.agent-admin-row-title { grid-column: 2 / -1; grid-row: 1; min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-admin-list-row > :nth-child(3) { grid-column: 2; grid-row: 2; justify-self: start; }
+.agent-admin-list-row > :nth-child(4) { grid-column: 3; grid-row: 2; justify-self: start; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.agent-admin-row-id { grid-column: 1 / -1; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-admin-preset-copy { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 .agent-admin-preset-title, .agent-admin-section-title { font-weight: 700; }
 .agent-admin-preset-copy > .muted { white-space: normal; }

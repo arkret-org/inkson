@@ -169,69 +169,77 @@ pub(crate) fn page_with_header(
     let agents = controller.agents;
     let selected = controller.selected_agent_id;
     let create = controller.create_mode;
+    let query = scope.cage(String::new());
+    let list_header = {
+        let context = context.clone();
+        let refresh = state.controller.clone();
+        let refresh_context = context.clone();
+        let begin = state.clone();
+        crate::presentation::widgets::navigation_heading(
+            scope,
+            context.clone(),
+            "agents-navigation-search",
+            "settings.section.agents",
+            "agents.search",
+            query,
+            vec![
+                agent_icon_action(
+                    scope,
+                    context.clone(),
+                    "agent-admin-refresh-button",
+                    "Refresh agents",
+                    "refresh",
+                    "secondary",
+                    move || {
+                        refresh.clone().refresh_agents(
+                            refresh_context.base_url.get(),
+                            refresh_context.token.get(),
+                        )
+                    },
+                ),
+                agent_icon_action(
+                    scope,
+                    context.clone(),
+                    "agent-admin-create-open-button",
+                    "Create agent",
+                    "plus",
+                    "secondary",
+                    move || {
+                        begin.slug.revise(|value| value.clear());
+                        begin
+                            .controller
+                            .new_agent_avatar_blob_ref
+                            .revise(|value| value.clear());
+                        begin
+                            .controller
+                            .last_op_status
+                            .revise(|value| value.clear());
+                        begin
+                            .controller
+                            .provision_operation_id
+                            .revise(|value| *value = None);
+                        begin.controller.create_mode.revise(|value| *value = true);
+                        begin.context.workspace_navigation.open_detail();
+                    },
+                ),
+            ],
+        )
+    };
     let list_state = state.clone();
-    let list = reactive(
-        scope.bond(move || (agents.get(), selected.get(), create.get(), filter.get())),
-        move |scope, (rows, selected_id, is_create, current_filter)| {
+    let list_rows = reactive(
+        scope.bond(move || {
+            (
+                agents.get(),
+                selected.get(),
+                create.get(),
+                filter.get(),
+                query.get(),
+            )
+        }),
+        move |scope, (rows, selected_id, is_create, current_filter, query)| {
             let state = list_state.clone();
             let context = state.context.clone();
             let mut children = Vec::new();
-            let refresh = state.controller.clone();
-            let refresh_context = context.clone();
-            let begin = state.clone();
-            children.push(line(
-                "workspace-list-heading",
-                vec![
-                    heading(
-                        2,
-                        "workspace-list-title",
-                        context.translated(scope, "settings.section.agents"),
-                    ),
-                    line(
-                        "actions agent-admin-list-actions",
-                        vec![
-                            agent_icon_action(
-                                scope,
-                                context.clone(),
-                                "agent-admin-refresh-button",
-                                "Refresh agents",
-                                "refresh",
-                                "secondary",
-                                move || {
-                                    refresh.clone().refresh_agents(
-                                        refresh_context.base_url.get(),
-                                        refresh_context.token.get(),
-                                    )
-                                },
-                            ),
-                            agent_icon_action(
-                                scope,
-                                context.clone(),
-                                "agent-admin-create-open-button",
-                                "Create agent",
-                                "plus",
-                                if is_create { "primary" } else { "secondary" },
-                                move || {
-                                    begin.slug.revise(|value| value.clear());
-                                    begin
-                                        .controller
-                                        .new_agent_avatar_blob_ref
-                                        .revise(|value| value.clear());
-                                    begin
-                                        .controller
-                                        .last_op_status
-                                        .revise(|value| value.clear());
-                                    begin
-                                        .controller
-                                        .provision_operation_id
-                                        .revise(|value| *value = None);
-                                    begin.controller.create_mode.revise(|value| *value = true);
-                                },
-                            ),
-                        ],
-                    ),
-                ],
-            ));
             let mut filters = Vec::new();
             for (filter, label) in AGENT_LIST_FILTERS {
                 let navigate = context.clone();
@@ -265,9 +273,15 @@ pub(crate) fn page_with_header(
                 &crate::clock::now_timestamp(),
             );
             let mut agent_rows = Vec::new();
-            for agent in &view.visible_agents {
+            let query = query.trim().to_lowercase();
+            for agent in view.visible_agents.iter().filter(|agent| {
+                query.is_empty()
+                    || agent_slug_label(agent).to_lowercase().contains(&query)
+                    || agent_id(agent).to_lowercase().contains(&query)
+            }) {
                 let id = agent_id(agent);
                 let target = id.clone();
+                let navigation = context.workspace_navigation.clone();
                 let choose = state.controller.selected_agent_id;
                 let create = state.controller.create_mode;
                 let slug = agent_slug_label(agent);
@@ -328,11 +342,13 @@ pub(crate) fn page_with_header(
                         .on_press(move || {
                             create.revise(|value| *value = false);
                             choose.revise(|value| *value = target.clone());
+                            navigation.open_detail();
                         }),
                 ) as View);
             }
+            let empty = agent_rows.is_empty();
             children.push(stack("agent-admin-list-rows", agent_rows));
-            if view.visible_agents.is_empty() {
+            if empty {
                 children.push(paragraph(
                     "members-empty compact",
                     if view.has_any_agents {
@@ -342,7 +358,7 @@ pub(crate) fn page_with_header(
                     },
                 ));
             }
-            stack("event agent-admin-list-pane agent-admin-list", children)
+            stack("agent-admin-list-content", children)
         },
     );
     let detail_state = state.clone();
@@ -374,9 +390,18 @@ pub(crate) fn page_with_header(
         vec![line(
             "agent-admin-layout",
             vec![
-                list,
+                crate::presentation::widgets::workspace_pane(
+                    scope,
+                    &context,
+                    false,
+                    stack(
+                        "agent-admin-list-pane agent-admin-list",
+                        vec![list_header, list_rows],
+                    ),
+                ),
                 crate::presentation::widgets::workspace_detail(
                     scope,
+                    &context,
                     &header,
                     "agent-admin-detail-content",
                     stack(
@@ -538,6 +563,7 @@ fn creation(scope: &Scope, state: &AgentPage) -> View {
                                 .revise(|value| value.clear());
                             cancel.provision_operation_id.revise(|value| *value = None);
                             cancel.create_mode.revise(|value| *value = false);
+                            cancel.context.workspace_navigation.show_list();
                         },
                     ),
                 ],

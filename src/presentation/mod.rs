@@ -2,6 +2,7 @@
 mod context;
 mod state_store;
 pub mod widgets;
+pub mod workspace_navigation;
 
 pub use context::{BootState, InksonContext};
 pub use state_store::SharedStateStore;

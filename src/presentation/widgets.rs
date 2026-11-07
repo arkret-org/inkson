@@ -14,14 +14,145 @@ pub(crate) type WorkspaceHeader = Rc<dyn Fn(&Scope) -> View>;
 
 pub(crate) fn workspace_detail(
     scope: &Scope,
+    context: &Rc<InksonContext>,
     header: &WorkspaceHeader,
     class: &str,
     content: View,
 ) -> View {
-    Box::new(view().class("workspace-detail-column").fill(vec![
-        header(scope),
-        Box::new(view().class(class.to_owned()).fill(content)),
-    ]))
+    workspace_pane(
+        scope,
+        context,
+        true,
+        Box::new(view().class("workspace-detail-column").fill(vec![
+            header(scope),
+            Box::new(view().class(class.to_owned()).fill(content)),
+        ])),
+    )
+}
+
+pub(crate) fn workspace_pane(
+    scope: &Scope,
+    context: &Rc<InksonContext>,
+    detail: bool,
+    content: View,
+) -> View {
+    let navigation = context.workspace_navigation.clone();
+    let visible = scope.bond(move || navigation.pane_visible(detail));
+    Box::new(
+        view()
+            .class(scope.bond(move || {
+                format!(
+                    "workspace-pane workspace-pane-{}{}",
+                    if detail { "detail" } else { "list" },
+                    if visible.get() {
+                        " is-visible"
+                    } else {
+                        " is-hidden"
+                    }
+                )
+            }))
+            .semantics(scope.bond(move || {
+                Some(Box::new(glory::render::Semantics {
+                    hidden: !visible.get(),
+                    ..Default::default()
+                }))
+            }))
+            .fill(content),
+    )
+}
+
+pub(crate) fn navigation_heading(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    key: &'static str,
+    title: &'static str,
+    label: &'static str,
+    query: Cage<String>,
+    mut actions: Vec<View>,
+) -> View {
+    let input_label = context.translated(scope, label);
+    let count = actions.len() + 1;
+    let mut children = vec![
+        heading(2, "workspace-list-title", context.translated(scope, title)),
+        Box::new(
+            sapid::collapsible(key)
+                .unstyled()
+                .class("workspace-search-disclosure")
+                .label(input_label)
+                .default_open(!query.get_untracked().is_empty())
+                .trigger_content(|| crate::components::ui_icon("search"))
+                .on_open_change(move |open| {
+                    if !open {
+                        query.revise(|value| value.clear());
+                    }
+                })
+                .content(move || {
+                    sapid::text_field()
+                        .unstyled()
+                        .class("input workspace-search-input workspace-navigation-search-input")
+                        .name(input_label)
+                        .placeholder(input_label)
+                        .value(query)
+                        .on_value_change(move |next| query.revise(|value| *value = next))
+                }),
+        ) as View,
+    ];
+    children.append(&mut actions);
+    Box::new(view().class(format!("workspace-list-heading workspace-navigation-heading workspace-navigation-heading-{count}")).fill(children))
+}
+
+pub(crate) fn workspace_navigation_button(
+    _scope: &Scope,
+    context: Rc<InksonContext>,
+    active: Bond<bool>,
+) -> View {
+    reactive_distinct(active, move |scope, active| {
+        if !active {
+            return empty();
+        }
+        let navigation = context.workspace_navigation.clone();
+        let mobile = navigation.layout.mobile();
+        let expanded = navigation.list_expanded;
+        let label = scope.bond({
+            let context = context.clone();
+            move || {
+                context.tr(if mobile.get() {
+                    "workspace.back_to_list"
+                } else if expanded.get() {
+                    "workspace.collapse_list"
+                } else {
+                    "workspace.expand_list"
+                })
+            }
+        });
+        let icon = reactive_distinct(
+            scope.bond(move || (mobile.get(), expanded.get())),
+            |_, (mobile, expanded)| {
+                crate::components::ui_icon(if mobile {
+                    "chevron-left"
+                } else if expanded {
+                    "panel-left-close"
+                } else {
+                    "panel-left-open"
+                })
+            },
+        );
+        Box::new(
+            sapid::button()
+                .unstyled()
+                .class("btn icon workspace-navigation-button")
+                .name(label)
+                .pressed(scope.bond(move || !mobile.get() && !expanded.get()))
+                .fill(icon)
+                .on_press(move || {
+                    if mobile.get() {
+                        navigation.show_list();
+                    } else {
+                        expanded.revise(|value| *value = !*value);
+                    }
+                }),
+        ) as View
+    })
 }
 
 /// Internal routes publish history themselves and retain mounted application state.
@@ -315,19 +446,6 @@ pub fn resource_content<T: Clone + 'static>(
             )
         }
     })
-}
-
-pub(crate) fn navigation_search(label: impl Into<Vary<String>>, value: Cage<String>) -> View {
-    let label = label.into();
-    Box::new(
-        sapid::text_field()
-            .unstyled()
-            .class("input workspace-search-input")
-            .name(label.clone())
-            .placeholder(label)
-            .value(value)
-            .on_value_change(move |next| value.revise(|current| *current = next)),
-    )
 }
 
 pub fn input_field(

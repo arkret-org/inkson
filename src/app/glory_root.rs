@@ -456,7 +456,9 @@ fn install_browser_navigation(scope: &Scope, context: &Rc<InksonContext>) {
     let weak = Rc::downgrade(context);
     let callback = Closure::new(move |_: web_sys::Event| {
         if let Some(context) = weak.upgrade().filter(|context| context.route.is_alive()) {
-            context.route.revise(|route| *route = current_route());
+            let route = current_route();
+            context.workspace_navigation.navigate(&route);
+            context.route.revise(|current| *current = route);
         }
     });
     let target: web_sys::EventTarget = window.clone().into();

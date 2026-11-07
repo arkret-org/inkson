@@ -546,7 +546,7 @@ pub(crate) fn page_with_header(
         return crate::views::agents::page_with_header(scope, context, route, header);
     }
     let active_section = SettingsSection::from_slug(route.settings_section());
-    let nav_filter = scope.cage(String::new());
+    let nav_filter = context.workspace_navigation.settings_query;
     let nav_context = context.clone();
     let locale = context.locale;
     let nav = reactive(
@@ -697,41 +697,29 @@ pub(crate) fn page_with_header(
         vec![stack(
             "settings-shell",
             vec![
-                stack(
-                    "settings-sidebar-column",
-                    vec![
-                        line(
-                            "workspace-list-heading settings-navigation-heading",
-                            vec![heading(
-                                2,
-                                "workspace-list-title",
-                                context.translated(scope, "nav.settings"),
-                            ), Box::new(
-                                sapid::collapsible("settings-navigation-search")
-                                    .unstyled()
-                                    .class("settings-search-disclosure")
-                                    .label(context.translated(scope, "settings.search.label"))
-                                    .trigger_content(|| crate::components::ui_icon("search"))
-                                    .on_open_change(move |open| {
-                                        if !open { nav_filter.revise(|value| value.clear()); }
-                                    })
-                                    .content({
-                                        let label = context.translated(scope, "settings.search.placeholder");
-                                        move || sapid::text_field()
-                                            .unstyled()
-                                            .class("input workspace-search-input settings-nav-search-input")
-                                            .name(label)
-                                            .placeholder(label)
-                                            .value(nav_filter)
-                                            .on_value_change(move |next| nav_filter.revise(|value| *value = next))
-                                    }),
-                            )],
-                        ),
-                        nav,
-                    ],
+                crate::presentation::widgets::workspace_pane(
+                    scope,
+                    &context,
+                    false,
+                    stack(
+                        "settings-sidebar-column",
+                        vec![
+                            crate::presentation::widgets::navigation_heading(
+                                scope,
+                                context.clone(),
+                                "settings-navigation-search",
+                                "nav.settings",
+                                "settings.search.placeholder",
+                                nav_filter,
+                                vec![],
+                            ),
+                            nav,
+                        ],
+                    ),
                 ),
                 crate::presentation::widgets::workspace_detail(
                     scope,
+                    &context,
                     &header,
                     "settings-content-column",
                     content,

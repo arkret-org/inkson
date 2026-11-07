@@ -48,14 +48,16 @@ async fn publish_binding(
         .clone();
     let owned = record.clone();
     let check = fence.clone();
-    let binding = with_authed_sdk_client(
-        &record.principal_endpoint,
-        credential.to_owned(),
-        move |http| async move {
-            check_holder(&owned, &check)?;
-            crate::transport::account::submit_did_operation(&http, &body).await
-        },
-    )
+    let binding = crate::runtime::boxed_future_from(|| {
+        with_authed_sdk_client(
+            &record.principal_endpoint,
+            credential.to_owned(),
+            move |http| async move {
+                check_holder(&owned, &check)?;
+                crate::transport::account::submit_did_operation(&http, &body).await
+            },
+        )
+    })
     .await
     .map_err(|error| anyhow::anyhow!(error.display()))?;
     check_holder(record, fence)?;
@@ -83,17 +85,20 @@ async fn commit(
     );
     let owned = record.clone();
     let check = fence.clone();
-    let outcome = with_authed_sdk_client(
-        &record.principal_endpoint,
-        credential.to_owned(),
-        move |http| async move {
-            check_holder(&owned, &check)?;
-            let actor = arkret_sdk::ActorId::account(owned.authority.clone());
-            let producer = check.signer.publication_context(&actor)?;
-            let verified = arkret_sdk::VerifiedSubmission::verify(body, |_| Ok(producer.clone()))?;
-            Ok(http.agent_provision(&verified).await?)
-        },
-    )
+    let outcome = crate::runtime::boxed_future_from(|| {
+        with_authed_sdk_client(
+            &record.principal_endpoint,
+            credential.to_owned(),
+            move |http| async move {
+                check_holder(&owned, &check)?;
+                let actor = arkret_sdk::ActorId::account(owned.authority.clone());
+                let producer = check.signer.publication_context(&actor)?;
+                let verified =
+                    arkret_sdk::VerifiedSubmission::verify(body, |_| Ok(producer.clone()))?;
+                Ok(http.agent_provision(&verified).await?)
+            },
+        )
+    })
     .await
     .map_err(|error| anyhow::anyhow!(error.display()))?;
     check_holder(record, fence)?;
@@ -138,7 +143,16 @@ async fn commit(
     Ok(outcome)
 }
 
-pub(crate) async fn resume_ceremony(
+pub(crate) fn resume_ceremony(
+    record: ProvisionCeremony,
+    evidence: crate::state::RecoveryMaterialEvidence,
+    credential: String,
+) -> impl std::future::Future<Output = anyhow::Result<AgentProvisionComplete>> {
+    // Keep the durable ceremony's poll frame out of every UI and retry caller.
+    crate::runtime::boxed_future_from(|| resume_ceremony_inner(record, evidence, credential))
+}
+
+async fn resume_ceremony_inner(
     mut record: ProvisionCeremony,
     evidence: crate::state::RecoveryMaterialEvidence,
     credential: String,
@@ -163,7 +177,8 @@ pub(crate) async fn resume_ceremony(
     );
     let base = record.principal_endpoint.clone();
     if let Some(outcome) = record.outcome.clone() {
-        finish_profile(record, &vault, &credential, &fence).await?;
+        crate::runtime::boxed_future_from(|| finish_profile(record, &vault, &credential, &fence))
+            .await?;
         return Ok(outcome);
     }
     if record.preparation.is_none() {
@@ -174,9 +189,11 @@ pub(crate) async fn resume_ceremony(
         let body = record.inception.submit_body.clone();
         let owned = record.clone();
         let check = fence.clone();
-        let outcome = with_authed_sdk_client(&base, credential.clone(), move |http| async move {
-            check_holder(&owned, &check)?;
-            crate::transport::account::submit_did_operation(&http, &body).await
+        let outcome = crate::runtime::boxed_future_from(|| {
+            with_authed_sdk_client(&base, credential.clone(), move |http| async move {
+                check_holder(&owned, &check)?;
+                crate::transport::account::submit_did_operation(&http, &body).await
+            })
         })
         .await
         .map_err(|error| anyhow::anyhow!(error.display()))?;
@@ -199,7 +216,7 @@ pub(crate) async fn resume_ceremony(
             });
         let owned = record.clone();
         let check = fence.clone();
-        let preparation =
+        let preparation = crate::runtime::boxed_future_from(|| {
             with_authed_sdk_client(&base, credential.clone(), move |http| async move {
                 check_holder(&owned, &check)?;
                 Ok(http
@@ -209,15 +226,17 @@ pub(crate) async fn resume_ceremony(
                     )?)
                     .await?)
             })
-            .await
-            .map_err(|error| anyhow::anyhow!(error.display()))?;
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!(error.display()))?;
         check_holder(&record, &fence)?;
         let AgentProvisionResponseBody::AwaitingControllerEvent(preparation) = preparation else {
             anyhow::bail!("unfrozen provision returned an already committed allocation")
         };
         let mut next = record.clone();
         next.preparation = Some(preparation);
-        record = vault.advance_agent_provision(&record, next).await?;
+        record = crate::runtime::boxed_future_from(|| vault.advance_agent_provision(&record, next))
+            .await?;
     }
     if record.authored.is_none() {
         let prepared = record
@@ -232,9 +251,11 @@ pub(crate) async fn resume_ceremony(
         let verified = evidence.clone();
         let owned = record.clone();
         let check = fence.clone();
-        with_authed_api(&base, credential.clone(), move |api| async move {
-            check_holder(&owned, &check)?;
-            crate::recovery_flow::verify_recovery_authority_evidence(&api, &verified).await
+        crate::runtime::boxed_future_from(|| {
+            with_authed_api(&base, credential.clone(), move |api| async move {
+                check_holder(&owned, &check)?;
+                crate::recovery_flow::verify_recovery_authority_evidence(&api, &verified).await
+            })
         })
         .await
         .map_err(|error| anyhow::anyhow!(error.display()))?;
@@ -242,7 +263,7 @@ pub(crate) async fn resume_ceremony(
         let owned = record.clone();
         let allocation = prepared.clone();
         let check = fence.clone();
-        let genesis =
+        let genesis = crate::runtime::boxed_future_from(|| {
             with_event_submitter(&base, credential.clone(), move |submitter| async move {
                 check_holder(&owned, &check)?;
                 let describe = submitter.service_describe().await?;
@@ -263,8 +284,9 @@ pub(crate) async fn resume_ceremony(
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("frozen Agent genesis is missing"))
             })
-            .await
-            .map_err(|error| anyhow::anyhow!(error.display()))?;
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!(error.display()))?;
         check_holder(&record, &fence)?;
         let digest = arkret_signatures::agent::agent_requested_scope_digest(
             &prepared.agent_id,
@@ -290,7 +312,7 @@ pub(crate) async fn resume_ceremony(
         let controller_create = evidence.pcr_genesis_unit.create().clone();
         let owned = record.clone();
         let check = fence.clone();
-        let provision =
+        let provision = crate::runtime::boxed_future_from(|| {
             with_event_submitter(&base, credential.clone(), move |submitter| async move {
                 check_holder(&owned, &check)?;
                 let events = submitter.author_independent_events(vec![intent]).await?;
@@ -302,8 +324,9 @@ pub(crate) async fn resume_ceremony(
                     &controller_create,
                 )
             })
-            .await
-            .map_err(|error| anyhow::anyhow!(error.display()))?;
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!(error.display()))?;
         check_holder(&record, &fence)?;
         let mut next = record.clone();
         next.authored = Some(AuthoredProvision {
@@ -322,14 +345,16 @@ pub(crate) async fn resume_ceremony(
             },
             genesis,
         });
-        record = vault.advance_agent_provision(&record, next).await?;
+        record = crate::runtime::boxed_future_from(|| vault.advance_agent_provision(&record, next))
+            .await?;
     }
     // A lost accepted DID response still owes its exact operation replay.
     // Replay it before a complete commit outcome can close the local journal.
     if record.binding_operation.is_some() && record.outcome.is_none() {
-        publish_binding(&record, &credential, &fence).await?;
+        crate::runtime::boxed_future_from(|| publish_binding(&record, &credential, &fence)).await?;
     }
-    let mut outcome = commit(&record, &credential, &fence).await?;
+    let mut outcome =
+        crate::runtime::boxed_future_from(|| commit(&record, &credential, &fence)).await?;
     if matches!(outcome, AgentProvisionResponseBody::AwaitingPcrGenesis(_)) {
         let genesis = record
             .authored
@@ -339,16 +364,19 @@ pub(crate) async fn resume_ceremony(
             .clone();
         let owned = record.clone();
         let check = fence.clone();
-        with_event_submitter(&base, credential.clone(), move |submitter| async move {
-            check_holder(&owned, &check)?;
-            submitter
-                .submit_signed_sdk_events_in_order(std::slice::from_ref(&genesis))
-                .await
-                .map(|_| ())
+        crate::runtime::boxed_future_from(|| {
+            with_event_submitter(&base, credential.clone(), move |submitter| async move {
+                check_holder(&owned, &check)?;
+                submitter
+                    .submit_signed_sdk_events_in_order(std::slice::from_ref(&genesis))
+                    .await
+                    .map(|_| ())
+            })
         })
         .await
         .map_err(|error| anyhow::anyhow!(error.display()))?;
-        outcome = commit(&record, &credential, &fence).await?;
+        outcome =
+            crate::runtime::boxed_future_from(|| commit(&record, &credential, &fence)).await?;
     }
     if matches!(outcome, AgentProvisionResponseBody::AwaitingDidBinding(_)) {
         if record.binding_operation.is_none() {
@@ -371,10 +399,13 @@ pub(crate) async fn resume_ceremony(
             )?;
             let mut next = record.clone();
             next.binding_operation = Some(binding.submit_body);
-            record = vault.advance_agent_provision(&record, next).await?;
+            record =
+                crate::runtime::boxed_future_from(|| vault.advance_agent_provision(&record, next))
+                    .await?;
         }
-        publish_binding(&record, &credential, &fence).await?;
-        outcome = commit(&record, &credential, &fence).await?;
+        crate::runtime::boxed_future_from(|| publish_binding(&record, &credential, &fence)).await?;
+        outcome =
+            crate::runtime::boxed_future_from(|| commit(&record, &credential, &fence)).await?;
     }
     let AgentProvisionResponseBody::Complete(outcome) = outcome else {
         anyhow::bail!("Agent ceremony remains pending at its current authority stage")
@@ -382,8 +413,10 @@ pub(crate) async fn resume_ceremony(
     check_holder(&record, &fence)?;
     let mut next = record.clone();
     next.outcome = Some(outcome.clone());
-    record = vault.advance_agent_provision(&record, next).await?;
-    finish_profile(record, &vault, &credential, &fence).await?;
+    record =
+        crate::runtime::boxed_future_from(|| vault.advance_agent_provision(&record, next)).await?;
+    crate::runtime::boxed_future_from(|| finish_profile(record, &vault, &credential, &fence))
+        .await?;
     Ok(outcome)
 }
 
@@ -400,61 +433,66 @@ async fn finish_profile(
     if record.profile_event.is_none() {
         let owned = record.clone();
         let check = fence.clone();
-        let event = with_event_submitter(
-            &record.principal_endpoint,
-            credential.to_owned(),
-            move |submitter| async move {
-                check_holder(&owned, &check)?;
-                let events = submitter
-                    .author_independent_events(vec![owned.profile_intent()?])
-                    .await?;
-                check_holder(&owned, &check)?;
-                events
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("Agent profile authoring returned no Event"))
-            },
-        )
+        let event = crate::runtime::boxed_future_from(|| {
+            with_event_submitter(
+                &record.principal_endpoint,
+                credential.to_owned(),
+                move |submitter| async move {
+                    check_holder(&owned, &check)?;
+                    let events = submitter
+                        .author_independent_events(vec![owned.profile_intent()?])
+                        .await?;
+                    check_holder(&owned, &check)?;
+                    events
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("Agent profile authoring returned no Event"))
+                },
+            )
+        })
         .await
         .map_err(|error| anyhow::anyhow!(error.display()))?;
         check_holder(&record, fence)?;
         let mut next = record.clone();
         next.profile_event = Some(event);
-        record = vault.advance_agent_provision(&record, next).await?;
+        record = crate::runtime::boxed_future_from(|| vault.advance_agent_provision(&record, next))
+            .await?;
     }
     let owned = record.clone();
     let check = fence.clone();
-    let commit = with_event_submitter(
-        &record.principal_endpoint,
-        credential.to_owned(),
-        move |submitter| async move {
-            check_holder(&owned, &check)?;
-            let event = owned
-                .profile_event
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Agent avatar lost its signed original"))?;
-            let result = submitter
-                .submit_signed_sdk_events_in_order(std::slice::from_ref(event))
-                .await?;
-            check_holder(&owned, &check)?;
-            let result = result
-                .into_iter()
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("Agent profile returned no result"))?;
-            anyhow::ensure!(
-                result.is_committed() && result.event_id == event.event_id.as_str(),
-                "Agent profile is not exactly accepted"
-            );
-            result
-                .commit
-                .ok_or_else(|| anyhow::anyhow!("Agent profile has no accepted Commit"))
-        },
-    )
+    let commit = crate::runtime::boxed_future_from(|| {
+        with_event_submitter(
+            &record.principal_endpoint,
+            credential.to_owned(),
+            move |submitter| async move {
+                check_holder(&owned, &check)?;
+                let event = owned
+                    .profile_event
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Agent avatar lost its signed original"))?;
+                let result = submitter
+                    .submit_signed_sdk_events_in_order(std::slice::from_ref(event))
+                    .await?;
+                check_holder(&owned, &check)?;
+                let result = result
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("Agent profile returned no result"))?;
+                anyhow::ensure!(
+                    result.is_committed() && result.event_id == event.event_id.as_str(),
+                    "Agent profile is not exactly accepted"
+                );
+                result
+                    .commit
+                    .ok_or_else(|| anyhow::anyhow!("Agent profile has no accepted Commit"))
+            },
+        )
+    })
     .await
     .map_err(|error| anyhow::anyhow!(error.display()))?;
     check_holder(&record, fence)?;
     let mut next = record.clone();
     next.profile_commit = Some(commit);
-    vault.advance_agent_provision(&record, next).await?;
+    crate::runtime::boxed_future_from(|| vault.advance_agent_provision(&record, next)).await?;
     Ok(())
 }
