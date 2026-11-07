@@ -466,9 +466,9 @@
   border-top: 1px solid var(--border, var(--ak-line));
   background: var(--surface-solid, var(--surface, var(--ak-surface)));
 }
-.card-detail-field-list > div:has(.card-detail-calendar) {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 6px;
+.card-detail-field-list.semantic-card-fields > dt:has(+ dd .card-detail-calendar),
+.card-detail-field-list.semantic-card-fields > dd:has(.card-detail-calendar) {
+  grid-column: 1 / -1;
 }
 .card-detail-calendar,
 .calendar-summary {
@@ -502,6 +502,7 @@
 }
 .calendar-agenda-item {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 2px;
   padding: 6px 8px;
   border: 1px solid var(--border, var(--ak-line));

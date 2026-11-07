@@ -278,7 +278,7 @@ html, body, #app { min-width: 0; min-height: 100%; }
 .card-detail-sidebar[style*="display: block"]{display:grid!important;}
 .card-detail-main{grid-template-rows:auto auto minmax(0,1fr);}
 .card-detail-tab-panel{min-width:0;min-height:0;}
-.card-synthesis-entry-head,.calendar-summary-row,.calendar-agenda-item{display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
+.card-synthesis-entry-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
 .card-detail-edit-controls,.card-detail-form-actions,.assignee-picker-actions,.due-date-actions,.calendar-rsvp-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
 .assignee-picker{display:grid;gap:8px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);}
 .assignee-picker-list{display:grid;gap:6px;max-height:260px;overflow:auto;}
