@@ -2734,13 +2734,16 @@ impl EventSubmitter {
             match outbound
                 .submit_next_checked(&authority_client, &options, |request| async move {
                     check_send().map_err(|error| error.to_string())?;
-                    self.ensure_creator_quarantine_replay_fence(&request)
-                        .await
-                        .map_err(|error| error.to_string())?;
-                    if let Some(decision) = self
-                        .ensure_creator_genesis_replay_gate(&request)
-                        .await
-                        .map_err(|error| error.to_string())?
+                    crate::runtime::boxed_future_from(|| {
+                        self.ensure_creator_quarantine_replay_fence(&request)
+                    })
+                    .await
+                    .map_err(|error| error.to_string())?;
+                    if let Some(decision) = crate::runtime::boxed_future_from(|| {
+                        self.ensure_creator_genesis_replay_gate(&request)
+                    })
+                    .await
+                    .map_err(|error| error.to_string())?
                     {
                         replay_store
                             .remember_creator_absence_guarded(
@@ -2749,9 +2752,11 @@ impl EventSubmitter {
                             )
                             .map_err(|error| error.to_string())?;
                     }
-                    self.ensure_queued_application_send_gate(&request)
-                        .await
-                        .map_err(|error| error.to_string())?;
+                    crate::runtime::boxed_future_from(|| {
+                        self.ensure_queued_application_send_gate(&request)
+                    })
+                    .await
+                    .map_err(|error| error.to_string())?;
                     check_send().map_err(|error| error.to_string())?;
                     self.verify_publication(request)
                         .map_err(|error| error.to_string())

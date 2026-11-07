@@ -258,7 +258,7 @@ impl EventSubmitter {
         use arkret_models_collaboration::mls_creator_bootstrap::{
             MlsCreatorBootstrapDeviceAuthority, MlsCreatorBootstrapGovernanceEvidence,
         };
-        self.persist_creator_realm_acceptance(scope).await?;
+        crate::runtime::boxed_future_from(|| self.persist_creator_realm_acceptance(scope)).await?;
         let owner = arkret_sdk::ActorId::account(self.authority()?.clone());
         let store = self.outbound(OutboundLane::Standard)?.store().clone();
         let record = store
@@ -334,7 +334,7 @@ impl EventSubmitter {
         crate::mls::runtime::InitialMlsCheckpointSummary,
     )> {
         use arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapEpochZero;
-        self.persist_creator_governance_pin(scope).await?;
+        crate::runtime::boxed_future_from(|| self.persist_creator_governance_pin(scope)).await?;
         let owner = arkret_sdk::ActorId::account(self.authority()?.clone());
         let vault = self.outbound(OutboundLane::Standard)?.store().clone();
         let mut record = vault

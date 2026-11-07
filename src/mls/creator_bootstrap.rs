@@ -370,6 +370,8 @@ async fn converge_accepted_creator_genesis(
 
 /// Explicitly start MLS after Realm creation. This does not change the
 /// `ak.realm.create` payload; only an accepted Genesis activates the scope.
+/// Allocate the recovery future through a factory: the create UI, bootstrap,
+/// durable FSM and vault decoder otherwise exceed the browser's WASM stack.
 pub(crate) async fn start_creator_realm_mls_genesis(
     api: &crate::transport::TransportClient,
     state_store: &StateStoreHandle,
@@ -377,15 +379,17 @@ pub(crate) async fn start_creator_realm_mls_genesis(
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<(), String> {
-    bootstrap_creator_realm_mls_genesis(
-        api,
-        state_store,
-        realm_id,
-        authority,
-        device_id,
-        true,
-        false,
-    )
+    crate::runtime::boxed_future_from(|| {
+        bootstrap_creator_realm_mls_genesis(
+            api,
+            state_store,
+            realm_id,
+            authority,
+            device_id,
+            true,
+            false,
+        )
+    })
     .await
 }
 
@@ -398,15 +402,17 @@ pub(crate) async fn retry_creator_realm_mls_genesis(
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<(), String> {
-    bootstrap_creator_realm_mls_genesis(
-        api,
-        state_store,
-        realm_id,
-        authority,
-        device_id,
-        true,
-        true,
-    )
+    crate::runtime::boxed_future_from(|| {
+        bootstrap_creator_realm_mls_genesis(
+            api,
+            state_store,
+            realm_id,
+            authority,
+            device_id,
+            true,
+            true,
+        )
+    })
     .await
 }
 
@@ -421,15 +427,17 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<(), String> {
-    bootstrap_creator_realm_mls_genesis(
-        api,
-        state_store,
-        realm_id,
-        authority,
-        device_id,
-        false,
-        false,
-    )
+    crate::runtime::boxed_future_from(|| {
+        bootstrap_creator_realm_mls_genesis(
+            api,
+            state_store,
+            realm_id,
+            authority,
+            device_id,
+            false,
+            false,
+        )
+    })
     .await
 }
 
@@ -475,14 +483,16 @@ pub(crate) async fn ensure_creator_circle_mls_genesis(
     // The original closed creator intent is independently verified by the
     // durable FSM. A parent detail panel invalidation cannot gate its replay.
     let submitter = submitter.for_founding_realm(scope.realm_id().clone());
-    resume_durable_scope_creator(
-        api,
-        state_store,
-        &submitter,
-        scope,
-        authority,
-        explicit_retry,
-    )
+    crate::runtime::boxed_future_from(|| {
+        resume_durable_scope_creator(
+            api,
+            state_store,
+            &submitter,
+            scope,
+            authority,
+            explicit_retry,
+        )
+    })
     .await
 }
 
@@ -568,18 +578,21 @@ async fn resume_durable_scope_creator(
     .map_err(|error| format!("persist existing MLS root: {error}"))?;
     // Resolve the exact winner before restoring or authoring anything.
     // The original pin is immutable; unavailable evidence cannot mint.
-    submitter
-        .persist_creator_governance_pin(scope)
+    // Keep the durable phases out of this poll frame, including the temporary
+    // used to construct each future. Cancellation and the original FSM remain
+    // owned by the caller; a boundary does not spawn independent work.
+    crate::runtime::boxed_future_from(|| submitter.persist_creator_governance_pin(scope))
         .await
         .map_err(|error| format!("persist creator pin: {error}"))?;
     let mut accepted = submitter
         .reconcile_creator_genesis(scope)
         .await
         .map_err(|error| format!("verify exact creator Genesis: {error}"))?;
-    let (record, summary) = submitter
-        .persist_creator_epoch_zero(scope, secure_store.as_ref())
-        .await
-        .map_err(|error| format!("restore committed creator epoch zero: {error}"))?;
+    let (record, summary) = crate::runtime::boxed_future_from(|| {
+        submitter.persist_creator_epoch_zero(scope, secure_store.as_ref())
+    })
+    .await
+    .map_err(|error| format!("restore committed creator epoch zero: {error}"))?;
     if accepted.is_none() {
         crate::mls::runtime::upload_mls_genesis_public_material(api, &summary)
             .await
@@ -589,7 +602,8 @@ async fn resume_durable_scope_creator(
                     error.user_message()
                 )
             })?;
-        let result = submitter.submit_creator_genesis(record).await;
+        let result =
+            crate::runtime::boxed_future_from(|| submitter.submit_creator_genesis(record)).await;
         // Even a lost response is settled only by exact verified bytes.
         accepted = submitter
             .reconcile_creator_genesis(scope)
@@ -606,10 +620,11 @@ async fn resume_durable_scope_creator(
         }
     }
     let accepted = accepted.ok_or_else(|| "creator exact acceptance missing".to_owned())?;
-    submitter
-        .converge_creator_artifacts(scope, secure_store.as_ref())
-        .await
-        .map_err(|error| format!("install exact creator artifacts: {error}"))?;
+    crate::runtime::boxed_future_from(|| {
+        submitter.converge_creator_artifacts(scope, secure_store.as_ref())
+    })
+    .await
+    .map_err(|error| format!("install exact creator artifacts: {error}"))?;
     publish_accepted_scope_creator_genesis(state_store, scope, &accepted).await?;
     submitter
         .publish_creator_ready(scope, secure_store.as_ref())
@@ -670,16 +685,21 @@ async fn bootstrap_creator_realm_mls_genesis(
             submitter.ensure_creator_realm_default_discussion(scope.realm_id()).await
                 .map_err(|error| format!("resume creator default discussion: {error}"))?;
         }
-        return resume_durable_scope_creator(
-            api,
-            state_store,
-            &submitter,
-            &scope,
-            authority,
-            explicit_retry,
-        )
+        return crate::runtime::boxed_future_from(|| {
+            resume_durable_scope_creator(
+                api,
+                state_store,
+                &submitter,
+                &scope,
+                authority,
+                explicit_retry,
+            )
+        })
         .await;
     }
+    // The staged-checkpoint recovery path has large authoring futures of its
+    // own. It must not inflate the poll frame of the durable-intent path.
+    crate::runtime::boxed_future_from(|| async {
     // An accepted Genesis is the authoritative completion record. Resolve it,
     // or drain its byte-identical durable queue item, before reading or
     // rebuilding any pre-Genesis proposal, proof, or epoch-0 authoring state.
@@ -979,6 +999,7 @@ async fn bootstrap_creator_realm_mls_genesis(
     }
 
     Ok(())
+    }).await
 }
 
 /// Confirm that this device's durable MLS epoch names the accepted transition
