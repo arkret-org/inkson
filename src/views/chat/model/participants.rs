@@ -430,11 +430,83 @@ pub(crate) fn display_label_for_actor(
     {
         return label;
     }
-    participants
+    if let Some(participant) = participants
         .iter()
         .find(|participant| participant.roster_key() == actor_id)
-        .and_then(participant_sender_label)
-        .unwrap_or_else(|| crate::views::helpers::actor_display_label(state_store, actor_id))
+    {
+        return participant_roster_display_label(state_store, participant);
+    }
+    if let Ok(actor) = serde_json::from_str::<arkret_sdk::ActorId>(actor_id) {
+        return match actor.as_account_id() {
+            Some(account) => crate::views::helpers::account_display_label(state_store, account),
+            None => crate::views::helpers::actor_display_label(
+                state_store,
+                actor.signing_principal_id().as_str(),
+            ),
+        };
+    }
+    crate::views::helpers::actor_display_label(state_store, actor_id)
+}
+
+#[cfg(test)]
+#[test]
+fn unresolved_presence_uses_the_identity_ladder_with_or_without_a_roster_row() {
+    let store = LocalStateStore::default();
+    let principal = "ak:did_core:web:unresolved-presence-member.example";
+    let actor = crate::mls_api_helpers::local_account_actor_id(principal).unwrap();
+    let key =
+        String::from_utf8(arkret_sdk::canonical::canonical_json_bytes(&actor).unwrap()).unwrap();
+    let expected =
+        crate::views::helpers::account_display_label(&store, actor.as_account_id().unwrap());
+    assert!(!expected.starts_with('{'));
+    let labels = std::collections::BTreeMap::new();
+    assert_eq!(
+        display_label_for_actor(&store, &[], &labels, &key),
+        expected
+    );
+    let mut participants = Vec::new();
+    upsert_participant(
+        &mut participants,
+        &actor,
+        SpaceParticipantRole::Member,
+        "ak:did_core:web:viewer.example",
+        None,
+        None,
+    );
+    assert_eq!(
+        display_label_for_actor(&store, &participants, &labels, &key),
+        expected
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn presence_live_labels_remain_scoped_to_the_complete_actor() {
+    let store = LocalStateStore::default();
+    let local = crate::mls_api_helpers::local_account_actor_id(
+        "ak:did_core:web:presence-station-isolation.example",
+    )
+    .unwrap();
+    let remote = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        local.signing_principal_id().clone(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:remote-station.example").unwrap(),
+    ));
+    let key = |actor: &arkret_sdk::ActorId| {
+        String::from_utf8(arkret_sdk::canonical::canonical_json_bytes(actor).unwrap()).unwrap()
+    };
+    let labels = std::collections::BTreeMap::from([(key(&local), "Local member".to_owned())]);
+    assert_eq!(
+        display_label_for_actor(&store, &[], &labels, &key(&local)),
+        "Local member"
+    );
+    assert_eq!(
+        display_label_for_actor(&store, &[], &labels, &key(&remote)),
+        crate::views::helpers::account_display_label(&store, remote.as_account_id().unwrap())
+    );
+    assert_ne!(
+        display_label_for_actor(&store, &[], &labels, &key(&remote)),
+        "Local member"
+    );
 }
 
 pub(crate) fn is_own_message_sender(sender: &str, principal_id: &str) -> bool {
@@ -534,7 +606,17 @@ pub(crate) fn participant_roster_display_label(
         return agent_member_label(participant);
     }
     participant_sender_label(participant).unwrap_or_else(|| {
-        crate::views::helpers::actor_display_label(state_store, participant.principal_id.as_str())
+        match participant
+            .actor_id
+            .as_ref()
+            .and_then(arkret_sdk::ActorId::as_account_id)
+        {
+            Some(account) => crate::views::helpers::account_display_label(state_store, account),
+            None => crate::views::helpers::actor_display_label(
+                state_store,
+                participant.principal_id.as_str(),
+            ),
+        }
     })
 }
 

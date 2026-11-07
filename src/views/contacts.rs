@@ -1829,73 +1829,71 @@ fn contacts_panel_with_header(
                 return list;
             }
             let detail_context = ctx.clone();
-            let detail =
-                crate::presentation::widgets::reactive_distinct(selected, move |scope, id| {
-                    match rows
-                        .iter()
-                        .find(|row| row.peer.contact_actor_id().to_string() == id)
-                    {
-                        Some(row) => contact_row(
-                            scope,
-                            detail_context.clone(),
-                            row.clone(),
-                            false,
-                            Rc::new(move |_| reload.revise(|v| *v += 1)),
-                        ),
-                        None => {
-                            let Some(agent) = agents.iter().find(|agent| agent.key == id) else {
-                                return empty();
-                            };
-                            let opening = scope.cage(None::<String>);
-                            let ctx = detail_context.clone();
-                            let target = agent.target.clone();
-                            let key = agent.key.clone();
-                            stack(
-                                "event contact-row contact-agent-detail",
-                                vec![
-                                    line(
-                                        "event-head",
-                                        vec![
-                                            heading(2, "", agent.label.clone()),
-                                            plain(ctx.translated(
-                                                scope,
-                                                if agent.own {
-                                                    "contacts.my_agent"
-                                                } else {
-                                                    "app.sidebar.agent_badge"
-                                                },
-                                            )),
-                                        ],
-                                    ),
-                                    paragraph("muted", agent.identity.clone()),
-                                    line(
-                                        "actions contact-agent-actions",
-                                        vec![action(
+            crate::presentation::widgets::reactive_distinct(selected, move |scope, id| {
+                match rows
+                    .iter()
+                    .find(|row| row.peer.contact_actor_id().to_string() == id)
+                {
+                    Some(row) => contact_row(
+                        scope,
+                        detail_context.clone(),
+                        row.clone(),
+                        false,
+                        Rc::new(move |_| reload.revise(|v| *v += 1)),
+                    ),
+                    None => {
+                        let Some(agent) = agents.iter().find(|agent| agent.key == id) else {
+                            return empty();
+                        };
+                        let opening = scope.cage(None::<String>);
+                        let ctx = detail_context.clone();
+                        let target = agent.target.clone();
+                        let key = agent.key.clone();
+                        stack(
+                            "event contact-row contact-agent-detail",
+                            vec![
+                                line(
+                                    "event-head",
+                                    vec![
+                                        heading(2, "", agent.label.clone()),
+                                        plain(ctx.translated(
                                             scope,
-                                            ctx.clone(),
-                                            "contact-agent-message",
-                                            "contacts.action.message",
-                                            "primary",
-                                            scope.bond(move || opening.get().is_none()),
-                                            move || {
-                                                opening.revise(|value| *value = Some(key.clone()));
-                                                crate::app::direct_open::open_direct_conversation(
-                                                    ctx.clone(),
-                                                    ctx.base_url.get(),
-                                                    ctx.token.get(),
-                                                    ctx.state_store.clone(),
-                                                    opening,
-                                                    target.clone(),
-                                                );
+                                            if agent.own {
+                                                "contacts.my_agent"
+                                            } else {
+                                                "app.sidebar.agent_badge"
                                             },
-                                        )],
-                                    ),
-                                ],
-                            )
-                        }
+                                        )),
+                                    ],
+                                ),
+                                paragraph("muted", agent.identity.clone()),
+                                line(
+                                    "actions contact-agent-actions",
+                                    vec![action(
+                                        scope,
+                                        ctx.clone(),
+                                        "contact-agent-message",
+                                        "contacts.action.message",
+                                        "primary",
+                                        scope.bond(move || opening.get().is_none()),
+                                        move || {
+                                            opening.revise(|value| *value = Some(key.clone()));
+                                            crate::app::direct_open::open_direct_conversation(
+                                                ctx.clone(),
+                                                ctx.base_url.get(),
+                                                ctx.token.get(),
+                                                ctx.state_store.clone(),
+                                                opening,
+                                                target.clone(),
+                                            );
+                                        },
+                                    )],
+                                ),
+                            ],
+                        )
                     }
-                });
-            detail
+                }
+            })
         })
     };
     let body = if advanced {

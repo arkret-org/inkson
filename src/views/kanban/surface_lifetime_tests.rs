@@ -96,6 +96,7 @@ async fn accepted_card_updates_keep_the_open_card_composer_and_save_button() {
         cards: Vec::new(),
         state: SpaceContainerLifecycleState::Active,
     }]);
+    let write_ready = scope.cage(true);
     let board = Board {
         app: context,
         controller,
@@ -107,15 +108,65 @@ async fn accepted_card_updates_keep_the_open_card_composer_and_save_button() {
         device: account.device_id,
         columns: scope.bond(move || columns.get()),
         security: scope.bond(|| Some(false)),
-        ready: scope.bond(|| true),
+        ready: scope.bond(move || write_ready.get()),
         synthesis: scope.bond(Vec::new),
         page: scope.cage(0),
     };
     app.mount(widget(move |scope| {
-        board_grid(scope, board.clone()).build(scope)
+        board_allowed(scope, board.clone()).build(scope)
     }))
     .unwrap();
     pump(&app, &executor);
+    let list_input = nodes(&app, "new-column-input")[0];
+    write_ready.revise(|ready| *ready = false);
+    pump(&app, &executor);
+    let revision = {
+        let tree = app.tree();
+        let glory::render::Props::Input(props) =
+            tree.node(list_input).unwrap().descriptor.view().props
+        else {
+            panic!("real List draft input")
+        };
+        assert!(
+            props.enabled,
+            "current refresh pauses submission, not local draft input"
+        );
+        props.revision
+    };
+    app.dispatch(
+        list_input,
+        glory::render::Event::ValueChanged {
+            value: "Next local List".into(),
+            composing: false,
+            revision,
+        },
+    )
+    .unwrap();
+    pump(&app, &executor);
+    assert_eq!(
+        controller.new_column_title.get_untracked(),
+        "Next local List"
+    );
+    let submit = nodes(&app, "add-column-button")[0];
+    {
+        let tree = app.tree();
+        let glory::render::Props::Button(button) =
+            tree.node(submit).unwrap().descriptor.view().props
+        else {
+            panic!("real List submit control")
+        };
+        assert!(
+            !button.enabled,
+            "the current authority gate still blocks submission"
+        );
+    }
+    write_ready.revise(|ready| *ready = true);
+    pump(&app, &executor);
+    assert_eq!(nodes(&app, "new-column-input"), vec![list_input]);
+    assert_eq!(
+        controller.new_column_title.get_untracked(),
+        "Next local List"
+    );
     let input = nodes(&app, "new-card-title-input");
     let save = nodes(&app, "save-card-button");
     assert_eq!(input.len(), 1);

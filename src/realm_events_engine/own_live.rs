@@ -953,6 +953,15 @@ async fn install_live_cut<F: Fn() -> bool>(
     .await
     .map_err(crate::state::current_index::current_stage_error)?;
     guard().map_err(crate::state::current_index::current_stage_error)?;
+    projector
+        .state_store
+        .read(|store| {
+            for page in pages {
+                crate::identity::metadata::retain_accepted_page_metadata(store, page)?;
+            }
+            Ok::<_, String>(())
+        })
+        .map_err(protocol)?;
     Ok(InstalledLiveCut {
         changed,
         current_changed,

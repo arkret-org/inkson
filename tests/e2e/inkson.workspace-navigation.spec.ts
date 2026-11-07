@@ -1,11 +1,24 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { byClass, registerStrandsBeforeEach, gotoAndDismissRecovery, dismissBlockingRecoveryModal } from "./strandsHarness";
 
 registerStrandsBeforeEach({ emptyBoard: true });
 test.use({ screenshot: "only-on-failure" });
 
+async function expectInstantList(list: Locator) {
+  await expect(list).toBeVisible();
+  await expect(list).toHaveCSS("animation-name", "none");
+  expect(await list.evaluate(root => [root, ...root.querySelectorAll("*")]
+    .filter(element => getComputedStyle(element).animationName.includes("workspace-detail-enter"))
+    .map(element => element.className))).toEqual([]);
+}
+
 for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }, { width: 320, height: 568 }, { width: 844, height: 390 }]) {
   test(`icon rail and list/detail navigation at ${viewport.width}px`, async ({ page }) => {
+    const frameErrors: string[] = [];
+    page.on("pageerror", error => frameErrors.push(error.message));
+    page.on("console", message => {
+      if (message.type() === "error" && message.text().startsWith("Glory frame:")) frameErrors.push(message.text());
+    });
     const mobile = viewport.width <= 860;
     await page.setViewportSize(viewport);
     await gotoAndDismissRecovery(page, "/settings/theme");
@@ -24,7 +37,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       await expect(logo).toBeVisible();
       await expect.poll(() => logo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
     }
-    await page.screenshot({ path: test.info().outputPath(`settings-${viewport.width}.png`) });
+    await page.screenshot({ animations: "disabled", path: test.info().outputPath(`settings-${viewport.width}.png`) });
     const settings = byClass(page, "rail-settings");
     const avatar = rail.locator(".rail-account");
     const avatarBox = (await avatar.boundingBox())!;
@@ -60,7 +73,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     const accountBox = (await account.boundingBox())!;
     expect(accountBox.x).toBeGreaterThanOrEqual(0);
     expect(accountBox.x + accountBox.width).toBeLessThanOrEqual(viewport.width);
-    await page.screenshot({ path: test.info().outputPath(`account-${viewport.width}.png`) });
+    await page.screenshot({ animations: "disabled", path: test.info().outputPath(`account-${viewport.width}.png`) });
     await page.goBack();
     await expect(page).toHaveURL(/\/settings\/theme$/);
     await expect(account).toHaveCount(0);
@@ -80,8 +93,11 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     const activeList = page.locator(".workspace-pane-list.is-visible");
     if (mobile) {
       await expect(backToAccount).toBeInViewport();
+      await expectInstantList(activeList);
+      await page.screenshot({ animations: "disabled", path: test.info().outputPath(`settings-list-${viewport.width}.png`) });
       await byClass(page, "settings-nav-item-theme").click();
       await expect(backToList).toBeInViewport();
+      await expect(page.locator(".workspace-pane-detail .workspace-detail-content")).toHaveCSS("animation-name", "workspace-detail-enter");
       await expect(backToAccount).toBeHidden();
       await backToList.click();
       await backToAccount.click();
@@ -94,18 +110,19 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     await expect(page).toHaveURL(/\/agents(?:\?filter=)?$/);
     await expect(byClass(page, "agent-admin-layout")).toBeVisible();
     await expect(byClass(page, "settings-shell")).toHaveCount(0);
-    await page.screenshot({ path: test.info().outputPath(`agents-${viewport.width}.png`) });
+    await page.screenshot({ animations: "disabled", path: test.info().outputPath(`agents-${viewport.width}.png`) });
     if (mobile) {
-      await expect(activeList).toHaveCSS("animation-name", "none");
+      await expectInstantList(activeList);
       await byClass(page, "agent-admin-create-open-button").click();
       await expect(backToList).toBeInViewport();
+      await expect(page.locator(".workspace-pane-detail .workspace-detail-content")).toHaveCSS("animation-name", "workspace-detail-enter");
       await expect(page.locator(".topbar-context-title")).toHaveText("My Agents");
       await backToList.click();
       await expect(byClass(page, "agent-admin-list-pane")).toBeVisible();
     }
     await byClass(page, "rail-contacts").click();
     await expect(byClass(page, "contacts-layout")).toBeVisible();
-    if (mobile) await expect(activeList).toHaveCSS("animation-name", "none");
+    if (mobile) await expectInstantList(activeList);
     const items = byClass(page, "contact-list-item");
     await expect.poll(() => items.count()).toBeGreaterThan(1);
     await items.last().click();
@@ -114,6 +131,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     if (mobile) {
       await expect(byClass(page, "contacts-list-pane")).toBeHidden();
       await expect(byClass(page, "contacts-detail-pane")).toBeVisible();
+      await expect(page.locator(".workspace-pane-detail .workspace-detail-content")).toHaveCSS("animation-name", "workspace-detail-enter");
       await expect(backToList).toBeInViewport();
       await expect(page.locator(".topbar-context-title")).toHaveText("Contacts");
     } else {
@@ -121,16 +139,17 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       const detailBox = (await byClass(page, "contacts-detail-pane").boundingBox())!;
       expect(detailBox.x).toBeGreaterThan(listBox.x + listBox.width - 1);
     }
-    await page.screenshot({ path: test.info().outputPath(`contacts-${viewport.width}.png`) });
+    await page.screenshot({ animations: "disabled", path: test.info().outputPath(`contacts-${viewport.width}.png`) });
     await byClass(page, "rail-realms").click();
     await expect(byClass(page, "workspace-list")).toBeVisible();
     await expect(byClass(page, "rail-realms")).toHaveAttribute("aria-current", "page");
-    await page.screenshot({ path: test.info().outputPath(`realms-${viewport.width}.png`) });
-    if (mobile) await expect(activeList).toHaveCSS("animation-name", "none");
+    await page.screenshot({ animations: "disabled", path: test.info().outputPath(`realms-${viewport.width}.png`) });
+    if (mobile) await expectInstantList(activeList);
     await page.locator(".workspace-list .realm-tree-item").first().click();
     await expect(byClass(page, "kanban-empty-board")).toBeVisible();
     const realmHeader = page.locator(".workspace-outer-header > .topbar.realm-header");
     await expect(realmHeader).toBeInViewport();
+    await page.screenshot({ animations: "disabled", path: test.info().outputPath(`realm-detail-${viewport.width}.png`) });
     if (mobile) {
       await expect(backToList).toBeInViewport();
       await expect(page.locator(".main.realm")).toHaveCSS("animation-name", "none");
@@ -157,7 +176,20 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       await page.setViewportSize(viewport);
       await expect(logo).toBeHidden();
       await expect(settings).toBeHidden();
+      await gotoAndDismissRecovery(page, "/settings");
+      await expectInstantList(activeList);
+      await expect(backToAccount).toBeInViewport();
+      await backToAccount.click();
+      await expect(page).toHaveURL(/\/account$/);
     }
+    await expect(byClass(page, "command-palette")).toHaveCount(1);
+    await page.locator(".command-palette-trigger:visible").click();
+    const command = page.getByRole("dialog", { name: "Command palette", exact: true });
+    await expect(command).toBeVisible();
+    await command.getByRole("combobox").fill("Contacts");
+    await page.keyboard.press("Escape");
+    await expect(command).toBeHidden();
+    expect(frameErrors).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });
 }

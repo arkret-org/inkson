@@ -2067,6 +2067,134 @@ async fn frozen_message_real_mls_retry_and_durable_reopen_preserve_sender_state(
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn accepted_metadata_survives_later_messages_without_opening_its_view() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("receiver.json");
+    let mut state = crate::state::LocalStateStore::with_path(&path);
+    let secure = MemorySecureKeyStore::new();
+    let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
+    let bob_actor = "did:web:bob.example";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
+    state.promote_accepted_context_for_test(&bob_actor.parse().unwrap());
+    let (mut alice, _) =
+        two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: realm.parse().unwrap(),
+    };
+    let group_ref = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [61; 32]);
+    let snapshot = state.mls_checkpoint_for_scope(&scope).unwrap();
+    state
+        .record_mls_group_state_ref_for_scope(
+            &scope,
+            &snapshot.group_id,
+            snapshot.epoch,
+            group_ref.clone(),
+        )
+        .unwrap();
+    fixture::install_accepted_mls_group_at_epoch(&mut state, &scope, snapshot.epoch, 0);
+    let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
+        "1.0",
+        "application/json",
+        arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+        scope.clone(),
+        "ak.space.update",
+        alice.epoch(),
+        group_ref,
+        alice.local_content_sender_domain().unwrap(),
+        arkret_sdk::EventContentRoutingContext::None,
+    )
+    .unwrap();
+    let plaintext = json!({"title":"Community deliverables"});
+    let encrypted = alice
+        .encrypt_payload(header, &serde_json::to_vec(&plaintext).unwrap())
+        .unwrap();
+    let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(&encrypted).unwrap();
+    let space = arkret_sdk::SpaceId::from_event_id(&arkret_sdk::EventId::from_digest(
+        arkret_sdk::DigestSuite::Sha256,
+        [62; 32],
+    ));
+    let unsigned = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+        "ak.space.update",
+        scope.clone(),
+        fixture::account_actor("did:web:alice.example"),
+        json!({"target_ref":space, "patch":{"encrypted_metadata":{"$op":"set","value":envelope}}}),
+    )
+    .build_unsigned()
+    .unwrap();
+    let account = fixture::authority(bob_actor);
+    let device = fixture::device_id(bob_device);
+    crate::identity::metadata::retain_accepted_metadata(
+        &state, &unsigned, &account, &device, &secure,
+    );
+    assert!(
+        state
+            .mls_decrypted_plaintext_for(realm, encrypted.payload_digest.as_str())
+            .is_none()
+    );
+    let signer = arkret_test_kit::keys::seeded_signer(
+        "did:web:alice.example".parse().unwrap(),
+        arkret_sdk::DidUrl::new(
+            "did:web:alice.example#ak:device:01904100-0000-7000-8000-0000000000a1",
+        )
+        .unwrap(),
+    );
+    let event = arkret_test_kit::signed_event::sign_verifiable_event(
+        unsigned,
+        &signer,
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap()
+    .expect_verifiable();
+    crate::identity::metadata::retain_accepted_metadata(&state, &event, &account, &device, &secure);
+    assert!(
+        state
+            .mls_decrypted_plaintext_for(realm, encrypted.payload_digest.as_str())
+            .is_some()
+    );
+    for _ in 0..20 {
+        let message = alice
+            .encrypt_payload(test_message_header(&alice, realm), b"later discussion")
+            .unwrap();
+        assert_eq!(
+            decrypt_application_payload_for_effective_scope_internal(
+                &state, &secure, realm, &account, &device, &message, None, None,
+            )
+            .unwrap(),
+            b"later discussion"
+        );
+    }
+    state.flush().unwrap();
+    assert!(
+        state
+            .persist_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap()
+    );
+    assert!(
+        !std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("Community deliverables")
+    );
+    let mut cold = crate::state::LocalStateStore::with_path(path);
+    cold.promote_accepted_context_for_test(&bob_actor.parse().unwrap());
+    cold.hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+        .unwrap();
+    assert!(cold.load().raw_operations.is_empty());
+    assert_eq!(
+        crate::identity::metadata::open_metadata_with_secure_store(
+            &cold,
+            realm,
+            space.as_str(),
+            &envelope,
+            &account,
+            &device,
+            &secure,
+        ),
+        Some(plaintext)
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache() {
     let mut state = temp_state_store("calendar-current-cold");
     let secure = MemorySecureKeyStore::new();

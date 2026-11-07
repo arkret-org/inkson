@@ -13,9 +13,17 @@ pub struct WorkspaceNavigation {
 
 impl WorkspaceNavigation {
     pub fn new(scope: &Scope, route: &Route) -> Self {
+        #[cfg_attr(
+            not(test),
+            expect(
+                clippy::expect_used,
+                reason = "The fixed finite width and positive breakpoint satisfy ShellLayout validation"
+            )
+        )]
+        let layout =
+            sapid::ShellLayout::new(scope, 1024.0, 861.0).expect("valid workspace breakpoint");
         Self {
-            layout: sapid::ShellLayout::new(scope, 1024.0, 861.0)
-                .expect("valid workspace breakpoint"),
+            layout,
             list_expanded: scope.cage(true),
             detail_open: scope.cage(route_opens_detail(route)),
             settings_query: scope.cage(String::new()),

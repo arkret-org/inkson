@@ -258,10 +258,10 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
         .class(class)
         .role(Role::Group)
         .on(EventKind::Resize, move |event| {
-            if let glory::render::Event::Resize { size, .. } = event {
-                if let Err(error) = measured.observe_width(size.width) {
-                    tracing::warn!(%error, "workspace measurement failed");
-                }
+            if let glory::render::Event::Resize { size, .. } = event
+                && let Err(error) = measured.observe_width(size.width)
+            {
+                tracing::warn!(%error, "workspace measurement failed");
             }
         });
     #[cfg(not(target_arch = "wasm32"))]
@@ -288,6 +288,7 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
             move |_| ui.search_open.revise(|value| *value = true)
         })
         .fill(vec![
+            super::command_palette::command_palette(scope, context.clone(), ui.clone()),
             crate::components::toast_host(scope, context.clone()),
             crate::components::did_resolution_health_banner(
                 scope,
@@ -875,7 +876,6 @@ fn topbar(
     });
     let search = Box::new(view().class("topbar-command-search").fill(vec![
         super::command_palette::search_trigger(scope, ui.clone()),
-        super::command_palette::command_palette(scope, context.clone(), ui.clone()),
     ])) as View;
     block(
         "topbar realm-header",
@@ -1321,6 +1321,118 @@ fn filtered_mobile_realm_items<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn route_switches_retain_one_global_palette_and_restore_the_outer_header() {
+        let directory = tempfile::tempdir().unwrap();
+        let app = glory::App::with_host(
+            Rc::new(glory::core::executor::Executor::new(64)),
+            glory::render::memory::Memory::new,
+        );
+        let account =
+            crate::test_support::AccountFixture::new("ak:did_core:web:example.net:alice").build();
+        let context = InksonContext::new(
+            app.scope(),
+            crate::presentation::BootState {
+                config_store: crate::config::LocalConfigStore::with_path(
+                    directory.path().join("config.json"),
+                ),
+                config: crate::config::ClientConfig::authenticated(account, String::new()),
+                state_store: crate::presentation::SharedStateStore::new(
+                    LocalStateStore::with_path(directory.path().join("state.json")),
+                ),
+                initial_credential: String::new(),
+                realm_tree_nodes: Vec::new(),
+            },
+            Route::SettingsSection {
+                section: "theme".into(),
+                filter: String::new(),
+            },
+            |_| Box::pin(std::future::pending()),
+        );
+        context.server_description.revise(|description| {
+            *description = Some(ServiceDescribe::development(
+                arkret_sdk::Did::new("did:web:station.example").unwrap(),
+                arkret_sdk::TrustDomainId::new("ak:trust_domain:example.net").unwrap(),
+                arkret_sdk::ServiceKind::Station,
+                vec!["ak.operation_bundle.station.http_core_current.v1".to_owned()],
+                vec![arkret_sdk::TransportBinding::HttpJson {
+                    base_url: "https://station.example/".to_owned(),
+                    extension_profile_required: (),
+                }],
+            ));
+        });
+        let realm = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+        context.realm_tree_nodes.revise(|nodes| {
+            nodes.push(crate::models::RealmTreeNode {
+                id: realm.to_owned(),
+                realm_id: realm.to_owned(),
+                title: "Project".to_owned(),
+                description: None,
+                tags: Default::default(),
+                public: false,
+                category: None,
+                direct_conversation: false,
+                parent_space_id: None,
+                child_space_ids: Vec::new(),
+                kind: crate::models::RealmTreeNodeKind::Realm,
+            });
+        });
+        app.mount(shell(app.scope(), context.clone())).unwrap();
+        app.flush().unwrap();
+        let class_nodes = |class: &str| {
+            let tree = app.tree();
+            let mut pending = tree.roots().to_vec();
+            let mut found = Vec::new();
+            while let Some(id) = pending.pop() {
+                let node = tree.node(id).unwrap();
+                if node
+                    .descriptor
+                    .view()
+                    .classes
+                    .iter()
+                    .any(|value| value == class)
+                {
+                    found.push(id);
+                }
+                pending.extend(node.children.iter().copied());
+            }
+            found
+        };
+        let palette = class_nodes("command-palette");
+        assert_eq!(palette.len(), 1);
+        for width in [1440.0, 390.0] {
+            context
+                .workspace_navigation
+                .layout
+                .observe_width(width)
+                .unwrap();
+            for route in [
+                Route::RealmsManage,
+                Route::Contacts,
+                Route::Settings,
+                Route::Realm {
+                    realm_id: realm.to_owned(),
+                },
+                Route::Account,
+                Route::SettingsSection {
+                    section: "agents".into(),
+                    filter: String::new(),
+                },
+                Route::Dashboard,
+                Route::SettingsSection {
+                    section: "theme".into(),
+                    filter: String::new(),
+                },
+                Route::RealmsManage,
+            ] {
+                context.route.revise(|current| *current = route.clone());
+                app.flush().unwrap();
+                assert_eq!(class_nodes("command-palette"), palette, "{route:?}");
+                assert_eq!(class_nodes("realm-header").len(), 1, "{route:?}");
+            }
+        }
+    }
 
     #[test]
     fn both_notification_buttons_follow_the_shared_unread_projection() {

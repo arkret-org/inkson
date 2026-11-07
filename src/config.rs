@@ -375,6 +375,7 @@ fn persist_session_credential_secret(
     Ok(())
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn clear_session_credential_secret(account: &ActiveAccountContext) {
     let Ok(key) = session_credential_secret_key(account) else {
         return;

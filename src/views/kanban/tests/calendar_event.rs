@@ -1,4 +1,78 @@
 use super::*;
+
+#[test]
+fn calendar_editor_retains_separate_fields_when_recurrence_is_changed() {
+    use glory::render::{Event, Props};
+    let (app, context, _directory) = crate::views::settings::restored_surface_tests::harness();
+    let calendar = app.scope().cage(CalendarCardFields::default());
+    let status = app.scope().cage(String::new());
+    app.mount(super::super::editors::calendar_schedule_edit_form(
+        app.scope(),
+        context,
+        calendar,
+        status,
+        true.into(),
+        || {},
+        || {},
+    ))
+    .unwrap();
+    app.flush().unwrap();
+    let fields = [
+        ("card-detail-calendar-start-input", "2026-10-05T09:00:00"),
+        ("card-detail-calendar-end-input", "2026-10-05T10:30:00"),
+        ("card-detail-calendar-timezone-input", "Asia/Shanghai"),
+        ("card-detail-calendar-location-input", "Meeting room"),
+    ];
+    for (class, value) in fields {
+        let tree = app.tree();
+        let mut pending = tree.roots().to_vec();
+        let mut root = None;
+        while let Some(id) = pending.pop() {
+            let node = tree.node(id).unwrap();
+            if node
+                .descriptor
+                .view()
+                .classes
+                .iter()
+                .any(|candidate| candidate == class)
+            {
+                root = Some(id);
+                break;
+            }
+            pending.extend(node.children.iter().copied());
+        }
+        let mut pending = vec![root.expect("calendar field")];
+        let input = loop {
+            let id = pending.pop().expect("calendar input descendant");
+            let node = tree.node(id).unwrap();
+            if let Props::Input(props) = &node.descriptor.view().props {
+                break (id, props.revision);
+            }
+            pending.extend(node.children.iter().copied());
+        };
+        drop(tree);
+        app.dispatch(
+            input.0,
+            Event::ValueChanged {
+                value: value.into(),
+                composing: false,
+                revision: input.1,
+            },
+        )
+        .unwrap();
+        app.flush().unwrap();
+    }
+    calendar.revise(|draft| draft.recurrence_frequency = "weekly".to_owned());
+    app.flush().unwrap();
+    let draft = calendar.get_untracked();
+    assert_eq!(draft.start, fields[0].1);
+    assert_eq!(draft.end, fields[1].1);
+    assert_eq!(draft.timezone, fields[2].1);
+    assert_eq!(draft.location, fields[3].1);
+    let wire = calendar_event_fields_from_draft(&draft).unwrap();
+    assert_eq!(wire.start, fields[0].1);
+    assert_eq!(wire.end, fields[1].1);
+}
 use crate::state::projection_views::{RsvpCellProjectionView, RsvpWinnerProjectionView};
 
 const TEST_CALENDAR_STRAND_ID: &str = "ak:strand:Ac_zaRRyp7i2guabQjAsFr7CdWBbP2ULfqGAcp4_we-V";

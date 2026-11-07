@@ -872,6 +872,18 @@
   flex-shrink: 0;
   overflow-anchor: none;
 }
+
+.presence-list,
+.presence-row,
+.presence-name {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.presence-name,
+.presence-status-message {
+  overflow-wrap: anywhere;
+}
 .chat-virtual-slice {
   position: absolute;
   top: 0;

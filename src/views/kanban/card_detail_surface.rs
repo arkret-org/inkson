@@ -1,4 +1,3 @@
-
 use super::*;
 
 #[derive(Clone)]
@@ -359,6 +358,17 @@ impl Detail {
             return;
         };
         let calendar = c.card_edit_calendar.get_untracked();
+        #[cfg(any(
+            feature = "spec-conformance",
+            all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
+        ))]
+        tracing::warn!(
+            phase = "calendar_draft_shape",
+            start_len = calendar.start.len(),
+            end_len = calendar.end.len(),
+            all_day = calendar.all_day,
+            "calendar editor submission boundary"
+        );
         let app = self.app.clone();
         let context = self.context.clone();
         let window = app.clone();
@@ -776,6 +786,7 @@ fn detail_surface(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
     )
 }
 fn detail_contents(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
+    let calendar_editor = calendar_editor(scope, detail.clone());
     let c = detail.c;
     let displayed = detail.card;
     let app = detail.app.clone();
@@ -1316,6 +1327,7 @@ fn detail_contents(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
                         right,
                     ]),
             ),
+            calendar_editor,
         ]))
 }
 
@@ -2422,17 +2434,14 @@ fn due_picker_contents(scope: &Scope, detail: Detail) -> View {
     ]))
 }
 
-fn calendar_view(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
+fn calendar_editor(scope: &Scope, detail: Detail) -> View {
     let c = detail.c;
-    reactive(
+    crate::presentation::widgets::reactive_distinct(
         scope.bond(move || (c.editing_card_detail.get(), c.card_edit_scope.get())),
         move |scope, (editing, kind)| {
             if editing && kind == CardEditScope::Calendar {
-                let _save = detail.clone();
-                let _cancel = detail.clone();
                 let body = detail.clone();
                 let cancel_popup = detail.clone();
-                let original = card.calendar.clone();
                 return crate::components::dismissible_popup(
                     scope,
                     detail.app.clone(),
@@ -2441,11 +2450,7 @@ fn calendar_view(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
                             .into(),
                         surface_class: "due-date-modal calendar-schedule-modal".into(),
                         aria_label: crate::i18n::tr("kanban.ui.calendar"),
-                        on_dismiss: Rc::new(move |()| {
-                            c.card_edit_calendar
-                                .revise(|value| *value = original.clone());
-                            cancel_popup.cancel();
-                        }),
+                        on_dismiss: Rc::new(move |()| cancel_popup.cancel()),
                         children: Rc::new(move |scope| {
                             let save = body.clone();
                             let cancel = body.clone();
@@ -2458,6 +2463,19 @@ fn calendar_view(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
                         surface_style: None,
                     },
                 );
+            }
+            empty()
+        },
+    )
+}
+
+fn calendar_view(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
+    let c = detail.c;
+    reactive(
+        scope.bond(move || (c.editing_card_detail.get(), c.card_edit_scope.get())),
+        move |scope, (editing, kind)| {
+            if editing && kind == CardEditScope::Calendar {
+                return empty();
             }
             let schedule = &card.calendar;
             let mut children = vec![];
@@ -3084,6 +3102,56 @@ mod production_retention_tests {
         c.card_detail_sidebar_visible
             .revise(|visible| *visible = true);
         settle(&app, &executor);
+        if !late_assignment {
+            app.dispatch(
+                class_node(&app, "card-detail-calendar-edit"),
+                Event::Activate,
+            )
+            .unwrap();
+            settle(&app, &executor);
+            let dialog = class_node(&app, "card-detail-calendar-editor-dialog");
+            let mut pending = vec![class_node(&app, "card-detail-calendar-start-input")];
+            let start = loop {
+                let id = pending.pop().expect("calendar input descendant");
+                let tree = app.tree();
+                let node = tree.node(id).unwrap();
+                if let Props::Input(props) = node.descriptor.view().props {
+                    break (id, props.revision);
+                }
+                pending.extend(node.children.iter().copied());
+            };
+            app.dispatch(
+                start.0,
+                Event::ValueChanged {
+                    value: "2026-10-05T09:00:00".into(),
+                    composing: false,
+                    revision: start.1,
+                },
+            )
+            .unwrap();
+            settle(&app, &executor);
+            context.state_revision.revise(|revision| *revision += 1);
+            context.realm_live_epoch.revise(|epoch| *epoch += 1);
+            c.selected_card
+                .revise(|card| card.as_mut().unwrap().title = "Accepted current title".into());
+            settle(&app, &executor);
+            assert_eq!(
+                class_node(&app, "card-detail-calendar-editor-dialog"),
+                dialog,
+                "background current updates must not remount the active modal or steal focus"
+            );
+            assert_eq!(value(&app, start.0), "2026-10-05T09:00:00");
+            assert_eq!(
+                c.card_edit_calendar.get_untracked().start,
+                "2026-10-05T09:00:00"
+            );
+            app.dispatch(
+                class_node(&app, "card-detail-cancel-edit-button"),
+                Event::Activate,
+            )
+            .unwrap();
+            settle(&app, &executor);
+        }
         let sidebar_tabs = class_node(&app, "sapid-tab-list");
         let tab_triggers = nodes(&app)
             .into_iter()

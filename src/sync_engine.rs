@@ -1414,6 +1414,15 @@ impl InksonAccountProjector {
             // cache failure must not turn it into an uncommitted frame.
             tracing::warn!(%error, "current product view remains pending");
         }
+        self.ctx
+            .state_store
+            .read(|store| {
+                for page in verified.pages() {
+                    crate::identity::metadata::retain_accepted_page_metadata(store, page)?;
+                }
+                Ok::<_, String>(())
+            })
+            .map_err(garth::Error::Storage)?;
         if changed || frame.realm_list.is_some() || frame.realm_list_changes.is_some() {
             self.ctx
                 .realm_live_epoch
@@ -1849,6 +1858,19 @@ impl InksonAccountProjector {
                     return Err(garth::Error::AuthorityCutBehind);
                 }
                 let mut history = crate::realm_events_engine::AccountRecoveryHistory::default();
+                self.ctx
+                    .state_store
+                    .read(|store| {
+                        for proof in &verified {
+                            for page in proof.own_pages() {
+                                crate::identity::metadata::retain_accepted_page_metadata(
+                                    store, page,
+                                )?;
+                            }
+                        }
+                        Ok::<_, String>(())
+                    })
+                    .map_err(garth::Error::Storage)?;
                 for proof in &mut verified {
                     history.retain(proof)?;
                 }

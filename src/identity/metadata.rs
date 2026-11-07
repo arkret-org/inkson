@@ -4,6 +4,104 @@ use serde_json::Value;
 
 use crate::state::LocalStateStore;
 
+/// Run only after the accepted projection transaction and its durability
+/// barrier. A refused installation must not consume an MLS receive key.
+pub(crate) fn retain_accepted_page_metadata(
+    store: &LocalStateStore,
+    page: &impl crate::transport::own_station_results::AcceptedPageRows,
+) -> Result<(), String> {
+    let Some(endpoint) = crate::secure_key_store::active_device_seed_scope() else {
+        return Ok(());
+    };
+    if store.active_authority().as_ref() != Some(&endpoint.authority)
+        || page
+            .accepted_account()
+            .is_some_and(|account| account != &endpoint.authority)
+    {
+        return Err("metadata page belongs to another active account".into());
+    }
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    for row in page.accepted_rows()? {
+        if let arkret_sdk::CommittedEventView::Full(full) = row {
+            retain_accepted_metadata(
+                store,
+                &full.event,
+                &endpoint.authority,
+                &endpoint.device_id,
+                secure.as_ref(),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Consume metadata while its accepted Event is received, before later
+/// application messages can evict its skipped MLS generation. Rendering must
+/// not decide which application keys survive in the durable receive chain.
+pub(crate) fn retain_accepted_metadata(
+    store: &LocalStateStore,
+    event: &arkret_sdk::Event,
+    account: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    secure: &dyn crate::secure_key_store::SecureKeyStore,
+) {
+    if !matches!(
+        event.kind,
+        arkret_sdk::EventKind::SpaceCreate
+            | arkret_sdk::EventKind::SpaceUpdate
+            | arkret_sdk::EventKind::StrandCreate
+            | arkret_sdk::EventKind::StrandUpdate
+    ) {
+        return;
+    }
+    let Ok(original) = serde_json::to_value(event) else {
+        return;
+    };
+    let Some(body) = original.get("payload") else {
+        return;
+    };
+    let Some(value) = body
+        .pointer("/object/encrypted_metadata")
+        .or_else(|| body.pointer("/patch/encrypted_metadata/value"))
+    else {
+        return;
+    };
+    let Ok(envelope) = serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(value.clone())
+    else {
+        return;
+    };
+    let Some(sender) = crate::identity::committed_sender::verified_chat_sender_domain_for_realm(
+        event.realm_id.as_str(),
+        &original,
+        Some(store),
+        Some((account, account.principal_id.as_str(), device)),
+    ) else {
+        return;
+    };
+    let Some(payload) = crate::mls::runtime::encrypted_payload_from_verified_event_context(
+        store,
+        &envelope,
+        &event.scope_ref,
+        event.kind.as_str(),
+        &sender,
+        None,
+    ) else {
+        return;
+    };
+    // The runtime atomically retains the advanced chain and the exact digest's
+    // plaintext. Failure leaves metadata pending and never installs structure.
+    let _ = crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
+        store,
+        secure,
+        event.realm_id.as_str(),
+        account,
+        device,
+        &payload,
+        &event.scope_ref,
+        &sender,
+    );
+}
+
 fn observe_open_gate(digest: &arkret_sdk::Hash, gate: &'static str, passed: bool) {
     #[cfg(any(
         feature = "spec-conformance",
