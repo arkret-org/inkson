@@ -129,7 +129,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     if (mobile) await expect(activeList).toHaveCSS("animation-name", "none");
     await page.locator(".workspace-list .realm-tree-item").first().click();
     await expect(byClass(page, "kanban-empty-board")).toBeVisible();
-    const realmHeader = page.locator(".main.realm > .topbar.realm-header");
+    const realmHeader = page.locator(".workspace-outer-header > .topbar.realm-header");
     await expect(realmHeader).toBeInViewport();
     if (mobile) {
       await expect(backToList).toBeInViewport();

@@ -221,6 +221,7 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
             }
         },
     );
+    let outer_header = block("workspace-outer-header", vec![outer_header]);
     let class = scope.bond({
         let context = context.clone();
         move || {
