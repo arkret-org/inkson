@@ -40,6 +40,7 @@ use widgets::*;
 
 use crate::i18n::UiLocale;
 use crate::notification_rules::WatchLevel;
+use crate::presentation::widgets::reactive_distinct;
 use crate::presentation::{InksonContext, SharedStateStore, View};
 use crate::routes::Route;
 use crate::transport::auth::{with_authed_sdk_client, with_event_submitter};
@@ -547,6 +548,33 @@ pub(crate) fn page_with_header(
     }
     let active_section = SettingsSection::from_slug(route.settings_section());
     let nav_filter = context.workspace_navigation.settings_query;
+    let title = line(
+        "settings-list-title",
+        vec![
+            reactive_distinct(context.workspace_navigation.layout.mobile(), {
+                let context = context.clone();
+                move |scope, mobile| {
+                    if !mobile {
+                        return empty();
+                    }
+                    let context = context.clone();
+                    Box::new(
+                        sapid::button()
+                            .unstyled()
+                            .class("btn icon settings-back-to-account")
+                            .name(context.translated(scope, "workspace.back_to_account"))
+                            .fill(crate::components::ui_icon("chevron-left"))
+                            .on_press(move || context.replace_route(Route::Account)),
+                    ) as View
+                }
+            }),
+            heading(
+                2,
+                "workspace-list-title",
+                context.translated(scope, "nav.settings"),
+            ),
+        ],
+    );
     let nav_context = context.clone();
     let locale = context.locale;
     let nav = reactive(
@@ -708,7 +736,7 @@ pub(crate) fn page_with_header(
                                 scope,
                                 context.clone(),
                                 "settings-navigation-search",
-                                "nav.settings",
+                                title,
                                 "settings.search.placeholder",
                                 nav_filter,
                                 vec![],

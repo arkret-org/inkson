@@ -748,6 +748,9 @@ pub(super) fn workspace_list_kind(route: &Route) -> Option<bool> {
         | Route::KanbanBoard { .. }
         | Route::KanbanBoardTask { .. }
         | Route::KanbanTask { .. }
+        | Route::RealmMembers { .. }
+        | Route::RealmAdmin { .. }
+        | Route::RealmAdminSection { .. }
         | Route::Circles { .. }
         | Route::CircleDetail { .. }
         | Route::Setup
@@ -808,15 +811,7 @@ pub(super) fn sidebar(scope: &Scope, context: Rc<InksonContext>) -> View {
                     route,
                     Route::Contacts | Route::ContactsManage | Route::DirectConversation { .. }
                 ),
-                "realms" => {
-                    workspace_list_kind(&route) == Some(false)
-                        || matches!(
-                            route,
-                            Route::RealmMembers { .. }
-                                | Route::RealmAdmin { .. }
-                                | Route::RealmAdminSection { .. }
-                        )
-                }
+                "realms" => workspace_list_kind(&route) == Some(false),
                 _ => {
                     !is_agents_route(&route)
                         && (route.settings_section().is_some() || matches!(route, Route::Settings))
@@ -945,7 +940,7 @@ pub(super) fn workspace_list(
                         } else {
                             "realms-navigation-search"
                         },
-                        title,
+                        heading(2, "workspace-list-title", context.translated(scope, title)),
                         label,
                         value,
                         vec![icon_link(

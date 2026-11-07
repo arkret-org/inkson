@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { byClass, registerStrandsBeforeEach, gotoAndDismissRecovery, dismissBlockingRecoveryModal } from "./strandsHarness";
 
-registerStrandsBeforeEach();
+registerStrandsBeforeEach({ emptyBoard: true });
 test.use({ screenshot: "only-on-failure" });
 
 for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }, { width: 320, height: 568 }, { width: 844, height: 390 }]) {
@@ -75,13 +75,37 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     await expect(page).toHaveURL(/\/settings$/);
     await expect(byClass(page, "settings-shell")).toBeVisible();
     await expect(byClass(page, "settings-nav-item-agents")).toHaveCount(0);
+    const backToAccount = page.getByRole("button", { name: "Back to account", exact: true });
+    const backToList = page.getByRole("button", { name: "Back to list", exact: true });
+    const activeList = page.locator(".workspace-pane-list.is-visible");
+    if (mobile) {
+      await expect(backToAccount).toBeInViewport();
+      await byClass(page, "settings-nav-item-theme").click();
+      await expect(backToList).toBeInViewport();
+      await expect(backToAccount).toBeHidden();
+      await backToList.click();
+      await backToAccount.click();
+      await expect(page).toHaveURL(/\/account$/);
+      await expect(account).toBeVisible();
+    } else {
+      await expect(backToAccount).toHaveCount(0);
+    }
     await byClass(page, "rail-agents").click();
     await expect(page).toHaveURL(/\/agents(?:\?filter=)?$/);
     await expect(byClass(page, "agent-admin-layout")).toBeVisible();
     await expect(byClass(page, "settings-shell")).toHaveCount(0);
     await page.screenshot({ path: test.info().outputPath(`agents-${viewport.width}.png`) });
+    if (mobile) {
+      await expect(activeList).toHaveCSS("animation-name", "none");
+      await byClass(page, "agent-admin-create-open-button").click();
+      await expect(backToList).toBeInViewport();
+      await expect(page.locator(".topbar-context-title")).toHaveText("My Agents");
+      await backToList.click();
+      await expect(byClass(page, "agent-admin-list-pane")).toBeVisible();
+    }
     await byClass(page, "rail-contacts").click();
     await expect(byClass(page, "contacts-layout")).toBeVisible();
+    if (mobile) await expect(activeList).toHaveCSS("animation-name", "none");
     const items = byClass(page, "contact-list-item");
     await expect.poll(() => items.count()).toBeGreaterThan(1);
     await items.last().click();
@@ -90,6 +114,8 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     if (mobile) {
       await expect(byClass(page, "contacts-list-pane")).toBeHidden();
       await expect(byClass(page, "contacts-detail-pane")).toBeVisible();
+      await expect(backToList).toBeInViewport();
+      await expect(page.locator(".topbar-context-title")).toHaveText("Contacts");
     } else {
       const listBox = (await byClass(page, "contacts-list-pane").boundingBox())!;
       const detailBox = (await byClass(page, "contacts-detail-pane").boundingBox())!;
@@ -100,6 +126,25 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     await expect(byClass(page, "workspace-list")).toBeVisible();
     await expect(byClass(page, "rail-realms")).toHaveAttribute("aria-current", "page");
     await page.screenshot({ path: test.info().outputPath(`realms-${viewport.width}.png`) });
+    if (mobile) await expect(activeList).toHaveCSS("animation-name", "none");
+    await page.locator(".workspace-list .realm-tree-item").first().click();
+    await expect(byClass(page, "kanban-empty-board")).toBeVisible();
+    const realmHeader = page.locator(".main.realm > .topbar.realm-header");
+    await expect(realmHeader).toBeInViewport();
+    if (mobile) {
+      await expect(backToList).toBeInViewport();
+      await expect(page.locator(".main.realm")).toHaveCSS("animation-name", "none");
+      await expect(page.locator(".main.realm > .realm-body")).toHaveCSS("animation-name", "workspace-detail-enter");
+      await backToList.click();
+      await expect(byClass(page, "workspace-list")).toBeVisible();
+    } else {
+      const collapse = page.getByRole("button", { name: "Collapse list", exact: true });
+      const expand = page.getByRole("button", { name: "Expand list", exact: true });
+      await collapse.click();
+      await expect(byClass(page, "workspace-list")).toBeHidden();
+      await expand.click();
+      await expect(byClass(page, "workspace-list")).toBeVisible();
+    }
     if (!mobile) {
       await byClass(page, "rail-brand").click();
       await expect(page).toHaveURL(/\/$/);

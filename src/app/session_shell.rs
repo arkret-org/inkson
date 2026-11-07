@@ -744,12 +744,13 @@ fn topbar(
                 .as_ref()
                 .map(|node| node.title.clone())
                 .unwrap_or_else(|| context.tr(route_label_key(&route)));
-            let mut children =
+            let title_class =
                 if matches!(route, Route::Contacts) || super::sidebar::is_agents_route(&route) {
-                    Vec::new()
+                    "topbar-context-title workspace-detail-mobile-title"
                 } else {
-                    vec![Box::new(text().class("topbar-context-title").content(title)) as View]
+                    "topbar-context-title"
                 };
+            let mut children = vec![Box::new(text().class(title_class).content(title)) as View];
             if route_uses_realm_context(&route) && !id.is_empty() {
                 children.push(Box::new(
                     text()

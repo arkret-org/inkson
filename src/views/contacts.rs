@@ -1580,7 +1580,11 @@ fn contacts_panel_with_header(
                                     scope,
                                     context.clone(),
                                     "contacts-navigation-search",
-                                    "contacts.title",
+                                    heading(
+                                        2,
+                                        "workspace-list-title",
+                                        context.translated(scope, "contacts.title"),
+                                    ),
                                     "sidebar.search_contacts",
                                     query,
                                     vec![Box::new(

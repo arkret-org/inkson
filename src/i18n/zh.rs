@@ -740,6 +740,7 @@ pub fn chinese_translations() -> TranslationDict {
     // Settings-nav filter (design 3.4).
     dict.set("settings.search.label", "搜索设置");
     dict.set("workspace.back_to_list", "返回列表");
+    dict.set("workspace.back_to_account", "返回账号");
     dict.set("workspace.collapse_list", "折叠列表");
     dict.set("workspace.expand_list", "展开列表");
     dict.set("agents.search", "搜索智能体…");

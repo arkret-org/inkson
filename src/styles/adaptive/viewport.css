@@ -222,10 +222,6 @@
     flex: 1 1 160px;
   }
 
-  .topbar.realm-header {
-    display: none;
-  }
-
   .realm-body,
   .realm-body > .timeline,
   .realm-body > .settings,

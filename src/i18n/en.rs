@@ -442,6 +442,7 @@ pub fn english_translations() -> TranslationDict {
     // Settings-nav filter (design §3.4).
     dict.set("settings.search.label", "Search settings");
     dict.set("workspace.back_to_list", "Back to list");
+    dict.set("workspace.back_to_account", "Back to account");
     dict.set("workspace.collapse_list", "Collapse list");
     dict.set("workspace.expand_list", "Expand list");
     dict.set("agents.search", "Search agents…");

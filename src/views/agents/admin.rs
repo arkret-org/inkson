@@ -179,7 +179,11 @@ pub(crate) fn page_with_header(
             scope,
             context.clone(),
             "agents-navigation-search",
-            "settings.section.agents",
+            heading(
+                2,
+                "workspace-list-title",
+                context.translated(scope, "settings.section.agents"),
+            ),
             "agents.search",
             query,
             vec![

@@ -112,6 +112,8 @@
 .workspace-detail-column > .topbar { flex: 0 0 auto; min-height: 52px; height: auto; padding: 8px 16px; }
 .workspace-detail-column > .topbar .actions { margin-inline-start: auto; }
 .workspace-detail-column > .topbar .topbar-context:empty { display: none; }
+.workspace-detail-mobile-title { display: none; }
+.workspace-mobile .workspace-detail-mobile-title { display: block; }
 .workspace-detail-column > :last-child { flex: 1 1 0; min-height: 0; overflow-y: auto; }
 .workspace-shell .settings-page .settings-content-column,
 .workspace-shell .agent-admin-detail-content,
@@ -202,7 +204,7 @@
 .workspace-list-heading.workspace-navigation-heading { display: grid; grid-template-columns: minmax(0, 1fr) 30px; grid-template-rows: 52px auto; row-gap: 0; }
 .workspace-list-heading.workspace-navigation-heading-2 { grid-template-columns: minmax(0, 1fr) repeat(2, 30px); }
 .workspace-list-heading.workspace-navigation-heading-3 { grid-template-columns: minmax(0, 1fr) repeat(3, 30px); }
-.workspace-navigation-heading > .workspace-list-title,
+.workspace-navigation-heading > :first-child,
 .workspace-navigation-heading > .btn,
 .workspace-navigation-heading > .sidebar-toolbar-action,
 .workspace-search-disclosure > .sapid-collapsible-trigger { grid-row: 1; }
@@ -210,13 +212,14 @@
 .workspace-search-disclosure > .sapid-collapsible-panel { grid-column: 1 / -1; grid-row: 2; width: 100%; min-width: 0; }
 .workspace-search-disclosure .workspace-search-input { width: 100%; min-width: 0; }
 .workspace-navigation-button { flex-shrink: 0; }
+.settings-list-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .workspace-shell .topbar-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .agent-admin-list-content { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; flex: 1; }
 .agent-admin-list-content .agent-admin-list-rows { flex: 1; min-height: 0; overflow-y: auto; }
-.workspace-mobile .workspace-pane-detail.is-visible { animation: workspace-detail-enter 180ms ease-out; }
-.workspace-mobile .workspace-pane-list.is-visible { animation: workspace-list-enter 180ms ease-out; }
 @keyframes workspace-detail-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }
-@keyframes workspace-list-enter { from { transform: translateX(-12%); } to { transform: translateX(0); } }
-@media (prefers-reduced-motion: reduce) {
-  .workspace-mobile .workspace-pane.is-visible { animation: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .workspace-mobile .workspace-pane-detail.is-visible > .realm-body,
+  .workspace-mobile .workspace-pane-detail.is-visible .workspace-detail-content {
+    animation: workspace-detail-enter 180ms ease-out;
+  }
 }

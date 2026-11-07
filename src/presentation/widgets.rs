@@ -25,7 +25,7 @@ pub(crate) fn workspace_detail(
         true,
         Box::new(view().class("workspace-detail-column").fill(vec![
             header(scope),
-            Box::new(view().class(class.to_owned()).fill(content)),
+            Box::new(view().class(format!("workspace-detail-content {class}")).fill(content)),
         ])),
     )
 }
@@ -65,7 +65,7 @@ pub(crate) fn navigation_heading(
     scope: &Scope,
     context: Rc<InksonContext>,
     key: &'static str,
-    title: &'static str,
+    title: View,
     label: &'static str,
     query: Cage<String>,
     mut actions: Vec<View>,
@@ -94,7 +94,7 @@ pub(crate) fn navigation_heading(
     let dismiss_scope = scope.downgrade();
     let count = actions.len() + 1;
     let mut children = vec![
-        heading(2, "workspace-list-title", context.translated(scope, title)),
+        title,
         Box::new(
             sapid::collapsible(key)
                 .unstyled()
