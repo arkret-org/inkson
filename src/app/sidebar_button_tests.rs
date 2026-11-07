@@ -46,16 +46,14 @@ fn nodes(app: &glory::App, class: &str) -> Vec<glory::render::NodeId> {
 }
 
 #[test]
-fn production_rail_routes_and_account_menu_remain_mounted() {
+fn production_rail_routes_and_account_link_remain_mounted() {
     let app = glory::App::memory();
     let dir = tempfile::tempdir().unwrap();
     let context = fixture(&app, dir.path());
-    let ui = ShellState::new(app.scope(), &context);
-    app.mount(sidebar(app.scope(), context.clone(), ui.clone()))
-        .unwrap();
+    app.mount(sidebar(app.scope(), context.clone())).unwrap();
     assert!(nodes(&app, "server-switch-button").is_empty());
     assert_eq!(nodes(&app, "rail-logo").len(), 1);
-    let avatar = nodes(&app, "sapid-popover-trigger")[0];
+    let avatar = nodes(&app, "rail-account")[0];
     for (class, target) in [
         ("rail-realms", Route::RealmsManage),
         ("rail-contacts", Route::Contacts),
@@ -67,19 +65,14 @@ fn production_rail_routes_and_account_menu_remain_mounted() {
             },
         ),
         ("rail-settings", Route::Settings),
+        ("rail-account", Route::Account),
         ("rail-brand", Route::Dashboard),
     ] {
         app.dispatch(nodes(&app, class)[0], glory::render::Event::Activate)
             .unwrap();
         app.flush().unwrap();
         assert_eq!(context.route.get_untracked(), target);
-        assert_eq!(nodes(&app, "sapid-popover-trigger"), vec![avatar]);
-    }
-    for open in [true, false, true, false] {
-        app.dispatch(avatar, glory::render::Event::Activate)
-            .unwrap();
-        app.flush().unwrap();
-        assert_eq!(ui.account_open.get_untracked(), open);
+        assert_eq!(nodes(&app, "rail-account"), vec![avatar]);
     }
 }
 

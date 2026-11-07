@@ -720,9 +720,7 @@ export function registerStrandsBeforeEach(apiOptions: Parameters<typeof mockArkr
       ].includes(testInfo.title),
       currentDeviceId: initialDeviceId,
       currentDeviceSigningSeedB64url: DEFAULT_EVENT_SIGNING_SEED_B64URL,
-      directoryPrimaryHandle: testInfo.title.startsWith(
-        "account menu keeps the viewer fallback when the handle directory returns an empty page",
-      )
+      directoryPrimaryHandle: testInfo.title === "account page keeps the viewer fallback handle"
         ? null
         : undefined,
       personalAgentPairingExpiresAt: testInfo.title.startsWith(

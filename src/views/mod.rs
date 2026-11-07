@@ -87,6 +87,7 @@ pub enum AppView {
     Contacts,
     Directory,
     Setup,
+    Account,
     Settings,
     RealmAdmin,
     Circles,

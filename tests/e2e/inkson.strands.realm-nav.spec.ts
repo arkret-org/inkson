@@ -430,9 +430,9 @@ test("dashboard summarizes unread notifications from sync projection", async ({
   );
 });
 
-test("server identity lives in the account menu", async ({ page }) => {
+test("server identity lives on the account page", async ({ page }) => {
   await dismissBlockingRecoveryModal(page);
-  await page.locator(".navigation-rail .account-menu-wrap .sapid-popover-trigger").click();
-  await expect(page.locator(".account-menu__server")).toHaveText("https://local.host");
+  await page.locator(".navigation-rail .rail-account").click();
+  await expect(page.locator(".account-page__server")).toHaveText("https://local.host");
   await expect(page.locator(".server-switch-menu, .server-switch-button")).toHaveCount(0);
 });

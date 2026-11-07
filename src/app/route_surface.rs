@@ -139,6 +139,7 @@ pub(super) fn surface(
         );
     }
     let content = match &route {
+        Route::Account => super::session_shell::account_page(scope, context.clone(), ui),
         Route::SettingsSection { section, .. } if section == "agents" => {
             crate::views::agents::page_with_header(scope, context.clone(), route.clone(), header)
         }

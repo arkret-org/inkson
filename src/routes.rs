@@ -30,6 +30,7 @@ pub enum Route {
     SetupSection {
         section: String,
     },
+    Account,
     Settings,
 
     /// G3.Y1 — device management (list + revoke). Static segment so
@@ -212,6 +213,7 @@ impl std::fmt::Display for Route {
                 format!("/setup/{section}", section = encode_segment(section)),
                 vec![],
             ),
+            Self::Account => ("/account".to_owned(), vec![]),
             Self::Settings => ("/settings".to_owned(), vec![]),
             Self::SettingsDevices => ("/settings/devices".to_owned(), vec![]),
             Self::SettingsDevicesPair => ("/settings/devices/pair".to_owned(), vec![]),
@@ -424,6 +426,7 @@ impl std::str::FromStr for Route {
             ["directory"] => Ok(Self::Directory),
             ["contacts"] => Ok(Self::Contacts),
             ["setup"] => Ok(Self::Setup),
+            ["account"] => Ok(Self::Account),
             ["settings"] => Ok(Self::Settings),
             ["audit"] => Ok(Self::Audit),
             ["developer"] => Ok(Self::Developer),
@@ -460,6 +463,7 @@ impl Route {
             Route::Contacts | Route::ContactsManage => AppView::Contacts,
             Route::Directory => AppView::Directory,
             Route::Setup | Route::SetupSection { .. } => AppView::Setup,
+            Route::Account => AppView::Account,
             Route::Settings
             | Route::SettingsSection { .. }
             | Route::NotificationsSettings
@@ -549,6 +553,7 @@ impl From<AppView> for Route {
             AppView::Contacts => Route::Contacts,
             AppView::Directory => Route::Directory,
             AppView::Setup => Route::Setup,
+            AppView::Account => Route::Account,
             AppView::Settings => Route::Settings,
             AppView::SettingsDevices => Route::SettingsDevices,
             AppView::SettingsRecovery => Route::SettingsRecovery,
@@ -642,6 +647,7 @@ mod tests {
                 // Canonical Realm bootstrap slug.
                 section: "realms".to_owned(),
             },
+            Route::Account,
             Route::Settings,
             Route::RealmAdminSection {
                 realm_id: "ak:realm:Ah-TN8ceKyXkuwRp9fuEVw7pwATVHa-ISAbDJQgUm9hA".to_owned(),

@@ -1,0 +1,99 @@
+.account-page {
+  max-width: 640px;
+  margin-inline: auto;
+  padding: clamp(12px, 3vw, 20px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-solid, var(--surface));
+  color: var(--text);
+}
+
+.account-page-sections { display: grid; gap: 8px; min-width: 0; }
+.account-page__key { color: var(--text-3); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; }
+
+.account-page__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.account-page__head .who {
+  display: block;
+  font-size: 17px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.account-page__head .account-page__avatar {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+}
+.account-page__head .account-page__avatar .content-block-image,
+.account-page__head .account-page__avatar .content-block-image img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
+.account-page__rows {
+  display: grid;
+  grid-auto-rows: minmax(30px, 1fr);
+  gap: 2px;
+}
+
+.account-page__row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.account-page__row > span,
+.account-page__value span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-page__value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.account-page__copy {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.account-page-current { display: grid; gap: 6px; min-width: 0; }
+.account-page__actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
+.account-page .account-page-action { display: flex; align-items: center; justify-content: flex-start; gap: 8px; min-height: 36px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text-2); font-size: 13px; line-height: 20px; text-align: start; text-decoration: none; white-space: normal; }
+.account-page .account-page-action:hover { background: var(--surface-2); color: var(--text); }
+.account-page-action-icon { width: 18px; height: 18px; flex: 0 0 18px; }
+.account-page-action-label { min-width: 0; }
+.account-picker { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
+.account-page .account-picker { padding-top: 8px; border-top: 1px solid var(--border); }
+.account-switch-list { display: grid; gap: 4px; min-width: 0; }
+.account-switch-row { display: grid; grid-template-columns: 30px minmax(0, 1fr); grid-template-rows: auto auto; gap: 4px 10px; align-items: center; width: 100%; min-width: 0; padding: 8px 10px; text-align: start; border: 0; border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; }
+.account-switch-row:hover { background: var(--surface-2); }
+.account-switch-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.account-switch-row:disabled { opacity: .55; cursor: wait; }
+.account-switch-avatar { grid-column: 1; grid-row: 1; width: 30px; height: 30px; flex: 0 0 30px; }
+.account-switch-handle { grid-column: 2; grid-row: 1; margin: 0; font-weight: 650; font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-switch-did { grid-column: 1 / -1; grid-row: 2; margin: 0; color: var(--text-3); font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (min-width: 861px) {
+  .account-page .account-page-settings { display: none; }
+}

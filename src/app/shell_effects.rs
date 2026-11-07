@@ -22,7 +22,6 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
     let personal_handles_status = context.personal_handles_status;
     let current_account_display_name = ui.display_name;
     let current_account_avatar_blob_ref = ui.avatar;
-    let current_device_display_name = ui.device_name;
     let account_identity_lookup_key = ui.identity_key;
     let direct_contact_rows = context.contact_rows;
     let did_resolution_health = context.did_resolution_health;
@@ -130,8 +129,8 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
 
     let account_avatar = context.account_avatar();
     let previous_avatar_session = scope.cage(None::<crate::account_avatar::SettingsSessionStamp>);
-    // Account-viewer is the authoritative source for the Actor Profile,
-    // device display_name, and signed primary handle claim. Keep those
+    // Account-viewer is the authoritative source for the Actor Profile
+    // and signed primary handle claim. Keep those
     // user-facing labels separate from protocol IDs and from the Account
     // Authority handoff's unsigned account_handle hint.
     scope.effect(move || {
@@ -160,7 +159,6 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
         if lookup_token.trim().is_empty() || lookup_actor.trim().is_empty() {
             current_account_display_name.revise(|value| *value = String::new());
             current_account_avatar_blob_ref.revise(|value| *value = String::new());
-            current_device_display_name.revise(|value| *value = String::new());
             return;
         }
 
@@ -168,7 +166,6 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
         // account/device lookup is in flight (or if that lookup fails).
         current_account_display_name.revise(|value| *value = String::new());
         current_account_avatar_blob_ref.revise(|value| *value = String::new());
-        current_device_display_name.revise(|value| *value = String::new());
         account_primary_handle.revise(|value| *value = String::new());
         personal_handles.revise(|value| *value = Vec::new());
         personal_handles_status.revise(|value| *value = "Loading handles".to_owned());
@@ -176,7 +173,6 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
 
         let base = lookup_base_url;
         let actor = lookup_actor;
-        let device = lookup_device;
         let handle_store = identity_store.clone();
         let weak = weak_identity.clone();
         let generation = session_generation.get_untracked();
@@ -215,15 +211,6 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
                 .as_ref()
                 .and_then(|profile| profile.avatar_blob_ref.as_ref())
                 .map(ToString::to_string);
-            let device_display_name = viewer
-                .devices
-                .iter()
-                .find(|summary| summary.device_id.as_str() == device.trim())
-                .and_then(|summary| summary.display_name.as_deref())
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(ToOwned::to_owned)
-                .unwrap_or_default();
             let primary_handle = crate::transport::account::primary_handle_from_viewer(&viewer);
             handle_store
                 .write(|store| store.set_primary_handle_for_principal_id(&actor, &primary_handle));
@@ -234,7 +221,6 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
                     application.account_avatar_display(),
                 );
             }
-            set_state(current_device_display_name, device_display_name);
             if !primary_handle.is_empty() {
                 if let Some(account) = account.as_ref()
                     && let Err(error) = application

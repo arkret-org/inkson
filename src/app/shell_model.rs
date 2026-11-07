@@ -57,12 +57,11 @@ pub(super) fn resolve_realm_selection(
     }
 }
 
-/// Account identity strings shown in the sidebar account row and its tooltip.
+/// Identity labels shown on the account page.
 pub(super) struct AccountIdentityLabels {
     pub handles_label: String,
     pub handles_title: String,
     pub label: String,
-    pub detail: String,
 }
 
 pub(super) struct AccountIdentityInput<'a> {
@@ -70,8 +69,6 @@ pub(super) struct AccountIdentityInput<'a> {
     pub personal_handles: &'a [String],
     pub personal_handles_status: &'a str,
     pub account_display_name: &'a str,
-    pub device_display_name: &'a str,
-    pub device_id_label: &'a str,
     pub principal_id_value: &'a str,
     pub store: &'a LocalStateStore,
 }
@@ -99,25 +96,10 @@ pub(super) fn account_identity_labels(input: AccountIdentityInput<'_>) -> Accoun
     } else {
         crate::i18n::tr("account.not_signed_in")
     };
-    let detail = if input.has_session {
-        let device = if input.device_display_name.trim().is_empty() {
-            input.device_id_label.to_owned()
-        } else {
-            input.device_display_name.to_owned()
-        };
-        input
-            .personal_handles
-            .first()
-            .map(|handle| format!("{handle} · {device}"))
-            .unwrap_or(device)
-    } else {
-        crate::i18n::tr("account.refresh_then_sign_in")
-    };
     AccountIdentityLabels {
         handles_label,
         handles_title,
         label,
-        detail,
     }
 }
 

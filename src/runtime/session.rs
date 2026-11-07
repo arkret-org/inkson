@@ -9,7 +9,7 @@
 //! caller without wiping the current credential.
 //!
 //! That recovery used to be hand-rolled at each call site — `connect()`,
-//! the sync bootstrap, chat send, Realm create, the account-menu button —
+//! the sync bootstrap, chat send, Realm create, and account page actions —
 //! and most of them got it subtly wrong (bounced straight to login, or
 //! didn't refresh at all). This module is the single source of truth:
 //!

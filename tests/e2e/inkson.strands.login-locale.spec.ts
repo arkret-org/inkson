@@ -10,10 +10,10 @@ for (const language of ["en", "zh"] as const) {
     await byClass(page, "settings-nav-item-theme").click();
     await byClass(page, "settings-language-choice").filter({ hasText: language === "zh" ? "中文" : "English" }).click();
     await expect(page.locator("html")).toHaveAttribute("lang", language);
-    await page.locator(".account-menu-wrap .sapid-popover-trigger").click();
+    await page.locator(".rail-account").click();
     const logoutResponse = page.waitForResponse(response => response.request().method() === "POST"
       && new URL(response.url()).pathname === "/_arkret/gate/account/logout");
-    await byClass(page, "account-menu").getByRole("button", { name: language === "zh" ? "退出当前账号" : "Sign out of this account", exact: true }).click();
+    await byClass(page, "account-page").getByRole("button", { name: language === "zh" ? "退出当前账号" : "Sign out of this account", exact: true }).click();
     expect((await logoutResponse).status()).toBe(200);
     await expect(page).toHaveURL(/\/login(?:[?#]|$)/);
     const login = byClass(page, "auth-panel");

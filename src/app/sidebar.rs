@@ -772,7 +772,7 @@ pub(super) fn has_page_columns(route: &Route) -> bool {
     )
 }
 
-pub(super) fn sidebar(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
+pub(super) fn sidebar(scope: &Scope, context: Rc<InksonContext>) -> View {
     let home_context = context.clone();
     let brand = Box::new(
         internal_link()
@@ -852,10 +852,9 @@ pub(super) fn sidebar(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
                 }),
         ) as View);
     }
-    links.push(super::session_shell::account_menu(
+    links.push(super::session_shell::account_rail_link(
         scope,
         context.clone(),
-        ui,
     ));
     Box::new(
         view()

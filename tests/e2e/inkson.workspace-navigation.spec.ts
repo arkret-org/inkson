@@ -11,13 +11,13 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     await gotoAndDismissRecovery(page, "/settings/theme");
     const rail = byClass(page, "navigation-rail");
     await expect(rail).toBeVisible();
-    await expect(rail.locator("a.rail-link")).toHaveCount(5);
+    await expect(rail.locator("a.rail-link")).toHaveCount(6);
     await expect(byClass(page, "server-switch-button")).toHaveCount(0);
     await expect(byClass(page, "sidebar-collapse-toggle")).toHaveCount(0);
-    await expect(page.locator(".topbar .account-menu-wrap .sapid-popover-trigger")).toHaveCount(0);
+    await expect(page.locator(".topbar .rail-account")).toHaveCount(0);
     const logo = byClass(page, "rail-logo");
     if (mobile) {
-      await expect(rail.locator("a.rail-link:visible")).toHaveCount(3);
+      await expect(rail.locator("a.rail-link:visible")).toHaveCount(4);
       await expect(logo).toBeHidden();
       await expect(byClass(page, "rail-settings")).toBeHidden();
     } else {
@@ -26,7 +26,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     }
     await page.screenshot({ path: test.info().outputPath(`settings-${viewport.width}.png`) });
     const settings = byClass(page, "rail-settings");
-    const avatar = rail.locator(".account-menu-wrap .sapid-popover-trigger");
+    const avatar = rail.locator(".rail-account");
     const avatarBox = (await avatar.boundingBox())!;
     if (mobile) {
       const railBox = (await rail.boundingBox())!;
@@ -52,25 +52,28 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       expect(avatarBox.y).toBeGreaterThan(settingsBox.y);
     }
     await avatar.click();
-    const menu = byClass(page, "account-menu");
-    await expect(menu).toBeVisible();
-    const menuBox = (await menu.boundingBox())!;
-    expect(menuBox.width).toBeLessThanOrEqual(320);
-    await expect(byClass(menu, "account-menu-settings")).toHaveCount(0);
-    if (!mobile) expect(menuBox.x).toBeGreaterThan(avatarBox.x);
-    expect(menuBox.x).toBeGreaterThanOrEqual(0);
-    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(viewport.width);
-    expect(menuBox.y).toBeGreaterThanOrEqual(0);
-    expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(viewport.height);
+    const account = byClass(page, "account-page");
+    const accountSettings = byClass(account, "account-page-settings");
+    await expect(page).toHaveURL(/\/account$/);
+    await expect(avatar).toHaveAttribute("aria-current", "page");
+    await expect(account).toBeVisible();
+    const accountBox = (await account.boundingBox())!;
+    expect(accountBox.x).toBeGreaterThanOrEqual(0);
+    expect(accountBox.x + accountBox.width).toBeLessThanOrEqual(viewport.width);
     await page.screenshot({ path: test.info().outputPath(`account-${viewport.width}.png`) });
-    await page.keyboard.press("Escape");
-    await expect(menu).toBeHidden();
+    await page.goBack();
+    await expect(page).toHaveURL(/\/settings\/theme$/);
+    await expect(account).toHaveCount(0);
+    await avatar.click();
     if (mobile) {
-      await avatar.click();
-      await byClass(page, "account-menu__qr").click();
-      await expect(byClass(page, "settings-shell")).toBeVisible();
-      await expect(menu).toBeHidden();
+      await expect(accountSettings).toBeVisible();
+      await accountSettings.click();
+    } else {
+      await expect(accountSettings).toBeHidden();
+      await settings.click();
     }
+    await expect(page).toHaveURL(/\/settings$/);
+    await expect(byClass(page, "settings-shell")).toBeVisible();
     await expect(byClass(page, "settings-nav-item-agents")).toHaveCount(0);
     await byClass(page, "rail-agents").click();
     await expect(page).toHaveURL(/\/agents(?:\?filter=)?$/);
@@ -84,10 +87,14 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     await items.last().click();
     await expect(items.last()).toHaveClass(/is-active/);
     await expect(page.locator(".contacts-detail-pane .contact-row")).toHaveCount(1);
-    const listBox = (await byClass(page, "contacts-list-pane").boundingBox())!;
-    const detailBox = (await byClass(page, "contacts-detail-pane").boundingBox())!;
-    if (!mobile) expect(detailBox.x).toBeGreaterThan(listBox.x + listBox.width - 1);
-    else expect(detailBox.y).toBeGreaterThanOrEqual(listBox.y + listBox.height - 1);
+    if (mobile) {
+      await expect(byClass(page, "contacts-list-pane")).toBeHidden();
+      await expect(byClass(page, "contacts-detail-pane")).toBeVisible();
+    } else {
+      const listBox = (await byClass(page, "contacts-list-pane").boundingBox())!;
+      const detailBox = (await byClass(page, "contacts-detail-pane").boundingBox())!;
+      expect(detailBox.x).toBeGreaterThan(listBox.x + listBox.width - 1);
+    }
     await page.screenshot({ path: test.info().outputPath(`contacts-${viewport.width}.png`) });
     await byClass(page, "rail-realms").click();
     await expect(byClass(page, "workspace-list")).toBeVisible();

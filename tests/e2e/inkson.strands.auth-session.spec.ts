@@ -29,9 +29,9 @@ function leaderPanel(page: Page, title = "Inkson is already open") {
 }
 
 function accountValue(page: Page, label: string) {
-  return page.locator(".account-menu__row").filter({
-    has: page.locator(".account-menu__key").and(page.getByText(label, { exact: true })),
-  }).locator(".account-menu__value > .mono");
+  return page.locator(".account-page__row").filter({
+    has: page.locator(".account-page__key").and(page.getByText(label, { exact: true })),
+  }).locator(".account-page__value > .mono");
 }
 
 async function expectCompleteDescription(page: Page, value: Locator, expected: string) {
@@ -41,7 +41,7 @@ async function expectCompleteDescription(page: Page, value: Locator, expected: s
 }
 
 async function expectIdentityTooltip(page: Page, action: string, expected: string) {
-  const button = page.locator(".account-menu").getByRole("button", { name: action, exact: true });
+  const button = page.locator(".account-page").getByRole("button", { name: action, exact: true });
   await button.hover();
   await expect(button).toHaveAttribute("aria-describedby", /^\S+$/);
   const id = await button.getAttribute("aria-describedby");
@@ -112,19 +112,19 @@ test("bootstrap login and sync shows the connected realm", async ({ page }) => {
   await expect(byClass(page, "kanban-panel")).toBeVisible();
   await expectRealmSecurity(page, byClass(page, "realm-tree-item")
     .filter({ hasText: "Launch Realm" }), false);
-  await page.locator('[class~="sidebar"] a.sidebar-nav-item[href="/"]').click();
+  await byClass(page, "rail-brand").click();
   await expect(byClass(page, "dashboard-panel")).toBeVisible();
-  await page.locator(".account-menu-wrap .sapid-popover-trigger").click();
-  await expect(page.locator(".account-menu .who")).toHaveText(
+  await page.locator(".rail-account").click();
+  await expect(page.locator(".account-page .who")).toHaveText(
     "inkson",
   );
-  await expect(page.locator(".account-menu__head .handle")).toHaveCount(0);
-  await expect(byClass(page, "account-menu__device-name")).toHaveCount(0);
-  await expect(byClass(page, "account-menu-frontier")).toHaveCount(0);
-  await expect(byClass(page, "account-menu-push")).toHaveCount(0);
-  await expect(byClass(page, "account-menu-queue")).toHaveCount(0);
-  await expect(byClass(page, "account-menu-crypto")).toHaveCount(0);
-  await page.keyboard.press("Escape");
+  await expect(page.locator(".account-page__head .handle")).toHaveCount(0);
+  await expect(byClass(page, "account-page__device-name")).toHaveCount(0);
+  await expect(byClass(page, "account-page-frontier")).toHaveCount(0);
+  await expect(byClass(page, "account-page-push")).toHaveCount(0);
+  await expect(byClass(page, "account-page-queue")).toHaveCount(0);
+  await expect(byClass(page, "account-page-crypto")).toHaveCount(0);
+  await page.goBack();
   await expect(byClass(page, "dashboard-panel")).toBeVisible();
   await expect(byClass(page, "realm-tree-summary")).toContainText(
     "Recent Realms",
@@ -402,8 +402,8 @@ test("connect refresh canonicalizes a stale locator while retaining the accepted
 
   await refreshServer(page);
 
-  await page.locator(".account-menu-wrap .sapid-popover-trigger").last().click();
-  await expect(page.locator(".account-menu .who").last()).toHaveText(
+  await page.locator(".rail-account").last().click();
+  await expect(page.locator(".account-page .who").last()).toHaveText(
     "inkson",
   );
   await expect(accountValue(page, "Handles").last()).toContainText(
@@ -416,7 +416,7 @@ test("connect refresh canonicalizes a stale locator while retaining the accepted
   await expect(accountValue(page, "DID").last()).toHaveText(
     /^ak:did_core:webvh:.+\.\.\..+$/,
   );
-  await expectCompleteDescription(page, byClass(page, "account-menu__device-id").last(), canonicalDeviceId);
+  await expectCompleteDescription(page, byClass(page, "account-page__device-id").last(), canonicalDeviceId);
   await expectIdentityTooltip(page, "Copy device ID", canonicalDeviceId);
   await expect
     .poll(() => readLocalConfig(page))

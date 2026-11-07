@@ -297,13 +297,10 @@ fn signed_out_identity_labels_do_not_leak_a_principal_id() {
         personal_handles: &[],
         personal_handles_status: "unknown",
         account_display_name: "",
-        device_display_name: "",
-        device_id_label: "ak:dev…001",
         principal_id_value: "ak:did_core:web:alice.example",
         store: &store,
     });
     assert_eq!(labels.label, "Not signed in");
-    assert_eq!(labels.detail, "Refresh server metadata, then sign in");
     assert!(!labels.label.contains("alice.example"));
 }
 
@@ -319,13 +316,10 @@ fn identity_labels_prefer_display_name_then_handle_then_protocol_id() {
         personal_handles: &handles,
         personal_handles_status: "verified",
         account_display_name: "Alice",
-        device_display_name: "Laptop",
-        device_id_label: "ak:dev…001",
         principal_id_value: "ak:did_core:web:alice.example",
         store: &store,
     });
     assert_eq!(with_name.label, "Alice");
-    assert_eq!(with_name.detail, "alice:local.host · Laptop");
     assert_eq!(
         with_name.handles_label,
         "alice:local.host, alice:example.com"
@@ -337,25 +331,19 @@ fn identity_labels_prefer_display_name_then_handle_then_protocol_id() {
         personal_handles: &handles,
         personal_handles_status: "verified",
         account_display_name: "   ",
-        device_display_name: "",
-        device_id_label: "ak:dev…001",
         principal_id_value: "ak:did_core:web:alice.example",
         store: &store,
     });
     assert_eq!(without_name.label, "alice:local.host");
-    assert_eq!(without_name.detail, "alice:local.host · ak:dev…001");
 
     let without_handle = account_identity_labels(AccountIdentityInput {
         has_session: true,
         personal_handles: &[],
         personal_handles_status: "none",
         account_display_name: "",
-        device_display_name: "Laptop",
-        device_id_label: "ak:dev…001",
         principal_id_value: "ak:did_core:web:alice.example",
         store: &store,
     });
-    assert_eq!(without_handle.detail, "Laptop");
     assert_eq!(without_handle.handles_title, without_handle.handles_label);
 }
 

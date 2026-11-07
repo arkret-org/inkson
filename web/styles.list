@@ -17,7 +17,7 @@ src/styles/components/utilities.css
 src/styles/features/app-shell.css
 src/styles/features/sidebar-nav.css
 src/styles/features/topbar.css
-src/styles/features/account-menu.css
+src/styles/features/account-page.css
 src/styles/features/command-palette.css
 src/styles/features/auth.css
 src/styles/features/onboarding.css

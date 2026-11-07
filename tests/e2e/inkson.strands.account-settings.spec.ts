@@ -24,8 +24,8 @@ import {
 
 registerStrandsBeforeEach();
 
-function accountMenu(page: Page) {
-  return byClass(page, "account-menu");
+function accountPage(page: Page) {
+  return byClass(page, "account-page");
 }
 
 function agentCreation(page: Page) {
@@ -98,13 +98,13 @@ async function selectLanguage(page: Page, language: "en" | "zh") {
   await expect(page.locator("html")).toHaveAttribute("lang", language);
 }
 
-test("topbar account menu shows profile identity and current device", async ({ page }) => {
+test("account page shows profile identity and current device", async ({ page }) => {
   await refreshServer(page);
   await dismissBlockingRecoveryModal(page);
-  await page.locator(".account-menu-wrap .sapid-popover-trigger").click();
-  const menu = accountMenu(page);
+  await page.locator(".rail-account").click();
+  const menu = accountPage(page);
   await expect(menu).toBeVisible();
-  const rowBoxes = await byClass(menu, "account-menu__row").evaluateAll(rows => rows.map(row => {
+  const rowBoxes = await byClass(menu, "account-page__row").evaluateAll(rows => rows.map(row => {
     const { y, height } = row.getBoundingClientRect();
     return { center: y + height / 2, height };
   }));
@@ -114,51 +114,44 @@ test("topbar account menu shows profile identity and current device", async ({ p
     expect(Math.abs(rowBoxes[index].height - rowBoxes[0].height)).toBeLessThan(0.5);
     expect(Math.abs((rowBoxes[index].center - rowBoxes[index - 1].center) - (rowBoxes[1].center - rowBoxes[0].center))).toBeLessThan(0.5);
   }
-  const didRow = byClass(menu, "account-menu__row").first();
+  const didRow = byClass(menu, "account-page__row").first();
   await expect(didRow.locator(".mono")).toHaveText(
     /^ak:did_core:webvh:.+\.\.\..+$/,
   );
-  await expect(byClass(page, "account-menu")).toContainText("ak:device:");
+  await expect(byClass(page, "account-page")).toContainText("ak:device:");
   await expect(menu.getByRole("button", { name: "Copy DID", exact: true })).toBeVisible();
   await expect(menu.getByRole("button", { name: "Copy device ID", exact: true })).toBeVisible();
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await menu.getByRole("button", { name: "Copy DID", exact: true }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(CURRENT_PRINCIPAL_CORE_ID);
   await expect(byClass(menu, "who")).toHaveText("inkson");
-  await expect(byClass(menu, "account-menu__avatar")).toHaveClass(/generated-avatar/);
-  await expect(menu.locator("svg.account-menu__avatar")).toBeVisible();
-  await expect(byClass(menu, "account-menu__device-name")).toHaveCount(0);
+  await expect(byClass(menu, "account-page__avatar")).toHaveClass(/generated-avatar/);
+  await expect(menu.locator("svg.account-page__avatar")).toBeVisible();
+  await expect(byClass(menu, "account-page__device-name")).toHaveCount(0);
   await expect(byClass(menu, "account-picker__select")).toHaveCount(0);
   await expect(byClass(menu, "account-switch-list")).toHaveCount(0);
-  await expect(menu.locator(".account-menu__head .handle")).toHaveCount(0);
+  await expect(menu.locator(".account-page__head .handle")).toHaveCount(0);
   await expect(menu.getByRole("button", { name: "Refresh session", exact: true })).toHaveCount(0);
   await expect(byClass(menu, "account-picker__add")).toBeVisible();
   await menu.getByRole("button", { name: "Copy device ID", exact: true }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("ak:device:01964137-0000-7000-8000-0000000000a1");
-  await expect(byClass(page, "account-menu-session-state")).toHaveCount(0);
-  await expect(byClass(menu, "account-menu__qr")).toBeVisible();
+  await expect(byClass(page, "account-page-session-state")).toHaveCount(0);
   await expect(menu.getByRole("link", { name: "Settings", exact: true })).toHaveCount(0);
-  const menuBox = await byClass(page, "account-menu").boundingBox();
-  const qrBox = await byClass(menu, "account-menu__qr").boundingBox();
-  const logoutBox = (await byClass(menu, "account-menu-sign-out-current").boundingBox())!;
+  const logoutBox = (await byClass(menu, "account-page-sign-out-current").boundingBox())!;
   const addBox = (await byClass(menu, "account-picker__add").boundingBox())!;
-  const allBox = (await byClass(menu, "account-menu-sign-out-all").boundingBox())!;
-  expect(menuBox).not.toBeNull();
-  expect(qrBox).not.toBeNull();
-  expect(qrBox!.x + qrBox!.width).toBeGreaterThan(menuBox!.x + menuBox!.width - 48);
-  expect(menuBox!.width).toBeCloseTo(320, 0);
+  const allBox = (await byClass(menu, "account-page-sign-out-all").boundingBox())!;
   expect(logoutBox.y).toBeLessThan(addBox.y);
   expect(addBox.y).toBeLessThan(allBox.y);
-  const actions = byClass(menu, "account-menu-action");
+  const actions = menu.locator("button.account-page-action");
   await expect(actions).toHaveCount(3);
   for (const button of await actions.all()) {
-    await expect(button.locator(".account-menu-action-icon")).toHaveCount(1);
+    await expect(button.locator(".account-page-action-icon")).toHaveCount(1);
     const box = (await button.boundingBox())!;
     expect(Math.abs(box.height - logoutBox.height)).toBeLessThan(1);
     expect(Math.abs(box.width - logoutBox.width)).toBeLessThan(1);
   }
-  await page.screenshot({ path: test.info().outputPath("account-menu.png") });
-  await byClass(menu, "account-menu__qr").click();
+  await page.screenshot({ path: test.info().outputPath("account-page.png") });
+  await byClass(page, "rail-settings").click();
   await expect(page).toHaveURL(/\/settings$/);
   await expect(byClass(page, "settings-page")).toBeVisible();
   await page.evaluate(() => {
@@ -174,8 +167,8 @@ test("topbar account menu shows profile identity and current device", async ({ p
   });
   await page.reload();
   await dismissBlockingRecoveryModal(page);
-  await page.locator(".account-menu-wrap .sapid-popover-trigger").click();
-  const switcher = byClass(accountMenu(page), "account-switch-row");
+  await page.locator(".rail-account").click();
+  const switcher = byClass(accountPage(page), "account-switch-row");
   await expect(switcher).toHaveCount(1);
   await expect(switcher).toBeVisible();
   await expect(byClass(switcher, "account-switch-handle")).toHaveText("Other saved account");
@@ -184,15 +177,15 @@ test("topbar account menu shows profile identity and current device", async ({ p
   await page.screenshot({ path: test.info().outputPath("other-account-list.png") });
 });
 
-test("account menu signs out all saved sessions and remains signed out after reload", async ({ page }) => {
+test("account page signs out all saved sessions and remains signed out after reload", async ({ page }) => {
   const runtimeErrors: string[] = [];
   page.on("pageerror", error => runtimeErrors.push(String(error)));
   await gotoAndDismissRecovery(page, "/contacts");
   await page.addInitScript(() => localStorage.setItem("inkson.test.session_injection.v1", "{}"));
   await page.evaluate(() => localStorage.setItem("inkson.test.session_injection.v1", "{}"));
-  await page.locator(".account-menu-wrap .sapid-popover-trigger").click();
+  await page.locator(".rail-account").click();
   const response = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/_arkret/gate/account/logout");
-  await byClass(accountMenu(page), "account-menu-sign-out-all").click();
+  await byClass(accountPage(page), "account-page-sign-out-all").click();
   expect((await response).status()).toBe(200);
   await expect(page).toHaveURL(/\/login(?:[?#]|$)/);
   await expect(byClass(page, "auth-panel")).toBeVisible();
@@ -202,16 +195,16 @@ test("account menu signs out all saved sessions and remains signed out after rel
   expect(runtimeErrors).toEqual([]);
 });
 
-test("account menu keeps the viewer fallback handle", async ({
+test("account page keeps the viewer fallback handle", async ({
   page,
 }) => {
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.locator(".shell.app").last()).toBeVisible({ timeout: 120_000 });
   await refreshServer(page);
   await dismissBlockingRecoveryModal(page);
-  await page.locator(".account-menu-wrap .sapid-popover-trigger").last().click();
+  await page.locator(".rail-account").last().click();
 
-  await expect(byClass(accountMenu(page), "account-menu__row").nth(1).locator(".mono")).toHaveText("alice:local.host");
+  await expect(byClass(accountPage(page), "account-page__row").nth(1).locator(".mono")).toHaveText("alice:local.host");
 });
 
 test("settings language selector offers only English and Chinese", async ({ page }) => {

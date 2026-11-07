@@ -518,7 +518,6 @@ pub fn chinese_translations() -> TranslationDict {
 
     // R-i18n-002 mirrored keys.
     dict.set("topbar.search_placeholder", "跳转到 Realm、视图或操作...");
-    dict.set("topbar.account_menu", "账号菜单");
 
     dict.set("login.continue", "继续");
     dict.set("login.server_sign_in", "前往服务器登录");
@@ -3707,6 +3706,7 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.setup", "设置向导");
     dict.set("route.setup_realms", "新建 Realm");
     dict.set("route.setup_new_space", "新建空间");
+    dict.set("route.account", "账号");
     dict.set("route.settings", "设置");
     dict.set("route.notifications", "通知");
     dict.set("route.realm_members", "成员");
@@ -4000,7 +4000,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.sidebar.delete_contact", "删除联系人");
     dict.set("app.topbar.current_view", "当前视图：{surface}");
     dict.set("app.topbar.open_global_search", "打开全局搜索");
-    dict.set("app.account.open_settings", "打开设置");
     dict.set("app.account.did", "DID");
     dict.set("app.account.server", "服务器");
     dict.set("app.account.sign_out_current", "退出当前账号");
@@ -4024,7 +4023,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("theme.switch_to_light", "切换到浅色主题");
     dict.set("theme.switch_to_night", "切换到深色主题");
     dict.set("account.not_signed_in", "尚未登录");
-    dict.set("account.refresh_then_sign_in", "先刷新服务器元数据，再登录");
     dict.set("visibility.pill_title", "谁可以找到并看到它");
     dict.set("moderation.workbench_aria_label", "内容处置");
     dict.set("moderation.decide_title", "记录一次处置");

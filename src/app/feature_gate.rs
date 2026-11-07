@@ -110,6 +110,7 @@ pub(super) fn route_label_key(route: &Route) -> &'static str {
             "new-space" => "route.setup_new_space",
             _ => "route.setup",
         },
+        Route::Account => "route.account",
         Route::Settings => "route.settings",
         Route::SettingsSection { section, .. } => settings_route_label_key(section),
         Route::NotificationsSettings => "route.notifications",

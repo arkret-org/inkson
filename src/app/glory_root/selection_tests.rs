@@ -77,7 +77,7 @@ fn root_realm_selection_survives_history_routes_filters_control_and_respects_acc
     install_realm_selection(app.scope(), context.clone());
     let ui = crate::app::shell_state::ShellState::new(app.scope(), &context);
     app.mount(glory::ui::group().fill(vec![
-        crate::app::sidebar::sidebar(app.scope(), context.clone(), ui.clone()),
+        crate::app::sidebar::sidebar(app.scope(), context.clone()),
         crate::app::sidebar::workspace_list(app.scope(), context.clone(), ui),
     ]))
     .unwrap();

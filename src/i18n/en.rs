@@ -886,7 +886,6 @@ pub fn english_translations() -> TranslationDict {
         "topbar.search_placeholder",
         "Jump to a Realm, view or action...",
     );
-    dict.set("topbar.account_menu", "Account menu");
 
     dict.set("login.continue", "Continue");
     dict.set("login.server_sign_in", "Sign in to this server");
@@ -4358,6 +4357,7 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.setup", "Setup");
     dict.set("route.setup_realms", "New Realm");
     dict.set("route.setup_new_space", "New Space");
+    dict.set("route.account", "Account");
     dict.set("route.settings", "Settings");
     dict.set("route.notifications", "Notifications");
     dict.set("route.realm_members", "Members");
@@ -4683,7 +4683,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.sidebar.delete_contact", "Delete Contact");
     dict.set("app.topbar.current_view", "Current view: {surface}");
     dict.set("app.topbar.open_global_search", "Open global search");
-    dict.set("app.account.open_settings", "Open settings");
     dict.set("app.account.did", "DID");
     dict.set("app.account.server", "Server");
     dict.set("app.account.sign_out_current", "Sign out of this account");
@@ -4710,10 +4709,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("theme.switch_to_light", "Switch to light theme");
     dict.set("theme.switch_to_night", "Switch to night theme");
     dict.set("account.not_signed_in", "Not signed in");
-    dict.set(
-        "account.refresh_then_sign_in",
-        "Refresh server metadata, then sign in",
-    );
     dict.set("visibility.pill_title", "Who can find and see this");
     dict.set("moderation.workbench_aria_label", "Moderation decisions");
     dict.set("moderation.decide_title", "Record a decision");

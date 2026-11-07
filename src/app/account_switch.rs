@@ -349,7 +349,7 @@ pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Vary
                 did,
                 profile.account.server_url
             );
-            let avatar = super::session_shell::account_menu_avatar(
+            let avatar = super::session_shell::account_page_avatar(
                 scope,
                 context.clone(),
                 did.clone(),
@@ -405,7 +405,7 @@ pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Vary
             "account-picker",
             vec![
                 accounts,
-                super::session_shell::account_menu_action(
+                super::session_shell::account_page_action(
                     "account-picker__add",
                     "user-plus",
                     context.translated(scope, "app.account.add"),

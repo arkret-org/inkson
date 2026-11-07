@@ -27,7 +27,7 @@ pub(super) fn action(
             .on_press(handler),
     )
 }
-pub(super) fn account_menu_action(
+pub(super) fn account_page_action(
     class: &str,
     icon: &str,
     label: impl Into<Vary<String>>,
@@ -38,16 +38,16 @@ pub(super) fn account_menu_action(
     Box::new(
         sapid::button()
             .unstyled()
-            .class(format!("btn btn-ghost account-menu-action {class}"))
+            .class(format!("btn btn-ghost account-page-action {class}"))
             .label("")
             .name(label.clone())
             .enabled(enabled)
             .fill((
                 crate::components::icons::ui_icon_with_class(
                     icon,
-                    "ui-icon account-menu-action-icon",
+                    "ui-icon account-page-action-icon",
                 ),
-                text().class("account-menu-action-label").content(label),
+                text().class("account-page-action-label").content(label),
             ))
             .on_press(handler),
     )
@@ -276,7 +276,6 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
                         .notifications_open
                         .revise(|value| *value = false);
                     keyboard_ui.mobile_open.revise(|value| *value = false);
-                    keyboard_ui.account_open.revise(|value| *value = false);
                 }
                 _ => {}
             }
@@ -299,7 +298,7 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
             health_prompt(scope, context.clone()),
             mobile_bar(scope, context.clone(), ui.clone(), unread),
             mobile_drawer(scope, context.clone(), ui.clone()),
-            super::sidebar::sidebar(scope, context.clone(), ui.clone()),
+            super::sidebar::sidebar(scope, context.clone()),
             Box::new(
                 view()
                     .class(scope.bond({
@@ -542,7 +541,6 @@ fn mobile_bar(
             ),
             notifications_button(scope, &context, unread, move || {
                 ui.mobile_open.revise(|value| *value = false);
-                ui.account_open.revise(|value| *value = false);
                 ui.search_open.revise(|value| *value = false);
                 ui.search_query.revise(String::clear);
                 ui.notifications_open.revise(|value| *value = !*value);
@@ -922,7 +920,7 @@ fn topbar(
         ],
     )
 }
-pub(super) fn account_menu_avatar(
+pub(super) fn account_page_avatar(
     scope: &Scope,
     context: Rc<InksonContext>,
     principal: String,
@@ -942,7 +940,7 @@ pub(super) fn account_menu_avatar(
         },
     )
 }
-fn account_menu_copy(
+fn account_page_copy(
     scope: &Scope,
     context: Rc<InksonContext>,
     label: impl Into<Vary<String>>,
@@ -974,7 +972,7 @@ fn account_menu_copy(
         });
     };
     let button = glory::ui::button()
-        .class("btn icon account-menu__copy")
+        .class("btn icon account-page__copy")
         .name(label.clone())
         .fill(crate::components::ui_icon("copy"))
         .on(EventKind::Activate, copy);
@@ -994,10 +992,10 @@ fn account_menu_copy(
     #[cfg(not(target_arch = "wasm32"))]
     Box::new(button)
 }
-fn account_menu_text(class: impl Into<String>, value: impl Into<Vary<String>>) -> View {
+fn account_page_text(class: impl Into<String>, value: impl Into<Vary<String>>) -> View {
     Box::new(text().class(class.into()).content(value))
 }
-fn account_menu_identity(
+fn account_page_identity(
     scope: &Scope,
     class: &str,
     label: String,
@@ -1030,7 +1028,7 @@ fn account_menu_identity(
         )),
     )
 }
-pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
+pub(super) fn account_rail_link(scope: &Scope, context: Rc<InksonContext>) -> View {
     let avatar_source = scope.bond({
         let context = context.clone();
         move || {
@@ -1043,17 +1041,66 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
     let avatar = reactive_distinct(avatar_source, {
         let context = context.clone();
         move |scope, (principal, blob)| {
-            account_menu_avatar(
+            account_page_avatar(
                 scope,
                 context.clone(),
                 principal,
                 blob,
-                context.tr("topbar.account_menu"),
-                "avatar-img topbar-account-avatar",
+                context.tr("route.account"),
+                "avatar-img rail-account-avatar",
             )
         }
     });
-    let menu_source = scope.bond({
+    let online = scope.bond({
+        let context = context.clone();
+        move || !context.token.get().is_empty()
+    });
+    let route = context.route;
+    let active = scope.bond(move || route.get() == Route::Account);
+    Box::new(
+        internal_link()
+            .class(scope.bond(move || {
+                if active.get() {
+                    "rail-link rail-account is-active".to_owned()
+                } else {
+                    "rail-link rail-account".to_owned()
+                }
+            }))
+            .target(Route::Account.to_string())
+            .name(context.translated(scope, "route.account"))
+            .semantics(scope.bond(move || {
+                Some(Box::new(glory::render::Semantics {
+                    current: active.get().then_some(glory::render::Current::Page),
+                    ..Default::default()
+                }))
+            }))
+            .fill((
+                avatar,
+                reactive(online, move |_, online| {
+                    if online {
+                        Box::new(text().class("dot-online").content("")) as View
+                    } else {
+                        empty()
+                    }
+                }),
+            ))
+            .on(EventKind::Activate, move |_| {
+                context.navigate(Route::Account)
+            }),
+    )
+}
+
+pub(super) fn account_page(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
+    let avatar_source = scope.bond({
+        let context = context.clone();
+        move || {
+            (
+                super::principal_id_owned(context.principal_id.get()),
+                context.account_avatar_display(),
+            )
+        }
+    });
+    let identity = scope.bond({
         let context = context.clone();
         let ui = ui.clone();
         move || {
@@ -1061,7 +1108,6 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
             let _ = context.state_revision.get();
             let account = super::principal_id_owned(context.principal_id.get());
             let device = context.device_id.get();
-            let device_name = ui.device_name.get();
             let has_session = !context.token.get().is_empty();
             let labels = context.state_store.read(|store| {
                 super::shell_model::account_identity_labels(
@@ -1070,92 +1116,64 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
                         personal_handles: &context.personal_handles.get(),
                         personal_handles_status: &context.personal_handles_status.get(),
                         account_display_name: &ui.display_name.get(),
-                        device_display_name: &device_name,
-                        device_id_label: &short_protocol_id(&device),
                         principal_id_value: &account,
                         store,
                     },
                 )
             });
             (
-                ui.account_open.get(),
                 (account, device, has_session),
-                (
-                    labels.label,
-                    labels.detail,
-                    labels.handles_label,
-                    labels.handles_title,
-                ),
+                (labels.label, labels.handles_label, labels.handles_title),
                 avatar_source.get(),
                 context.base_url.get(),
                 context.locale.get(),
             )
         }
     });
-    let body = reactive_distinct(menu_source, {
+    let identity = reactive_distinct(identity, {
         let context = context.clone();
         let ui = ui.clone();
         move |scope,
               (
-            open,
             (account, device, has_session),
-            (label, _detail, handles_label, handles_title),
+            (label, handles_label, handles_title),
             (principal, blob),
             server,
             _,
         )| {
-            if !open {
-                return empty();
-            }
-            let settings_link = |class: &str, icon: &str| -> View {
-                let context = context.clone();
-                let ui = ui.clone();
-                Box::new(
-                    internal_link()
-                        .target(Route::Settings.to_string())
-                        .class(class.to_owned())
-                        .name(context.translated(scope, "app.account.open_settings"))
-                        .fill(crate::components::ui_icon(icon))
-                        .on(EventKind::Activate, move |_| {
-                            ui.account_open.revise(|value| *value = false);
-                            context.navigate(Route::Settings);
-                        }),
-                )
-            };
             let head = block(
-                "account-menu__head",
+                "account-page__head",
                 vec![
-                    account_menu_avatar(
+                    account_page_avatar(
                         scope,
                         context.clone(),
                         principal,
                         blob,
                         label.clone(),
-                        "avatar-img account-menu__avatar",
+                        "avatar-img account-page__avatar",
                     ),
-                    block("grow", vec![account_menu_text("who", label)]),
-                    settings_link("btn icon sm ghost account-menu__qr", "qr-code"),
+                    account_page_text("who", label),
                 ],
             );
-            let key = |label| account_menu_text("account-menu__key", label);
+            let key = |label| account_page_text("account-page__key", label);
             let identity_rows = block(
-                "account-menu__rows",
+                "account-page__rows",
                 vec![
                     block(
-                        "account-menu__row",
+                        "account-page__row",
                         vec![
                             key(context.tr("app.account.did")),
                             block(
-                                "account-menu__value",
+                                "account-page__value",
                                 vec![
-                                    account_menu_identity(
+                                    account_page_identity(
                                         scope,
                                         "mono",
                                         short_protocol_id(&account),
                                         &account,
                                         "account-did",
                                     ),
-                                    account_menu_copy(
+                                    account_page_copy(
                                         scope,
                                         context.clone(),
                                         context.translated(scope, "settings.account.copy_did"),
@@ -1167,20 +1185,20 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
                         ],
                     ),
                     block(
-                        "account-menu__row",
+                        "account-page__row",
                         vec![
                             key(context.tr("settings.account.handles")),
                             block(
-                                "account-menu__value",
+                                "account-page__value",
                                 vec![
-                                    account_menu_identity(
+                                    account_page_identity(
                                         scope,
                                         "mono",
                                         handles_label,
                                         &handles_title,
                                         "account-handles",
                                     ),
-                                    account_menu_copy(
+                                    account_page_copy(
                                         scope,
                                         context.clone(),
                                         context.translated(scope, "settings.account.copy_handles"),
@@ -1192,20 +1210,20 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
                         ],
                     ),
                     block(
-                        "account-menu__row",
+                        "account-page__row",
                         vec![
                             key(context.tr("settings.devices.column_device")),
                             block(
-                                "account-menu__value",
+                                "account-page__value",
                                 vec![
-                                    account_menu_identity(
+                                    account_page_identity(
                                         scope,
-                                        "mono account-menu__device-id",
+                                        "mono account-page__device-id",
                                         short_protocol_id(&device),
                                         &device,
                                         "account-device",
                                     ),
-                                    account_menu_copy(
+                                    account_page_copy(
                                         scope,
                                         context.clone(),
                                         context
@@ -1218,11 +1236,11 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
                         ],
                     ),
                     block(
-                        "account-menu__row",
+                        "account-page__row",
                         vec![
                             key(context.tr("app.account.server")),
-                            account_menu_text(
-                                "account-menu__server",
+                            account_page_text(
+                                "account-page__server",
                                 crate::config::normalize_server_url(&server),
                             ),
                         ],
@@ -1234,8 +1252,8 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
             let logout = {
                 let context = context.clone();
                 let status = ui.session_status;
-                account_menu_action(
-                    "account-menu-sign-out-current",
+                account_page_action(
+                    "account-page-sign-out-current",
                     "log-out",
                     context.translated(scope, "app.account.sign_out_current"),
                     ready,
@@ -1245,8 +1263,8 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
             let logout_all = {
                 let context = context.clone();
                 let status = ui.session_status;
-                account_menu_action(
-                    "account-menu-sign-out-all",
+                account_page_action(
+                    "account-page-sign-out-all",
                     "log-out-all",
                     context.translated(scope, "app.account.sign_out_all"),
                     ready,
@@ -1254,58 +1272,33 @@ pub(super) fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
                 )
             };
             block(
-                "account-menu-content",
+                "account-page-sections",
                 vec![
-                    block("account-menu-current", vec![head, identity_rows, logout]),
+                    block("account-page-current", vec![head, identity_rows, logout]),
+                    Box::new(
+                        internal_link()
+                            .target(Route::Settings.to_string())
+                            .class("btn btn-ghost account-page-action account-page-settings")
+                            .name(context.translated(scope, "nav.settings"))
+                            .fill((
+                                crate::components::icons::ui_icon_with_class(
+                                    "settings",
+                                    "ui-icon account-page-action-icon",
+                                ),
+                                text().content(context.translated(scope, "nav.settings")),
+                            ))
+                            .on(EventKind::Activate, {
+                                let context = context.clone();
+                                move |_| context.navigate(Route::Settings)
+                            }),
+                    ),
                     super::account_switch::account_switcher(scope, context.clone(), true.into()),
-                    block("account-menu__actions", vec![logout_all]),
+                    block("account-page__actions", vec![logout_all]),
                 ],
             )
         }
     });
-    let online = scope.bond({
-        let context = context.clone();
-        move || !context.token.get().is_empty()
-    });
-    let mut visual: Option<View> = Some(Box::new(glory::ui::group().fill((
-        avatar,
-        reactive(online, move |_, online| {
-            if online {
-                Box::new(text().class("dot-online").content("")) as View
-            } else {
-                empty()
-            }
-        }),
-    ))));
-    let mut body = Some(body);
-    block(
-        "account-menu-wrap",
-        vec![Box::new(
-            sapid::popover("account-menu")
-                .unstyled()
-                .class("account-menu")
-                .label(context.translated(scope, "topbar.account_menu"))
-                .open(ui.account_open)
-                .show_close(false)
-                .placement(
-                    glory::render::AnchorPlacement::new(
-                        glory::render::AnchorSide::Right,
-                        glory::render::AnchorAlign::End,
-                    )
-                    .gap(16.0),
-                )
-                .width(sapid::PopoverWidth::Auto)
-                .content_policy(sapid::ContentPolicy::KeepMounted)
-                .trigger_content(move || visual.take().unwrap_or_else(empty))
-                .on_open_change(move |open| {
-                    if open {
-                        super::command_palette::close_palette(&ui);
-                    }
-                    ui.account_open.revise(|value| *value = open);
-                })
-                .content(move || body.take().unwrap_or_else(empty)),
-        )],
-    )
+    block("account-page", vec![identity])
 }
 
 fn filtered_mobile_realm_items<'a>(
@@ -1786,7 +1779,7 @@ mod tests {
         let full = "ak:device:01964137-0000-7000-8000-0000000000a1";
         let shortened = short_protocol_id(full);
         assert_ne!(shortened, full);
-        app.mount(account_menu_identity(
+        app.mount(account_page_identity(
             app.scope(),
             "mono",
             shortened.clone(),
@@ -1816,7 +1809,7 @@ mod tests {
     }
 
     #[test]
-    fn account_trigger_keeps_its_node_when_the_avatar_revision_changes() {
+    fn account_page_shows_identity_rows_and_links_to_settings() {
         use super::*;
         fn class_nodes(app: &glory::App, class: &str) -> Vec<glory::render::NodeId> {
             let tree = app.tree();
@@ -1837,11 +1830,6 @@ mod tests {
             }
             found
         }
-        fn trigger(app: &glory::App) -> glory::render::NodeId {
-            *class_nodes(app, "sapid-popover-trigger")
-                .first()
-                .expect("account trigger")
-        }
         let app = glory::App::memory();
         let dir = tempfile::tempdir().unwrap();
         let context = InksonContext::new(
@@ -1861,51 +1849,19 @@ mod tests {
             |_| Box::pin(std::future::pending()),
         );
         let ui = ShellState::new(app.scope(), &context);
-        app.mount(account_menu(app.scope(), context.clone(), ui.clone()))
+        app.mount(account_page(app.scope(), context.clone(), ui))
             .unwrap();
-        let button = trigger(&app);
-        for open in [true, false, true, false] {
-            context
-                .state_revision
-                .revise(|revision| *revision = revision.wrapping_add(1));
-            app.flush().unwrap();
-            assert_eq!(trigger(&app), button);
-            assert!(
-                app.dispatch(button, glory::render::Event::Activate)
-                    .unwrap()
-            );
-            app.flush().unwrap();
-            assert_eq!(ui.account_open.get_untracked(), open);
-            assert_eq!(trigger(&app), button);
-        }
-        ui.search_open.revise(|value| *value = true);
-        ui.search_query
-            .revise(|value| *value = "previous search".into());
-        app.dispatch(button, glory::render::Event::Activate)
-            .unwrap();
-        app.flush().unwrap();
-        assert!(ui.account_open.get_untracked());
-        assert!(!ui.search_open.get_untracked());
-        assert!(ui.search_query.get_untracked().is_empty());
-        assert_eq!(class_nodes(&app, "account-menu__avatar").len(), 1);
-        assert_eq!(class_nodes(&app, "account-menu__qr").len(), 1);
-        let rows = class_nodes(&app, "account-menu__row");
+        assert_eq!(class_nodes(&app, "account-page__avatar").len(), 1);
+        let rows = class_nodes(&app, "account-page__row");
         assert_eq!(rows.len(), 4);
         for row in rows {
             assert_eq!(app.tree().node(row).unwrap().children.iter().count(), 2);
         }
-        let panel = class_nodes(&app, "account-menu")[0];
-        assert!(
-            app.dispatch(
-                panel,
-                glory::render::Event::Dismiss(glory::render::DismissReason::Outside)
-            )
-            .unwrap()
-        );
+        let settings = class_nodes(&app, "account-page-settings")[0];
+        app.dispatch(settings, glory::render::Event::Activate)
+            .unwrap();
         app.flush().unwrap();
-        assert!(!ui.account_open.get_untracked());
-        assert!(app.tree().node(panel).unwrap().descriptor.view().hidden());
-        assert_eq!(trigger(&app), button);
+        assert_eq!(context.route.get_untracked(), Route::Settings);
     }
 
     #[test]

@@ -8,7 +8,6 @@ enum ShortcutAction {
     Help,
     DismissHelp,
     DismissNotifications,
-    DismissAccount,
 }
 
 fn action_for(
@@ -29,11 +28,6 @@ fn action_for(
         }
         _ => None,
     }
-}
-
-fn account_menu_action(input: KeyboardInput<'_>, open: bool) -> Option<ShortcutAction> {
-    (open && !input.editable && input.command() == Some(KeyboardCommand::Dismiss))
-        .then_some(ShortcutAction::DismissAccount)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -97,8 +91,7 @@ pub(super) fn install(
             input,
             ui.shortcut_open.get_untracked(),
             ui.notifications_open.get_untracked(),
-        )
-        .or_else(|| account_menu_action(input, ui.account_open.get_untracked())) else {
+        ) else {
             return;
         };
         let context = context.clone();
@@ -113,7 +106,6 @@ pub(super) fn install(
                 ShortcutAction::DismissNotifications => {
                     ui.notifications_open.revise(|value| *value = false)
                 }
-                ShortcutAction::DismissAccount => ui.account_open.revise(|value| *value = false),
             }
         }) {
             Ok(_) => {
@@ -140,29 +132,6 @@ pub(super) fn install(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn escape_claims_only_the_open_account_menu() {
-        let input = KeyboardInput {
-            key: "Escape",
-            ..Default::default()
-        };
-        assert_eq!(
-            account_menu_action(input, true),
-            Some(ShortcutAction::DismissAccount)
-        );
-        assert_eq!(account_menu_action(input, false), None);
-        assert_eq!(
-            account_menu_action(
-                KeyboardInput {
-                    editable: true,
-                    ..input
-                },
-                true
-            ),
-            None
-        );
-    }
 
     #[test]
     fn only_supported_nonediting_global_commands_are_claimed() {

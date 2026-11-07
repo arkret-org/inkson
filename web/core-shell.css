@@ -48,8 +48,6 @@ html[data-inkson-app-shell] #app {
   background-color: color-mix(in oklab, var(--shell-control-background) 80%, transparent);
 }
 
-.account-menu__key { color: var(--text-3); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; }
-.account-menu__server { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* The original Presence name was an inline span, with status in the same row. */
 .presence-row .presence-name { display: inline; }
