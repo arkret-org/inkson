@@ -117,6 +117,49 @@ impl SettingsSection {
         crate::i18n::tr(self.label_key())
     }
 
+    /// Public control labels in this section, never account values or secrets.
+    pub(super) fn search_label_keys(self) -> &'static [&'static str] {
+        match self {
+            Self::Account => &[
+                "settings.profile.display_name",
+                "settings.profile.biography",
+                "settings.account.handles",
+            ],
+            Self::Devices => &[
+                "settings.devices.title",
+                "settings.devices.accept_title",
+                "settings.devices.accept_code_title",
+            ],
+            Self::Recovery => &["recovery.recovery_key_section"],
+            Self::Encryption => &["settings.mls_recovery.title", "settings.key_backup.title"],
+            Self::Notifications => &[
+                "settings.notifications.sound_on",
+                "settings.notifications.dnd",
+                "settings.notifications.kind_mention",
+                "settings.notifications.kind_reaction",
+                "settings.notifications.kind_message",
+            ],
+            Self::Privacy => &[
+                "settings.privacy.presence_visibility",
+                "settings.privacy.status_title",
+                "settings.read_receipts.send_default",
+                "settings.read_receipts.display_default",
+            ],
+            Self::Theme => &[
+                "settings.language.title",
+                "settings.theme.light",
+                "settings.theme.night",
+                "settings.theme.system",
+            ],
+            Self::Storage => &[
+                "settings.storage.quota_title",
+                "settings.storage.clear_realm",
+                "settings.storage_risks.title",
+            ],
+            _ => &[],
+        }
+    }
+
     pub(super) fn route(self) -> Route {
         match self {
             Self::Devices => Route::SettingsDevices,

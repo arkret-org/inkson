@@ -25,9 +25,9 @@ pub(super) struct SettingsNavGroup {
 
 /// Sidebar groups that match `query`, with empty groups dropped.
 ///
-/// `query` is matched against the *localized* section label, so the search box
-/// finds a section by the name the reader can actually see. An empty query
-/// shows everything (design/settings-ia-reorg.md §3.4).
+/// Match localized section and control labels so a reader can find Language
+/// under Appearance, for example. Each query word must match the same section.
+/// An empty query shows everything (design/settings-ia-reorg.md §3.4).
 pub(super) fn visible_nav_groups(query: &str) -> Vec<SettingsNavGroup> {
     let query = query.trim().to_lowercase();
     SETTINGS_NAV_GROUPS
@@ -38,7 +38,13 @@ pub(super) fn visible_nav_groups(query: &str) -> Vec<SettingsNavGroup> {
                 .iter()
                 .copied()
                 .filter(|section| {
-                    query.is_empty() || section.label().to_lowercase().contains(&query)
+                    let mut text = format!("{} {}", section.label(), section.slug());
+                    for key in section.search_label_keys() {
+                        text.push(' ');
+                        text.push_str(&crate::i18n::tr(key));
+                    }
+                    let text = text.to_lowercase();
+                    query.split_whitespace().all(|word| text.contains(word))
                 })
                 .collect();
             (!sections.is_empty()).then_some(SettingsNavGroup {

@@ -701,26 +701,29 @@ pub(crate) fn page_with_header(
                     "settings-sidebar-column",
                     vec![
                         line(
-                            "workspace-list-heading",
+                            "workspace-list-heading settings-navigation-heading",
                             vec![heading(
                                 2,
                                 "workspace-list-title",
                                 context.translated(scope, "nav.settings"),
-                            )],
-                        ),
-                        stack(
-                            "settings-nav-search",
-                            vec![Box::new(
-                                sapid::text_field()
-                                    .placeholder(
-                                        context.translated(scope, "settings.search.placeholder"),
-                                    )
+                            ), Box::new(
+                                sapid::collapsible("settings-navigation-search")
                                     .unstyled()
-                                    .class("input settings-nav-search-input settings-nav-search")
-                                    .name(context.translated(scope, "settings.search.placeholder"))
-                                    .value(nav_filter)
-                                    .on_value_change(move |next| {
-                                        nav_filter.revise(|value| *value = next)
+                                    .class("settings-search-disclosure")
+                                    .label(context.translated(scope, "settings.search.label"))
+                                    .trigger_content(|| crate::components::ui_icon("search"))
+                                    .on_open_change(move |open| {
+                                        if !open { nav_filter.revise(|value| value.clear()); }
+                                    })
+                                    .content({
+                                        let label = context.translated(scope, "settings.search.placeholder");
+                                        move || sapid::text_field()
+                                            .unstyled()
+                                            .class("input workspace-search-input settings-nav-search-input")
+                                            .name(label)
+                                            .placeholder(label)
+                                            .value(nav_filter)
+                                            .on_value_change(move |next| nav_filter.revise(|value| *value = next))
                                     }),
                             )],
                         ),

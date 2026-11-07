@@ -64,6 +64,24 @@ fn nav_query_with_no_match_renders_no_groups() {
 }
 
 #[test]
+fn nav_query_finds_localized_controls_inside_sections() {
+    for (query, section) in [
+        ("language", SettingsSection::Theme),
+        ("night theme", SettingsSection::Theme),
+        ("display name", SettingsSection::Account),
+        ("sound", SettingsSection::Notifications),
+        ("recovery 24", SettingsSection::Recovery),
+    ] {
+        let groups = visible_nav_groups(query);
+        assert!(
+            groups.iter().any(|group| group.sections.contains(&section)),
+            "{query}"
+        );
+    }
+    assert!(visible_nav_groups("language sound").is_empty());
+}
+
+#[test]
 fn expired_presence_preference_seeds_an_empty_editor() {
     // An expired manual state must not be re-offered: the server has already
     // stopped honouring it, so showing it would misreport the account.

@@ -74,6 +74,22 @@
   display: grid;
   gap: 6px;
 }
+.workspace-list-heading.settings-navigation-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  grid-template-rows: 52px auto;
+  row-gap: 0;
+}
+.settings-search-disclosure { display: contents; }
+.settings-search-disclosure > .sapid-collapsible-panel {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+}
+.settings-search-disclosure .settings-nav-search-input {
+  width: 100%;
+  min-width: 0;
+}
 .settings-nav-group-label {
   margin: 0 0 2px 4px;
   color: var(--text-3, var(--ak-muted));

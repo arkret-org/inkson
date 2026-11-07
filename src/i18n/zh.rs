@@ -739,6 +739,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.group.advanced", "高级");
     dict.set("settings.group.advanced.hint", "数据、连接与协议诊断。");
     // Settings-nav filter (design 3.4).
+    dict.set("settings.search.label", "搜索设置");
     dict.set("settings.search.placeholder", "搜索设置…");
     // T1.3 - event signature / proof mode status display.
     dict.set("settings.proof_mode.label", "事件签名");

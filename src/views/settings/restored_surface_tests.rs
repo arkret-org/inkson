@@ -269,3 +269,47 @@ fn settings_navigation_exposes_only_the_actual_page_as_current() {
         Some(glory::render::Current::Page),
     );
 }
+
+#[test]
+fn settings_search_disclosure_filters_on_edits_and_clears_when_closed() {
+    let (app, context, _directory) = harness();
+    app.mount(page(app.scope(), context, Route::Settings))
+        .unwrap();
+    app.flush().unwrap();
+    let trigger = class(&app, "sapid-collapsible-trigger");
+    assert!(!nodes(&app).iter().any(|id| {
+        app.tree()
+            .node(*id)
+            .unwrap()
+            .descriptor
+            .view()
+            .classes
+            .iter()
+            .any(|class| class == "settings-nav-search-input")
+    }));
+    app.dispatch(trigger, Event::Activate).unwrap();
+    app.flush().unwrap();
+    type_into(&app, "settings-nav-search-input", "language");
+    assert!(nodes(&app).contains(&class(&app, "settings-nav-item-theme")));
+    assert!(!nodes(&app).iter().any(|id| {
+        app.tree()
+            .node(*id)
+            .unwrap()
+            .descriptor
+            .view()
+            .classes
+            .iter()
+            .any(|class| class == "settings-nav-item-account")
+    }));
+    type_into(&app, "settings-nav-search-input", "no-such-control");
+    class(&app, "settings-nav-empty");
+    app.dispatch(trigger, Event::Activate).unwrap();
+    app.flush().unwrap();
+    class(&app, "settings-nav-item-account");
+    class(&app, "settings-nav-item-theme");
+    app.dispatch(trigger, Event::Activate).unwrap();
+    app.flush().unwrap();
+    assert!(
+        matches!(app.tree().node(class(&app, "settings-nav-search-input")).unwrap().descriptor.view().props, Props::Input(value) if value.value.is_empty())
+    );
+}

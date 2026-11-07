@@ -440,6 +440,7 @@ pub fn english_translations() -> TranslationDict {
         "Data, connections, and protocol diagnostics.",
     );
     // Settings-nav filter (design §3.4).
+    dict.set("settings.search.label", "Search settings");
     dict.set("settings.search.placeholder", "Search settings…");
 
     // T1.3 — proof mode (event signing) status. Exposed in the settings

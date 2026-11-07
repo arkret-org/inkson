@@ -70,8 +70,8 @@
 .workspace-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: 0 0 auto; min-height: 52px; margin: 0; }
 .workspace-list-title { margin: 0; font-size: 16px; font-weight: 650; }
 .workspace-list-heading .workspace-list-title { flex: 1; min-width: 0; }
-.workspace-list-heading .btn.icon, .workspace-list-heading .sidebar-toolbar-action { display: grid; place-items: center; width: 30px; height: 30px; min-height: 30px; padding: 4px; flex: 0 0 30px; border: 0; background: transparent; color: var(--text-2); border-radius: 6px; }
-.workspace-list-heading .btn.icon:hover, .workspace-list-heading .sidebar-toolbar-action:hover { background: var(--surface-2); color: var(--text); }
+.workspace-list-heading .btn.icon, .workspace-list-heading .sidebar-toolbar-action, .workspace-list-heading .settings-search-disclosure > .sapid-collapsible-trigger { display: grid; place-items: center; width: 30px; height: 30px; min-height: 30px; padding: 4px; flex: 0 0 30px; border: 0; background: transparent; color: var(--text-2); border-radius: 6px; }
+.workspace-list-heading .btn.icon:hover, .workspace-list-heading .sidebar-toolbar-action:hover, .workspace-list-heading .settings-search-disclosure > .sapid-collapsible-trigger:hover { background: var(--surface-2); color: var(--text); }
 .workspace-list-heading .ui-icon { width: 18px; height: 18px; }
 .workspace-list-search input { width: 100%; min-width: 0; }
 .workspace-list-rows { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
