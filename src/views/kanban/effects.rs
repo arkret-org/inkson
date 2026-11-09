@@ -127,9 +127,6 @@ pub(super) fn mount_effects(
     token: Cage<String>,
     selected_realm_id: String,
     _projection_realm_id: String,
-    authority: arkret_sdk::AccountId,
-    principal_id: String,
-    device_id: String,
     sync_cursor: Cage<String>,
     realm_live_epoch: Cage<u64>,
 ) {
@@ -141,7 +138,6 @@ pub(super) fn mount_effects(
         lifecycle_container_projection,
         lifecycle_strand_projection,
         selected_card,
-        mls_sidecar_restore_key_seen,
         card_edit_title,
         card_edit_description,
         card_edit_body,
@@ -867,181 +863,6 @@ pub(super) fn mount_effects(
     {
         let owner = read_owner.clone();
         let _ = scope.on_cleanup(move || owner.borrow_mut().cancel_pending());
-    }
-    // Locked author-private fields can become readable after another device
-    // uploads the account-private plaintext sidecar. A device that already has
-    // the account MLS secret should restore that sidecar silently with active
-    // device proof. Retained admitted Events and current values reproject locally.
-    {
-        let restore_base = base_url.clone();
-        let restore_token = token;
-        let restore_realm_id = selected_realm_id.clone();
-        let restore_authority = authority.clone();
-        let restore_actor = principal_id.clone();
-        let restore_device = device_id.clone();
-        let restore_sync_cursor = sync_cursor;
-        let restore_realm_live_epoch = realm_live_epoch;
-        {
-            let app = app.clone();
-            let state_store = state_store.clone();
-            let weak = weak.clone();
-            scope.effect(move || {
- let _=app.state_revision.get();
-            let Some(card) = selected_card.get() else {
-                return;
-            };
-            if !private_narrative_restore_needed(card.description_locked, card.synthesis_locked) {
-                return;
-            }
-            let api_token = restore_token.get();
-            if restore_base.trim().is_empty()
-                || api_token.trim().is_empty()
-                || restore_realm_id.trim().is_empty()
-                || restore_actor.trim().is_empty()
-                || restore_device.as_str().trim().is_empty()
-            {
-                return;
-            }
-            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            if !matches!(
-                crate::mls::runtime::load_account_mls_secret(
-                    secure_store.as_ref(),
-                    &restore_authority
-                ),
-                Ok(Some(_))
-            ) {
-                return;
-            }
-            let projection_shape = {
-                let containers_len = lifecycle_container_projection.get().len();
-                let strands_len = lifecycle_strand_projection.get().len();
-                format!("{containers_len}:{strands_len}")
-            };
-            let restore_key = format!(
-                "{}|{}|{}|{}|{}|{}|description={}|synthesis={}",
-                restore_base.trim().trim_end_matches('/'),
-                restore_actor.trim(),
-                restore_device.as_str().trim(),
-                restore_realm_id.trim(),
-                card.primary_strand_id,
-                projection_shape,
-                card.description_locked,
-                card.synthesis_locked
-            );
-            // Wake when account bootstrap first becomes ready, but never use
-            // the opaque cursor token as a data revision. Durable Realm
-            // changes are represented by the explicit live epoch.
-            let account_sync_ready = crate::app::account_sync_ready(&restore_sync_cursor.get());
-            let live_epoch = restore_realm_live_epoch.get();
-            let restore_key = format!(
-                "{restore_key}|sync_ready={}|epoch={live_epoch}",
-                account_sync_ready as u8
-            );
-            if mls_sidecar_restore_key_seen.get() == restore_key {
-                return;
-            }
-            mls_sidecar_restore_key_seen.revise(|value|{let next=restore_key;*value=next;});
-
-            let base = restore_base.clone();
-            let actor = restore_actor.clone();
-            let authority = restore_authority.clone();
-            let device = restore_device.clone();
-            let restore_scope = read_scope.get_untracked().clone();
-            let state_store=state_store.clone();
-            {let Some(scope)=weak.upgrade()else{return;};let _=scope.owner().spawn(async move {
-                for attempt in 0..5u32 {
-                    if attempt > 0 {
-                        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(
-                            500 * (1 << (attempt - 1)),
-                        ))
-                        .await;
-                    }
-                    if read_scope.get_untracked() != restore_scope {
-                        return;
-                    }
-                    let actor_for_fetch = actor.clone();
-                    let device_for_fetch = device.to_string();
-                    let result =
-                        with_authed_api(&base, api_token.clone(), move |api| async move {
-                            let payload = crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
-                                &api,
-                                &actor_for_fetch,
-                                &device_for_fetch,
-                            )
-                            .await?;
-                            Ok(payload)
-                        })
-                        .await;
-                    if read_scope.get_untracked() != restore_scope {
-                        return;
-                    }
-                    let payload = match result {
-                        Ok(value) => value,
-                        Err(error) => {
-                            if let Some(retry_after_ms) =
-                                crate::api_error::rate_limited_retry_after(error.inner())
-                            {
-                                tracing::warn!(
-                                    target: "mls_sidecar_restore",
-                                    retry_after_ms,
-                                    "key-backup unlock rate limited; stopping sidecar restore retries"
-                                );
-                                break;
-                            }
-                            if let Some(backoff) = error
-                                .inner()
-                                .downcast_ref::<crate::key_backup::KeyBackupUnlockBackoff>(
-                            ) {
-                                tracing::debug!(
-                                    target: "mls_sidecar_restore",
-                                    retry_after_ms = backoff.retry_after_ms(),
-                                    "key-backup unlock is in local backoff; stopping sidecar restore retries"
-                                );
-                                break;
-                            }
-                            continue;
-                        }
-                    };
-
-                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                    let restored_private_plaintext = {
-                        let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
-                            &payload,
-                            &state_store.handle(),
-                            secure_store.as_ref(),
-                            &authority,
-                            &actor,
-                        ).await;
-                        report.private_plaintext_restored || report.restored > 0
-                    };
-
-                    // Restoring the sidecar writes the local store, which
-                    // invalidates the columns memo without another Event scan.
-                    let card_unlocked = selected_card.get()
-                        .is_some_and(|card| !card.description_locked && !card.synthesis_locked);
-                    if restored_private_plaintext || card_unlocked {
-                        break;
-                    }
-                }
-            });};
-        });
-        };
-    }
-}
-
-fn private_narrative_restore_needed(description_locked: bool, synthesis_locked: bool) -> bool {
-    description_locked || synthesis_locked
-}
-
-#[cfg(test)]
-mod private_narrative_restore_tests {
-    use super::private_narrative_restore_needed;
-
-    #[test]
-    fn description_only_lock_triggers_backup_restore() {
-        assert!(private_narrative_restore_needed(true, false));
-        assert!(private_narrative_restore_needed(false, true));
-        assert!(!private_narrative_restore_needed(false, false));
     }
 }
 

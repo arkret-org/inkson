@@ -1434,9 +1434,10 @@ pub fn chinese_translations() -> TranslationDict {
         "mls_unlock.status.restoring_suffix",
         "个加密备份，可能需要几秒钟。",
     );
-    dict.set("mls_unlock.status.restored_prefix", "已恢复");
-    dict.set("mls_unlock.status.restored_suffix", "个加密空间。");
-    dict.set("mls_unlock.status.failed_suffix", "个失败");
+    dict.set(
+        "mls_unlock.status.checkpoint_unlocked",
+        "账户加密密钥已解锁。历史恢复和 MLS 成员资格仍需分别验证。",
+    );
     dict.set("mls_recovery_missing.aria_label", "此设备尚未拿到加密密钥");
     dict.set(
         "mls_recovery_missing.title",

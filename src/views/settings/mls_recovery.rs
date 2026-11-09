@@ -9,8 +9,7 @@
 //! generate/replace the MLS recovery key regardless of effect timing.
 //!
 //! On mount it fetches `list_key_backups` to compute status; the submit path
-//! mirrors `MlsBackupPrompt` exactly (account-secret upload + best-effort
-//! sidecar upload).
+//! mirrors `MlsBackupPrompt` for the account checkpoint-secret upload.
 
 use std::rc::Rc;
 
@@ -195,11 +194,7 @@ fn start_recovery_key_generation(
     let principal_control_realm_id = recovery_material_evidence
         .principal_control_realm_id
         .clone();
-    let sidecar_json = if state_store.read(|store| store.private_plaintext_is_empty()) {
-        None
-    } else {
-        Some(state_store.read(|store| store.private_plaintext_snapshot_json()))
-    };
+
     busy.revise(|value| {
         *value = true;
     });
@@ -214,12 +209,6 @@ fn start_recovery_key_generation(
     });
     super::widgets::spawn(scope, async move {
         let recovery_key_for_display = recovery_key.clone();
-        let actor_for_sidecar = actor.clone();
-        let authority_for_sidecar = authority.clone();
-        let device_for_sidecar = device.clone();
-        let base_for_sidecar = base.clone();
-        let session_for_sidecar = session.clone();
-        let principal_control_realm_id_for_sidecar = principal_control_realm_id.clone();
         let result = with_authed_api(&base, session, |api| async move {
             crate::recovery_flow::verify_recovery_authority_evidence(
                 &api,
@@ -247,27 +236,7 @@ fn start_recovery_key_generation(
                 state_store.write(|store| {
                     crate::components::mark_mls_recovery_backup_configured(store, &backup_id)
                 });
-                if let Some(sidecar_json) = sidecar_json {
-                    let actor = actor_for_sidecar;
-                    let device = device_for_sidecar;
-                    let outcome =
-                        with_authed_api(&base_for_sidecar, session_for_sidecar, |api| async move {
-                            let secure_store =
-                                crate::secure_key_store::default_secure_key_store("inkson");
-                            crate::mls::account_recovery::upload_mls_private_plaintext_backup(
-                                &api,
-                                secure_store.as_ref(),
-                                &authority_for_sidecar,
-                                &principal_control_realm_id_for_sidecar,
-                                &actor,
-                                &device,
-                                &sidecar_json,
-                            )
-                            .await
-                        })
-                        .await;
-                    let _ = outcome;
-                }
+
                 generated_recovery_key.revise(|value| {
                     *value = recovery_key_for_display;
                 });

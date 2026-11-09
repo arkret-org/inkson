@@ -13,7 +13,6 @@ pub mod agent_runtime_approval_prompt;
 pub mod avatar_uploader;
 /// Generic single-flight / debounce / backoff / digest-dedupe scheduler for
 /// the private-plaintext backup job.
-pub(crate) mod backup_job_scheduler;
 /// P3B.2 — Circle error queue. Producers push
 /// [`crate::circle::CircleErrorKind`]; the unified `feedback::ToastHost`
 /// drains it and renders the localized user-facing string.
@@ -83,7 +82,6 @@ pub use generated_avatar::{
 };
 pub(crate) use mls_backup_prompt::{
     mark_mls_recovery_backup_configured, mls_recovery_backup_configured,
-    schedule_mls_recovery_backups_after_encrypted_write,
 };
 pub use mls_backup_prompt::{
     maybe_auto_backup_mls_after_encrypted_write, mls_backup_prompt, try_needs_mls_backup_state,

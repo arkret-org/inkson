@@ -588,9 +588,6 @@ async fn accepted_board_create_at_root_replaces_a_seeded_selection_but_preserves
             context.token,
             PENDING_TEST_REALM.into(),
             PENDING_TEST_REALM.into(),
-            account.authority.clone(),
-            account.authority.principal_id.to_string(),
-            account.device_id.to_string(),
             context.sync_cursor,
             context.realm_live_epoch,
         );

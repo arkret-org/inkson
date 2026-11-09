@@ -2207,15 +2207,6 @@ pub(super) fn send_encrypted_message(
                 };
                 status_msg.revise(|value| *value = next_value);
             };
-            crate::components::schedule_mls_recovery_backups_after_encrypted_write(
-                session.clone(),
-                base_for_backup_trigger.clone(),
-                token_for_backup_trigger.clone(),
-                authority_for_sidecar.clone(),
-                actor_for_backup_trigger.clone(),
-                device_for_sidecar_backup.to_string(),
-                state_store.handle(),
-            );
 
             // X11.2 — first-write trigger. After this
             // encrypted send landed, auto-back up the

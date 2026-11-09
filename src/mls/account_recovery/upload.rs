@@ -9,11 +9,8 @@ use super::backup_body::{
     build_mls_account_secret_backup_body_with_kek_and_version,
     build_mls_account_secret_backup_successor_body_with_kek_and_version,
     build_mls_account_secret_recovery_public_key_backup_in_series,
-    build_mls_private_plaintext_backup_body_with_kek,
-    build_mls_private_plaintext_backup_successor_body_with_kek,
 };
 use super::restore::fetch_mls_restore_payload;
-use crate::mls::runtime::select_mls_private_plaintext_backup;
 use crate::recovery_crypto::derive_vault_kek;
 
 fn passphrase_is_blank(passphrase: &[u8]) -> bool {
@@ -360,7 +357,7 @@ pub(super) async fn fetch_active_series_tail(
 /// upload it to coland's `secret_storage` endpoint.
 ///
 /// This is the upload half of the backup-prompt flow (the inverse of
-/// [`crate::mls::account_recovery::auto_restore_mls_history_with_passphrase`]).
+/// [`crate::mls::account_recovery::auto_restore_mls_account_secret_with_passphrase`]).
 /// It re-uses any prior account-secret backup's `backup_id`/series so the upload
 /// stays in the same rotation series. Returns the `backup_id` it wrote.
 pub async fn upload_mls_account_secret_backup_with_passphrase(
@@ -606,194 +603,6 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         .map_err(|err| anyhow!("mark uploaded account MLS secret verified: {err}"))?;
 
     Ok(account_backup_id.to_string())
-}
-
-/// X5.3 — wrap the entire local-plaintext sidecar map behind a KEK derived from
-/// the ACCOUNT SECRET and upload it to coland's `secret_storage` endpoint.
-///
-/// The KEK source is the account secret (already recoverable via the passphrase
-/// through the X3 `mls_account_secret` backup), so the restore flow decrypts the
-/// sidecar with no second passphrase prompt. Reuses any prior sidecar backup's
-/// `backup_id`/series so the upload stays in the same rotation series
-/// (`series_sequence++` whenever the sidecar changes). Returns the `backup_id` it
-/// wrote. Errors if no local account secret exists (the user hasn't used
-/// encryption, so there is nothing to wrap the sidecar with).
-pub async fn upload_mls_private_plaintext_backup(
-    api: &crate::transport::TransportClient,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::AccountId,
-    control_realm: &arkret_sdk::RealmId,
-    actor_id: &str,
-    device_id: &str,
-    sidecar_json: &[u8],
-) -> Result<String> {
-    let previous_backup = fetch_mls_private_plaintext_backup_body(api, actor_id, device_id).await?;
-    let (backup_id, _) = upload_mls_private_plaintext_backup_with_previous(
-        api,
-        secure_store,
-        authority,
-        control_realm,
-        actor_id,
-        device_id,
-        sidecar_json,
-        previous_backup.as_ref(),
-    )
-    .await?;
-    Ok(backup_id)
-}
-
-/// Fetch the current full `mls_private_plaintext` backup body, if any.
-///
-/// Callers that repeatedly update the sidecar can cache the returned/uploaded
-/// body locally and pass it to
-/// [`upload_mls_private_plaintext_backup_with_previous`], avoiding a backup-list
-/// request for every ordinary encrypted write.
-pub async fn fetch_mls_private_plaintext_backup_body(
-    api: &crate::transport::TransportClient,
-    actor_id: &str,
-    device_id: &str,
-) -> Result<Option<Value>> {
-    let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
-    let Some(metadata) = select_mls_private_plaintext_backup(&list_payload) else {
-        return Ok(None);
-    };
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let body = crate::key_backup::fetch_key_backup_with_device_unlock_proof_retrying(
-        api,
-        &metadata,
-        actor_id,
-        device_id,
-        Some(&signer),
-    )
-    .await
-    .map_err(|err| anyhow!("fetch previous private plaintext backup: {err}"))?;
-    Ok(Some(body))
-}
-
-/// Upload a sidecar backup successor using a caller-provided predecessor body.
-///
-/// Debounced sidecar writes may provide their previously uploaded envelope.
-/// It is revalidated against the complete confirmed active chain and pointer
-/// before authoring a successor; a cached envelope is never current authority.
-pub async fn upload_mls_private_plaintext_backup_with_previous(
-    api: &crate::transport::TransportClient,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::AccountId,
-    control_realm: &arkret_sdk::RealmId,
-    actor_id: &str,
-    device_id: &str,
-    sidecar_json: &[u8],
-    previous_backup: Option<&Value>,
-) -> Result<(String, Value)> {
-    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, authority)
-        .map_err(|err| anyhow!("load account MLS secret: {err}"))?
-        .ok_or_else(|| anyhow!("no account secret; cannot back up private plaintext"))?;
-
-    let kek =
-        derive_vault_kek(stored.secret.as_bytes()).map_err(|err| anyhow!("derive KEK: {err}"))?;
-    // Fresh backup_id per immutable series link.
-    let backup_id = fresh_backup_id().map_err(anyhow::Error::from)?;
-
-    let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
-    let confirmed_previous = fetch_active_series_tail(
-        api,
-        &list_payload,
-        actor_id,
-        device_id,
-        BackupRotationKind::SecretStorage,
-    )
-    .await?;
-    if let Some(cached) = previous_backup {
-        anyhow::ensure!(
-            confirmed_previous.as_ref() == Some(cached),
-            "cached private backup differs from the confirmed full chain tail"
-        );
-    }
-    let previous_backup = confirmed_previous;
-    let creates_initial_series = previous_backup.is_none();
-    let expected = super::current_basis::state_from_payload(&list_payload)?;
-    let basis = super::current_basis::ConfirmedBackupBasis::read(
-        api,
-        authority,
-        control_realm,
-        device_id,
-        Some(&expected),
-    )
-    .await?;
-    match previous_backup.as_ref() {
-        Some(previous) => {
-            let predecessor = typed_backup_predecessor(previous)?;
-            anyhow::ensure!(
-                basis.state()?.secret_storage.series_id() == Some(&predecessor.series_id),
-                "cached private backup is not the confirmed active series"
-            );
-        }
-        None => anyhow::ensure!(
-            basis.state()?.secret_storage.series_id().is_none(),
-            "private backup initialization has a confirmed active series"
-        ),
-    }
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let auth = api.key_backup_auth_binding(authority, &signer).await?;
-    basis.check_auth(&auth)?;
-    let sign = |bytes: &[u8]| {
-        signer.sign_raw(bytes).map_err(|error| {
-            arkret_crypto::KeyBackupError::InvalidInput(format!(
-                "device key backup signature: {error}"
-            ))
-        })
-    };
-    let body = if let Some(previous) = previous_backup.as_ref() {
-        let predecessor = typed_backup_predecessor(previous)?;
-        let source_commit_ref = basis.source_commit_ref()?;
-        build_mls_private_plaintext_backup_successor_body_with_kek(
-            backup_id.as_str(),
-            &predecessor,
-            device_id,
-            &kek,
-            sidecar_json,
-            &auth,
-            &sign,
-            Some(source_commit_ref),
-        )?
-    } else {
-        build_mls_private_plaintext_backup_body_with_kek(
-            backup_id.as_str(),
-            authority,
-            device_id,
-            &kek,
-            sidecar_json,
-            &auth,
-            &sign,
-            Some(basis.source_commit_ref()?),
-        )?
-    };
-    basis.check()?;
-    let (_, sent_body) = api
-        .put_key_backup_returning_sent_body(backup_id.as_str(), body)
-        .await
-        .map_err(|err| anyhow!("upload private plaintext backup: {err}"))?;
-    basis.check()?;
-    let series_id = sent_body.series_id.to_string();
-    if creates_initial_series {
-        crate::runtime_helpers::boxed_future(|| {
-            ensure_initial_active_series(
-                api,
-                control_realm,
-                authority,
-                actor_id,
-                device_id,
-                BackupRotationKind::SecretStorage,
-                &series_id,
-            )
-        })
-        .await?;
-    }
-
-    basis.check()?;
-    Ok((backup_id.to_string(), serde_json::to_value(sent_body)?))
 }
 
 #[cfg(test)]

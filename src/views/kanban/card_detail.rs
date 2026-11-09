@@ -647,53 +647,8 @@ async fn recover_mls_checkpoint_for_encrypted_write(
     }
 
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let has_local_account_secret = matches!(
-        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), authority),
-        Ok(Some(_))
-    );
-    if has_local_account_secret {
-        let actor_for_fetch = actor_id.to_owned();
-        let device_for_fetch = device_id.to_string();
-        match with_authed_api(
-            base_url,
-            session_credential.to_owned(),
-            move |api| async move {
-                crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
-                    &api,
-                    &actor_for_fetch,
-                    &device_for_fetch,
-                )
-                .await
-            },
-        )
-        .await
-        {
-            Ok(payload) => {
-                let report =
-                    crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
-                        &payload,
-                        &store_handle,
-                        secure_store.as_ref(),
-                        authority,
-                        actor_id,
-                    )
-                    .await;
-                if report.failed > 0 {
-                    failures.push(format!(
-                        "history backup: {}",
-                        report.first_error.as_deref().unwrap_or("restore failed")
-                    ));
-                }
-            }
-            Err(error) => failures.push(format!("history backup: {}", error.display())),
-        }
-    }
-    if state_store.read(|store| encrypted_realm_write_mls_ready(store, realm_id, authority)) {
-        return Ok(());
-    }
-
-    // Recovery may have restored key material. Re-read it without conflating
-    // account-root recovery with device approval or a pending Welcome.
+    // Account checkpoint keys do not install a current MLS membership.
+    // This device still needs an admitted Welcome or replacement Commit.
     let has_local_account_secret = matches!(
         crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), authority),
         Ok(Some(_))
@@ -702,7 +657,7 @@ async fn recover_mls_checkpoint_for_encrypted_write(
     if failures.is_empty() {
         if has_local_account_secret {
             Err(
-                "No pending Welcome or matching MLS history snapshot exists on the server for this Realm."
+                "This device has no admitted MLS membership for this Realm. A Welcome or account recovery must complete before writing."
                     .to_owned(),
             )
         } else {

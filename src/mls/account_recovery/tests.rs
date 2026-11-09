@@ -3,25 +3,22 @@ use garth::mls::backup_series::verify_series_chain;
 use serde_json::Value;
 
 use super::backup_body::{
-    MLS_ACCOUNT_SECRET_SECRET_ID, MLS_PRIVATE_PLAINTEXT_SECRET_ID,
-    build_mls_account_secret_backup_body_with_kek,
+    MLS_ACCOUNT_SECRET_SECRET_ID, build_mls_account_secret_backup_body_with_kek,
     build_mls_account_secret_backup_successor_body_with_kek_and_version,
     build_mls_account_secret_recovery_public_key_backup_in_series,
-    build_mls_private_plaintext_backup_body_with_kek, decrypt_mls_account_secret_backup,
-    decrypt_mls_private_plaintext_backup,
+    decrypt_mls_account_secret_backup,
 };
 use super::restore::{mls_backup_prompt_required, verify_active_backup_series};
 use crate::key_backup::BackupKind;
 use crate::mls::runtime::{
-    is_mls_account_secret_backup, is_mls_private_plaintext_backup,
-    select_mls_account_secret_backup, select_mls_account_secret_recovery_public_key_backup,
-    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
+    is_mls_account_secret_backup, select_mls_account_secret_backup,
+    select_mls_account_secret_recovery_public_key_backup,
+    select_preferred_mls_account_secret_backup,
 };
 use crate::recovery_crypto::derive_vault_kek;
 use crate::secure_key_store::MemorySecureKeyStore;
 
 const BACKUP_ID: &str = "ak:backup:01964137-0000-7000-8000-00000000beef";
-const SIDECAR_BACKUP_ID: &str = "ak:backup:01964137-0000-7000-8000-00000000cafe";
 const ACTOR: &str = "did:web:alice.example";
 const DEVICE: &str = "ak:device:01964137-0000-7000-8000-000000000001";
 const PASSPHRASE: &[u8] = b"correct horse battery staple";
@@ -190,41 +187,6 @@ fn wrap_then_unwrap_round_trips_the_secret() {
     assert_eq!(
         recovered.1,
         crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION
-    );
-}
-
-#[test]
-fn opened_backup_classes_cannot_be_substituted_even_with_the_same_unlock_material() {
-    let account = wrap();
-    let kek = crate::recovery_crypto::derive_vault_kek(PASSPHRASE).unwrap();
-    let private = build_mls_private_plaintext_backup_body_with_kek(
-        "ak:backup:01964137-0000-7000-8000-00000000c0aa",
-        &authority(),
-        DEVICE,
-        &kek,
-        b"private plaintext fixture",
-        &test_auth(),
-        &test_sign,
-        None,
-    )
-    .unwrap();
-    let private = key_backup_wire(&private);
-    assert_eq!(
-        decrypt_mls_private_plaintext_backup(PASSPHRASE, &private).unwrap(),
-        b"private plaintext fixture"
-    );
-    assert!(decrypt_mls_account_secret_backup(PASSPHRASE, &account).is_ok());
-    assert!(
-        decrypt_mls_account_secret_backup(PASSPHRASE, &private)
-            .unwrap_err()
-            .to_string()
-            .contains("different secret class")
-    );
-    assert!(
-        decrypt_mls_private_plaintext_backup(PASSPHRASE, &account)
-            .unwrap_err()
-            .to_string()
-            .contains("different secret class")
     );
 }
 
@@ -534,41 +496,6 @@ fn verify_series_chain_accepts_well_formed_successor() {
             .0,
         ACCOUNT_SECRET.as_bytes(),
         "successor plaintext identity must decrypt under its final series metadata"
-    );
-}
-
-#[test]
-fn private_plaintext_successor_is_sealed_with_final_series_metadata() {
-    let kek = derive_vault_kek(ACCOUNT_SECRET.as_bytes()).unwrap();
-    let genesis = build_mls_private_plaintext_backup_body_with_kek(
-        SIDECAR_BACKUP_ID,
-        &authority(),
-        DEVICE,
-        &kek,
-        br#"{"realm":{"strand":{"title":"first"}}}"#,
-        &test_auth(),
-        &test_sign,
-        None,
-    )
-    .unwrap();
-    let source_commit_ref = backup_source_commit_ref();
-    let successor = super::backup_body::build_mls_private_plaintext_backup_successor_body_with_kek(
-        "ak:backup:01964137-0000-7000-8000-00000000caf1",
-        &genesis,
-        DEVICE,
-        &kek,
-        br#"{"realm":{"strand":{"title":"successor"}}}"#,
-        &test_auth(),
-        &test_sign,
-        Some(source_commit_ref),
-    )
-    .unwrap();
-    let successor_wire = key_backup_wire(&successor);
-    assert_eq!(successor.series_id, genesis.series_id);
-    assert_eq!(successor.series_sequence, 1);
-    assert_eq!(
-        decrypt_mls_private_plaintext_backup(ACCOUNT_SECRET.as_bytes(), &successor_wire).unwrap(),
-        br#"{"realm":{"strand":{"title":"successor"}}}"#
     );
 }
 
@@ -993,133 +920,4 @@ fn verify_account_secret_rejects_multiple_series_without_a_pointer_projection() 
     let payload = serde_json::json!({ "backups": [first, second] });
 
     assert!(verify_active_backup_series(&payload, BackupKind::SecretStorage.as_str()).is_err());
-}
-
-// ---- X5.3: encrypted private-plaintext sidecar backup ----
-
-fn sample_sidecar() -> std::collections::BTreeMap<
-    String,
-    std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
-> {
-    let mut fields = std::collections::BTreeMap::new();
-    fields.insert("body".to_owned(), "\"author body\"".to_owned());
-    fields.insert("synthesis".to_owned(), "\"author synthesis\"".to_owned());
-    let mut strands = std::collections::BTreeMap::new();
-    strands.insert(
-        "ak:strand:Ag0CE2EBjaYARZ8GMXa7liKkM90gtiQk9wVadXyPVDyc".to_owned(),
-        fields,
-    );
-    let mut realms = std::collections::BTreeMap::new();
-    realms.insert(
-        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE".to_owned(),
-        strands,
-    );
-    realms
-}
-
-fn wrap_sidecar() -> (Vec<u8>, Value) {
-    let sidecar = sample_sidecar();
-    let json = serde_json::to_vec(&sidecar).unwrap();
-    let kek = derive_vault_kek(ACCOUNT_SECRET.as_bytes()).unwrap();
-    let body = build_mls_private_plaintext_backup_body_with_kek(
-        SIDECAR_BACKUP_ID,
-        &authority(),
-        DEVICE,
-        &kek,
-        &json,
-        &test_auth(),
-        &test_sign,
-        None,
-    )
-    .unwrap();
-    (json, key_backup_wire(&body))
-}
-
-#[test]
-fn sidecar_backup_round_trips_under_account_secret() {
-    let (json, body) = wrap_sidecar();
-    let recovered = decrypt_mls_private_plaintext_backup(ACCOUNT_SECRET.as_bytes(), &body).unwrap();
-    assert_eq!(recovered, json);
-    // The decoded map equals the original sidecar.
-    let map: std::collections::BTreeMap<
-        String,
-        std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
-    > = serde_json::from_slice(&recovered).unwrap();
-    assert_eq!(map, sample_sidecar());
-}
-
-#[test]
-fn sidecar_backup_wrong_account_secret_fails() {
-    let (_json, body) = wrap_sidecar();
-    let result = decrypt_mls_private_plaintext_backup(b"a-different-account-secret", &body);
-    assert!(result.is_err());
-}
-
-#[test]
-fn sidecar_backup_has_expected_identifiers_and_no_plaintext_leak() {
-    let (_json, body) = wrap_sidecar();
-    assert!(is_mls_private_plaintext_backup(&body));
-    assert_eq!(
-        body["contents"][0]["item_kind"].as_str(),
-        Some("mls_private_plaintext")
-    );
-    assert_eq!(
-        body["contents"][0]["secret_id"].as_str(),
-        Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID)
-    );
-    assert_eq!(body["backup_kind"], "secret_storage");
-    let serialized = serde_json::to_string(&body).unwrap();
-    assert!(!serialized.contains("author body"));
-    assert!(!serialized.contains("author synthesis"));
-}
-
-#[test]
-fn sidecar_backup_validates_as_secret_storage_envelope() {
-    let (_json, body) = wrap_sidecar();
-    validate_wire_envelope(&body, BackupKind::SecretStorage).expect(
-        "mls_private_plaintext backup must validate as a secret_storage envelope (base64url-clean)",
-    );
-}
-
-#[test]
-fn select_sidecar_finds_and_prefers_highest_series_seq() {
-    let (_json, base_body) = wrap_sidecar();
-    let mut older = base_body.clone();
-    older["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000a1");
-    older["series_sequence"] = serde_json::json!(1);
-    let mut newer = base_body.clone();
-    newer["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000a2");
-    newer["series_sequence"] = serde_json::json!(2);
-    let payload = payload_with_current_series(vec![older, newer.clone()]);
-    let found = select_mls_private_plaintext_backup(&payload).expect("sidecar present");
-    assert!(is_mls_private_plaintext_backup(&found));
-    assert_eq!(found["backup_id"], newer["backup_id"]);
-    // Absent payload -> None.
-    assert!(select_mls_private_plaintext_backup(&serde_json::json!({ "backups": [] })).is_none());
-}
-
-#[test]
-fn select_sidecar_honors_active_series_pointer() {
-    let (_json, base_body) = wrap_sidecar();
-    let mut active = base_body.clone();
-    active["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000c1");
-    active["series_id"] = serde_json::json!(ACTIVE_SECRET_STORAGE_SERIES);
-    active["series_sequence"] = serde_json::json!(0);
-    active["created_at"] = serde_json::json!("2026-01-01T00:00:00.000Z");
-
-    let mut stale = base_body;
-    stale["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000c2");
-    stale["series_id"] = serde_json::json!(STALE_SECRET_STORAGE_SERIES);
-    stale["series_sequence"] = serde_json::json!(99);
-    stale["created_at"] = serde_json::json!("2026-12-31T23:59:59.000Z");
-
-    let payload = serde_json::json!({
-        "active_series": current_series(vec![
-            active_series_pointer("secret_storage", ACTIVE_SECRET_STORAGE_SERIES)
-        ]),
-        "backups": [stale, active.clone()]
-    });
-
-    let found = select_mls_private_plaintext_backup(&payload).expect("active sidecar present");
-    assert_eq!(found["backup_id"], active["backup_id"]);
 }

@@ -452,9 +452,6 @@ pub fn page(scope: &Scope, app: Rc<InksonContext>, route: Route) -> View {
         app.token,
         realm,
         projection,
-        account.authority.clone(),
-        account.principal_id().to_string(),
-        account.device_id.to_string(),
         app.sync_cursor,
         app.realm_live_epoch,
     );
@@ -574,7 +571,6 @@ impl Board {
         let new_card_title = controller.new_card_title;
         let adding_card_to = controller.adding_card_to;
         let selected_card = controller.selected_card;
-        let mls_sidecar_restore_key_seen = controller.mls_sidecar_restore_key_seen;
         let board_popover = controller.board_popover;
         let archive_board_confirm_open = controller.archive_board_confirm_open;
         let list_archive_confirm = controller.list_archive_confirm;
@@ -741,7 +737,6 @@ impl Board {
         let new_card_title = controller.new_card_title;
         let adding_card_to = controller.adding_card_to;
         let selected_card = controller.selected_card;
-        let mls_sidecar_restore_key_seen = controller.mls_sidecar_restore_key_seen;
         let board_popover = controller.board_popover;
         let archive_board_confirm_open = controller.archive_board_confirm_open;
         let list_archive_confirm = controller.list_archive_confirm;
@@ -900,7 +895,6 @@ impl Board {
         let new_card_title = controller.new_card_title;
         let adding_card_to = controller.adding_card_to;
         let selected_card = controller.selected_card;
-        let mls_sidecar_restore_key_seen = controller.mls_sidecar_restore_key_seen;
         let board_popover = controller.board_popover;
         let archive_board_confirm_open = controller.archive_board_confirm_open;
         let list_archive_confirm = controller.list_archive_confirm;
@@ -1050,7 +1044,6 @@ impl Board {
         let new_card_title = controller.new_card_title;
         let adding_card_to = controller.adding_card_to;
         let selected_card = controller.selected_card;
-        let mls_sidecar_restore_key_seen = controller.mls_sidecar_restore_key_seen;
         let board_popover = controller.board_popover;
         let archive_board_confirm_open = controller.archive_board_confirm_open;
         let list_archive_confirm = controller.list_archive_confirm;
@@ -1154,7 +1147,6 @@ impl Board {
         let new_card_title = controller.new_card_title;
         let adding_card_to = controller.adding_card_to;
         let selected_card = controller.selected_card;
-        let mls_sidecar_restore_key_seen = controller.mls_sidecar_restore_key_seen;
         let board_popover = controller.board_popover;
         let archive_board_confirm_open = controller.archive_board_confirm_open;
         let list_archive_confirm = controller.list_archive_confirm;
@@ -1251,7 +1243,6 @@ impl Board {
         let new_card_title = controller.new_card_title;
         let adding_card_to = controller.adding_card_to;
         let selected_card = controller.selected_card;
-        let mls_sidecar_restore_key_seen = controller.mls_sidecar_restore_key_seen;
         let board_popover = controller.board_popover;
         let archive_board_confirm_open = controller.archive_board_confirm_open;
         let list_archive_confirm = controller.list_archive_confirm;

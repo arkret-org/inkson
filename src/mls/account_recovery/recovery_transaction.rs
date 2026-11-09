@@ -444,16 +444,12 @@ pub(crate) async fn execute_pcr_policy_recovery(
         session,
     )
     .await?;
-    // The restore report is intentionally not bound: the returned summary was
-    // only ever stored in a transaction field that was retired as never-read;
-    // the restore side effects inside the write guard are what matters here.
-    super::restore_mls_history_with_recovery_key_from_payload(
+    // Checkpoint-key import does not establish history or membership readiness.
+    super::restore_mls_account_secret_with_recovery_key_from_payload(
         &restore_payload,
-        state_store,
         secure_store.as_ref(),
         &session.account_id,
         session.account_id.principal_id.as_str(),
-        session.requesting_device_id.as_str(),
         prepared.recovery_private_key.as_slice(),
         (session.policy_id.as_str(), session.policy_version),
     )
@@ -630,13 +626,11 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
         &session,
     )
     .await?;
-    super::restore_mls_history_with_recovery_key_from_payload(
+    super::restore_mls_account_secret_with_recovery_key_from_payload(
         &restore_payload,
-        state_store,
         secure_store.as_ref(),
         &session.account_id,
         session.account_id.principal_id.as_str(),
-        session.requesting_device_id.as_str(),
         &recovery_material.backup_hpke_serialized_private_key,
         (session.policy_id.as_str(), session.policy_version),
     )

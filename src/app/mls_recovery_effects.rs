@@ -132,8 +132,8 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
 
             let task_context = context.clone();
             if let Err(error) = crate::runtime_helpers::spawn_owned(&task_scope, async move {
-                let actor_for_sidecar_restore = actor.clone();
-                let device_for_sidecar_restore = device.to_string();
+                let actor_for_backup_read = actor.clone();
+                let device_for_backup_read = device.to_string();
                 match crate::transport::auth::with_authed_api(
                     &base,
                     session.clone(),
@@ -141,7 +141,7 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
                         let payload = if should_wait_for_projection {
                             crate::mls::account_recovery::fetch_mls_restore_payload_after_encrypted_projection(
                                 &api,
-                                &actor_for_sidecar_restore,
+                                &actor_for_backup_read,
                             )
                             .await?
                         } else {
@@ -151,37 +151,24 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
                             // will schedule a retry if that changes later.
                             crate::mls::account_recovery::fetch_mls_restore_payload(
                                 &api,
-                                &actor_for_sidecar_restore,
+                                &actor_for_backup_read,
                             ).await?
                         };
-                        let history_payload_for_local_restore = if has_local_account_secret {
+                        let account_secret_material = if has_local_account_secret {
                             Some(
                                 crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
                                     &api,
-                                    &actor_for_sidecar_restore,
-                                    &device_for_sidecar_restore,
+                                    &actor_for_backup_read,
+                                    &device_for_backup_read,
                                 )
                                 .await?,
                             )
                         } else {
                             None
                         };
-                        let sidecar_body_for_local_restore = if has_local_account_secret {
-                            crate::mls::account_recovery::fetch_mls_private_plaintext_backup_body(
-                                &api,
-                                &actor_for_sidecar_restore,
-                                &device_for_sidecar_restore,
-                            )
-                            .await
-                            .ok()
-                            .flatten()
-                        } else {
-                            None
-                        };
                         Ok((
                             payload,
-                            history_payload_for_local_restore,
-                            sidecar_body_for_local_restore,
+                            account_secret_material,
                         ))
                     },
                 )
@@ -189,8 +176,7 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
                 {
                     Ok((
                         payload,
-                        history_payload_for_local_restore,
-                        sidecar_body_for_local_restore,
+                        account_secret_material,
                     )) => {
                         if seen_detection_key_for_result.get().as_deref()
                             != Some(detection_key.as_str())
@@ -200,7 +186,7 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
                         let secure_store =
                             crate::secure_key_store::default_secure_key_store("inkson");
                         let configured_backup_id =
-                            history_payload_for_local_restore.as_ref().and_then(
+                            account_secret_material.as_ref().and_then(
                                 crate::mls::account_recovery::select_preferred_mls_account_secret_backup,
                             )
                             .and_then(|backup| {
@@ -219,49 +205,13 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
                                     );
                                 });
                             }
-                            if let Some(history_payload) =
-                                history_payload_for_local_restore.as_ref()
-                            {
-                                let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
-                                    history_payload,
-                                    &store_handle,
-                                    secure_store.as_ref(),
-                                    &authority,
-                                    authority.principal_id.as_str(),
-                                ).await;
-                                if report.failed > 0 {
-                                    tracing::warn!(
-                                        failed = report.failed,
-                                        restored = report.restored,
-                                        first_error = ?report.first_error,
-                                        "mls history restore from local secret failed"
-                                    );
-                                }
-                            }
-                            if let Some(sidecar_body) = sidecar_body_for_local_restore.as_ref() {
-                                let sidecar_payload =
-                                    serde_json::json!({ "backups": [sidecar_body.clone()] });
-                                let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
-                                    &sidecar_payload,
-                                    &store_handle,
-                                    secure_store.as_ref(),
-                                    &authority,
-                                    authority.principal_id.as_str(),
-                                ).await;
-                                if report.failed > 0 {
-                                    tracing::warn!(
-                                        failed = report.failed,
-                                        restored = report.restored,
-                                        first_error = ?report.first_error,
-                                        "mls sidecar restore from local secret failed"
-                                    );
-                                }
-                            }
+
+
                         }
                         let should_unlock = {
                             crate::mls::account_recovery::mls_restore_prompt_required_after_material(
                                 &payload,
-                                history_payload_for_local_restore.as_ref(),
+                                account_secret_material.as_ref(),
                                 secure_store.as_ref(),
                                 &authority,
                                 &actor,
@@ -291,7 +241,7 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
                             { let next_value = false; needs_mls_unlock.revise(|current| *current = next_value) };
                             let should_backup =
                                 crate::mls::account_recovery::mls_backup_prompt_required(
-                                    history_payload_for_local_restore.as_ref().unwrap_or(&payload),
+                                    account_secret_material.as_ref().unwrap_or(&payload),
                                     secure_store.as_ref(),
                                     &authority,
                                 );

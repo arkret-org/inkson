@@ -6,8 +6,7 @@
 //!   * the epoch floor a local MLS checkpoint must clear before it is restored, so a device that
 //!     already knows of a newer accepted epoch never binds to a stale snapshot and forks the group;
 //!     and
-//!   * which envelope of the active key-backup series carries the account MLS secret or the
-//!     private-plaintext sidecar.
+//!   * which envelope of the active key-backup series carries the account checkpoint secret.
 //!
 //! The selection half is host runtime logic rather than protocol judgement:
 //! `garth::mls::backup_selection` owns the shared rule (the Station's
@@ -184,15 +183,6 @@ pub(crate) fn is_recovery_public_key_account_secret_backup(body: &Value) -> bool
     })
 }
 
-/// True when `body` is the encrypted local-plaintext sidecar envelope.
-pub(crate) fn is_mls_private_plaintext_backup(body: &Value) -> bool {
-    typed_backup(body).is_some_and(|backup| {
-        backup.contents.iter().any(|content| {
-            content.item_kind == arkret_sdk::SecretStorageItemKind::MlsPrivatePlaintext
-        })
-    })
-}
-
 fn in_active_series<'a>(
     list_payload: &'a Value,
     keep: impl Fn(&Value) -> bool + 'a,
@@ -236,19 +226,9 @@ pub(crate) fn select_preferred_mls_account_secret_backup(list_payload: &Value) -
     select_mls_account_secret_recovery_public_key_backup(list_payload)
 }
 
-/// The latest private-plaintext sidecar envelope in the active series.
-pub(crate) fn select_mls_private_plaintext_backup(list_payload: &Value) -> Option<Value> {
-    in_active_series(list_payload, is_mls_private_plaintext_backup)
-        .max_by(|left, right| {
-            (backup_series_seq_of(left), backup_created_at(left))
-                .cmp(&(backup_series_seq_of(right), backup_created_at(right)))
-        })
-        .cloned()
-}
-
 /// Every envelope in the active `secret_storage` series.
 ///
-/// A series may interleave account-secret and private-sidecar items, and chain
+/// A series may interleave account-secret and content-root items, and chain
 /// verification must retain those intermediate links even when the selected
 /// decrypt target is an account-secret envelope.
 pub(crate) fn all_secret_storage_backups(list_payload: &Value) -> Vec<Value> {
@@ -360,10 +340,6 @@ mod tests {
         assert_eq!(
             select_preferred_mls_account_secret_backup(&payload).unwrap()["series_sequence"],
             json!(2)
-        );
-        assert_eq!(
-            select_mls_private_plaintext_backup(&payload).unwrap()["series_sequence"],
-            json!(3)
         );
         assert_eq!(all_secret_storage_backups(&payload).len(), 3);
     }

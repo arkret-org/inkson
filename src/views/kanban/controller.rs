@@ -31,7 +31,6 @@ pub(super) struct KanbanController {
     pub new_card_title: Cage<String>,
     pub adding_card_to: Cage<Option<String>>,
     pub selected_card: Cage<Option<KanbanCard>>,
-    pub mls_sidecar_restore_key_seen: Cage<String>,
     pub board_popover: Cage<BoardToolbarPopover>,
     pub archive_board_confirm_open: Cage<bool>,
     pub list_archive_confirm: Cage<Option<(String, String, usize)>>,
@@ -122,7 +121,6 @@ pub(super) fn new_kanban_controller(
         new_card_title: scope.cage(String::new()),
         adding_card_to: scope.cage(None),
         selected_card: scope.cage(None),
-        mls_sidecar_restore_key_seen: scope.cage(String::new()),
         board_popover: scope.cage(BoardToolbarPopover::default()),
         archive_board_confirm_open: scope.cage(false),
         list_archive_confirm: scope.cage(None),
@@ -186,7 +184,6 @@ impl KanbanController {
         let _ = self.new_board_title.try_revise(String::clear);
         let _ = self.new_column_title.try_revise(String::clear);
         let _ = self.new_card_title.try_revise(String::clear);
-        let _ = self.mls_sidecar_restore_key_seen.try_revise(String::clear);
         let _ = self.card_edit_title.try_revise(String::clear);
         let _ = self.card_edit_description.try_revise(String::clear);
         let _ = self.card_edit_body.try_revise(String::clear);

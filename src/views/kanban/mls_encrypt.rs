@@ -893,15 +893,7 @@ pub(super) async fn dispatch_card_detail_update(
                             );
                             return;
                         };
-                        crate::components::schedule_mls_recovery_backups_after_encrypted_write(
-                            app.clone(),
-                            base_for_backup_trigger.clone(),
-                            api_token.clone(),
-                            backup_account_scope.authority.clone(),
-                            actor_for_backup_trigger.clone(),
-                            backup_account_scope.device_id.to_string(),
-                            state_store.handle(),
-                        );
+
                         // X11.2 — first-write trigger. After this encrypted write
                         // landed, auto-back up the account secret when possible.
                         // The helper dedupes its server probe per account/session, so

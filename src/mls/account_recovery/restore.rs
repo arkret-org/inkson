@@ -1,18 +1,16 @@
-//! Fetch + restore flow: the account MLS secret and the private-plaintext
-//! sidecar.
+//! Import the account checkpoint secret without claiming content recovery.
 
 use anyhow::{Context, Result, anyhow};
 use garth::mls::backup_series::verify_series_chain;
 use serde_json::{Value, json};
 
 use super::backup_body::{
-    decrypt_mls_account_secret_backup, decrypt_mls_private_plaintext_backup,
-    open_mls_account_secret_recovery_public_key_backup,
+    decrypt_mls_account_secret_backup, open_mls_account_secret_recovery_public_key_backup,
 };
 use crate::mls::runtime::{
     active_secret_storage_series_id_for, all_secret_storage_backups, backup_series_seq_of,
     select_mls_account_secret_backup, select_mls_account_secret_recovery_public_key_backup,
-    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
+    select_preferred_mls_account_secret_backup,
 };
 
 /// Offer recovery when the active series has a recoverable metadata candidate
@@ -139,21 +137,10 @@ pub(crate) fn mls_restore_prompt_required_after_material(
 
 /// Counts returned by [`auto_restore_mls_account_secret_with_passphrase`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct RestoreReport {
+pub struct AccountSecretRestoreReport {
     /// Whether the account MLS secret was imported or refreshed from the
     /// server backup on this call.
     pub account_secret_imported: bool,
-    /// Number of stored artifacts successfully restored into the state store.
-    pub restored: usize,
-    /// Number of stored artifacts that failed to restore.
-    pub failed: usize,
-    /// X5.3 — whether the encrypted local-plaintext sidecar backup was
-    /// successfully decrypted and merged into the local state store on this
-    /// call. Stays `false` when no sidecar backup exists or restore of it
-    /// failed (a non-fatal condition; see `first_error`).
-    pub private_plaintext_restored: bool,
-    /// First restore failure reason, for diagnostics.
-    pub first_error: Option<String>,
 }
 
 pub(super) fn verify_active_backup_series(list_payload: &Value, backup_kind: &str) -> Result<()> {
@@ -421,27 +408,20 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
     Ok(full_payload)
 }
 
-/// Restore MLS account secret + history from an already-fetched
-/// `list_key_backups` payload.
-///
-/// Network reads must complete before entering this function. Candidate bytes
-/// are then committed one at a time through the durable Garth ledger.
-pub async fn restore_mls_history_with_passphrase_from_payload(
+/// Import the account checkpoint secret from a complete authenticated backup list.
+/// This never installs MLS private state or marks historical content as recovered.
+pub async fn restore_mls_account_secret_with_passphrase_from_payload(
     list_payload: &Value,
-    state_store: &crate::runtime::input::StateStoreHandle,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &str,
     passphrase: &[u8],
-) -> Result<RestoreReport> {
-    let mut report = RestoreReport::default();
+) -> Result<AccountSecretRestoreReport> {
+    let mut report = AccountSecretRestoreReport::default();
     validate_backup_account(list_payload, authority, actor_id)?;
 
-    // Step 1: refresh the local account secret from the server backup when it
-    // exists. This deliberately runs even if a local secret is present: a
-    // previous incomplete bootstrap may have generated a stale/random secret,
-    // which would make every history restore fail with a secret mismatch.
+    // Refresh an incomplete bootstrap's checkpoint key when a backup exists.
     let has_local_secret = crate::mls::runtime::load_device_checkpoint_secret(
         secure_store,
         authority,
@@ -474,40 +454,23 @@ pub async fn restore_mls_history_with_passphrase_from_payload(
         report.account_secret_imported = true;
     } else if !has_local_secret {
         return Err(anyhow!(
-            "no mls_account_secret backup on server; cannot recover MLS history"
+            "no mls_account_secret backup on server; checkpoint secret cannot be imported"
         ));
     }
-    restore_private_sidecar(
-        list_payload,
-        state_store,
-        secure_store,
-        authority,
-        &mut report,
-    )
-    .await;
     Ok(report)
 }
 
-/// A3 (key-management.md §7.5.2): fresh-device restore via the recovery PRIVATE
-/// key (no passphrase prompt). Opens the HPKE `recovery_public_key`
-/// account-secret backup, imports the secret, then restores history + sidecar
-/// — the passphrase-free counterpart of
-/// [`restore_mls_history_with_passphrase_from_payload`]. The recovery private
-/// key is the one unlocked by the recovery policy (saved recovery key /
-/// threshold / hardware); on a brand-new browser (empty secure store) this is
-/// the path that works without first holding the account secret.
-pub async fn restore_mls_history_with_recovery_key_from_payload(
+/// Open the policy-bound account checkpoint secret with the backup HPKE key.
+/// Historical originals and fresh MLS membership require their own verification.
+pub async fn restore_mls_account_secret_with_recovery_key_from_payload(
     list_payload: &Value,
-    state_store: &crate::runtime::input::StateStoreHandle,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
-    device_id: &str,
     recovery_private_key: &[u8],
     expected_recovery_policy_ref: (&str, u64),
-) -> Result<RestoreReport> {
-    let _ = device_id;
-    let mut report = RestoreReport::default();
+) -> Result<AccountSecretRestoreReport> {
+    let mut report = AccountSecretRestoreReport::default();
     validate_backup_account(list_payload, authority, actor_id)?;
     verify_active_backup_series(
         list_payload,
@@ -531,124 +494,22 @@ pub async fn restore_mls_history_with_recovery_key_from_payload(
         .map_err(|err| anyhow!("mark restored account MLS secret verified: {err}"))?;
     report.account_secret_imported = true;
 
-    let _ = recovery_private_key;
-    restore_private_sidecar(
-        list_payload,
-        state_store,
-        secure_store,
-        authority,
-        &mut report,
-    )
-    .await;
     Ok(report)
 }
 
-/// Restore server-side MLS history using the account/device snapshot secret
-/// that is already present on this device. This is the no-prompt path for an
-/// unlocked device whose local snapshot is stale relative to another device's
-/// uploaded `mls_history` backup.
-pub async fn restore_mls_history_with_local_secret_from_payload(
-    list_payload: &Value,
-    state_store: &crate::runtime::input::StateStoreHandle,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::AccountId,
-    actor_id: &str,
-) -> RestoreReport {
-    let mut report = RestoreReport::default();
-    if let Err(error) = validate_backup_account(list_payload, authority, actor_id) {
-        report.failed = 1;
-        report.first_error = Some(error.to_string());
-        return report;
-    }
-    restore_private_sidecar(
-        list_payload,
-        state_store,
-        secure_store,
-        authority,
-        &mut report,
-    )
-    .await;
-    report
-}
-
-/// Shared restore tail for both entry points: with the account secret already
-/// local, restore the author's `mls_private_plaintext` sidecar. A failure is
-/// counted, never fatal.
-async fn restore_private_sidecar(
-    list_payload: &Value,
-    state_store: &crate::runtime::input::StateStoreHandle,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::AccountId,
-    report: &mut RestoreReport,
-) {
-    let Some(sidecar_body) = select_mls_private_plaintext_backup(list_payload) else {
-        return;
-    };
-    match state_store.write(|store| {
-        restore_private_plaintext_sidecar(&sidecar_body, store, secure_store, authority)
-    }) {
-        Ok(()) => {
-            report.private_plaintext_restored = true;
-            report.restored += 1;
-        }
-        Err(err) => {
-            report.failed += 1;
-            report
-                .first_error
-                .get_or_insert_with(|| format!("private plaintext restore: {err}"));
-        }
-    }
-}
-
-/// X5.3 — decrypt the `mls_private_plaintext` sidecar backup with the local
-/// account secret and merge it into `state_store`. Factored out so the restore
-/// step stays readable and so the `?` short-circuit doesn't abort the whole
-/// restore.
-fn restore_private_plaintext_sidecar(
-    sidecar_body: &Value,
-    state_store: &mut crate::state::LocalStateStore,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::AccountId,
-) -> Result<()> {
-    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, authority)
-        .map_err(|err| anyhow!("load account MLS secret: {err}"))?
-        .ok_or_else(|| anyhow!("no account secret available to decrypt sidecar"))?;
-    let sidecar_json =
-        decrypt_mls_private_plaintext_backup(stored.secret.as_bytes(), sidecar_body)?;
-    let map: std::collections::BTreeMap<
-        String,
-        std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
-    > = serde_json::from_slice(&sidecar_json)
-        .map_err(|err| anyhow!("parse sidecar JSON: {err}"))?;
-    state_store.merge_private_plaintext_map(map);
-    Ok(())
-}
-
-/// Auto-restore MLS history for a fresh device using the recovery passphrase.
-///
-/// Flow:
-///   1. Fetch the server's `mls_account_secret` backup when present, decrypt it with `passphrase`,
-///      and replace the local account key with it. This also repairs stale local secrets left by
-///      incomplete bootstraps.
-///   2. Restore portable history ranges only after every epoch has an exact replay-derived
-///      ciphersuite pin; restored bytes remain external candidates.
-///
-/// This is the function the recovery UI / a future "unlock MLS" prompt calls
-/// once the user has supplied the passphrase. Returns per-backup counts.
-pub async fn auto_restore_mls_history_with_passphrase(
+/// Fetch authenticated backup material and import only the checkpoint secret.
+pub async fn auto_restore_mls_account_secret_with_passphrase(
     api: &crate::transport::TransportClient,
-    state_store: &crate::runtime::input::StateStoreHandle,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &str,
     passphrase: &[u8],
-) -> Result<RestoreReport> {
-    // List once and reuse for both the account-secret and history selection.
+) -> Result<AccountSecretRestoreReport> {
+    // Fetch complete material before importing the account checkpoint key.
     let payload = fetch_mls_restore_payload_with_unlock_proof(api, actor_id, device_id).await?;
-    restore_mls_history_with_passphrase_from_payload(
+    restore_mls_account_secret_with_passphrase_from_payload(
         &payload,
-        state_store,
         secure_store,
         authority,
         actor_id,
@@ -664,7 +525,7 @@ pub async fn auto_restore_mls_history_with_passphrase(
 /// This is the mirror of [`mls_restore_prompt_required`]: it fires when the
 /// user HAS used encryption (a local account MLS secret exists) but the server
 /// holds NO `mls_account_secret` backup yet, so switching browsers would lose
-/// their history. Normal users never reach the explicit recovery-setup screen,
+/// their checkpoint key. Normal users never reach the explicit recovery-setup screen,
 /// so without this nudge their account secret stays purely local.
 ///
 /// Returns `false` when a server backup already exists (nothing to do), and

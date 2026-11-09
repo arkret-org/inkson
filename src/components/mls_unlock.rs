@@ -149,17 +149,13 @@ impl UnlockController {
             if owner.upgrade().is_none()||!context.session_matches(generation,&active){return}
             let result = match payload_result {
                 Ok((payload, active_policy)) => {
-                    // The restorable set is the account's own key-backup
-                    // envelopes: the account MLS secret and the private
-                    // plaintext sidecar. The RHRK history-secret family was
-                    // removed with the protocol, so there is no separate
-                    // history-backup count to report any more.
-                    let history_count =
+                    // Envelope discovery is not a count of restored Realms.
+                    let backup_count =
                         crate::mls::runtime::all_secret_storage_backups(&payload).len();
                     try_set_state(restore_payload_cache, Some(payload.clone()));
                     tracing::warn!(
                         target: "mls_unlock",
-                        history_count,
+                        backup_count,
                         has_active_policy = active_policy.is_some(),
                         "MLS unlock: recovery material fetched"
                     );
@@ -168,17 +164,13 @@ impl UnlockController {
                         format!(
                             "{} {} {}",
                             crate::i18n::tr("mls_unlock.status.restoring_prefix"),
-                            history_count,
+                            backup_count,
                             crate::i18n::tr("mls_unlock.status.restoring_suffix")
                         ),
                     );
                     crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(16)).await;
                     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                    // The restore now runs through the host-neutral store
-                    // handle, so the store guard is taken and released around
-                    // each durable step instead of being held across the whole
-                    // async restore. Probe it once first: a dropped signal
-                    // still means the prompt is gone.
+                    // Do not apply results after this prompt's session has changed.
                     if owner.upgrade().is_none()||!context.session_matches(generation,&active) {
                         Err(ApiCallError::Failed(anyhow::anyhow!(
                             "recovery prompt closed before restore completed"
@@ -188,20 +180,18 @@ impl UnlockController {
                             state_store.clone();
                         tracing::warn!(
                             target: "mls_unlock",
-                            history_count,
+                            backup_count,
                             "MLS unlock: starting local restore"
                         );
                         let mut restore_result = match crate::hpke_backup::derive_recovery_keypair_from_recovery_key(&pass)
                             .map_err(|err| anyhow::anyhow!("derive recovery key: {err}"))
                         {
                             Ok((recovery_private_key, _)) => match active_policy.as_ref() {
-                                Some(policy) => crate::mls::account_recovery::restore_mls_history_with_recovery_key_from_payload(
+                                Some(policy) => crate::mls::account_recovery::restore_mls_account_secret_with_recovery_key_from_payload(
                                     &payload,
-                                    &store_handle,
                                     secure_store.as_ref(),
                                     &authority,
                                     &actor,
-                                    &device,
                                     &recovery_private_key,
                                     (policy.policy_id.as_str(), policy.version),
                                 )
@@ -265,33 +255,12 @@ impl UnlockController {
             if owner.upgrade().is_none()||!context.session_matches(generation,&active){return}
             try_set_state(busy, false);
             match result {
-                Ok(report) => {
-                    if let Some(err) = report.first_error {
-                        // Some backups failed even though the call returned Ok —
-                        // keep the prompt open so the user can retry.
-                        try_set_state(
-                            status,
-                            format!(
-                                "{} {} {}; {} {}: {err}",
-                                crate::i18n::tr("mls_unlock.status.restored_prefix"),
-                                report.restored,
-                                crate::i18n::tr("mls_unlock.status.restored_suffix"),
-                                report.failed,
-                                crate::i18n::tr("mls_unlock.status.failed_suffix")
-                            ),
-                        );
-                    } else {
-                        let restored_status = format!(
-                            "{} {} {}",
-                            crate::i18n::tr("mls_unlock.status.restored_prefix"),
-                            report.restored,
-                            crate::i18n::tr("mls_unlock.status.restored_suffix")
-                        );
-                        try_set_state(passphrase, String::new());
-                        try_set_state(status, restored_status);
-                        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(750))
-                            .await;
-                        if owner.upgrade().is_some()&&context.session_matches(generation,&active){try_set_state(needs_mls_unlock, false);}
+                Ok(_report) => {
+                    try_set_state(passphrase, String::new());
+                    try_set_state(status, crate::i18n::tr("mls_unlock.status.checkpoint_unlocked"));
+                    crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(750)).await;
+                    if owner.upgrade().is_some() && context.session_matches(generation, &active) {
+                        try_set_state(needs_mls_unlock, false);
                     }
                 }
                 Err(err) => {

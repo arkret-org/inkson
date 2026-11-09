@@ -1453,9 +1453,7 @@ pub fn english_translations() -> TranslationDict {
         "mls_unlock.status.restoring_suffix",
         "encrypted backup(s). This can take a few seconds.",
     );
-    dict.set("mls_unlock.status.restored_prefix", "Restored");
-    dict.set("mls_unlock.status.restored_suffix", "encrypted space(s).");
-    dict.set("mls_unlock.status.failed_suffix", "failed");
+    dict.set("mls_unlock.status.checkpoint_unlocked", "Account encryption key unlocked. History recovery and MLS membership are verified separately.");
     dict.set(
         "mls_recovery_missing.aria_label",
         "This device does not have the encryption key yet",

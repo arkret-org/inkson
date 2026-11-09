@@ -188,3 +188,100 @@ pub(crate) async fn ensure_content_root_backup(
     backups.dedup();
     Ok(backups)
 }
+
+#[cfg(test)]
+mod tests {
+    use arkret_crypto::content_history::{
+        ContentRootBackupAuthor, ContentRootBackupDraft, open_content_root_backup,
+    };
+    use arkret_models_crypto::{KeyBackup, KeyBackupPlaintext, SecretStorageEntry};
+    use ed25519_dalek::{Signer as _, Verifier as _};
+
+    #[test]
+    fn mnemonic_opens_fresh_root_blocks_but_retained_daily_secret_cannot() {
+        // Construction-only regression: the fixture does not establish Native
+        // authority, an accepted recovery policy or complete PCR coverage.
+        let fixture =
+            arkret_schema_conformance::spec_json_artifact("fixtures/content-history-fixture.json")
+                .unwrap();
+        let original: KeyBackup =
+            serde_json::from_value(fixture["root_backup"]["envelope"].clone()).unwrap();
+        let bag: KeyBackupPlaintext =
+            serde_json::from_value(fixture["root_backup"]["plaintext"].clone()).unwrap();
+        let roots = bag
+            .items
+            .iter()
+            .map(|entry| match entry {
+                SecretStorageEntry::ContentRoot(root) => root.clone(),
+                _ => panic!("root-only fixture"),
+            })
+            .collect::<Vec<_>>();
+        let mnemonic = fixture["hpke_grant"]["mnemonic"].as_str().unwrap();
+        let (recovered_private, public) =
+            crate::hpke_backup::derive_recovery_keypair_from_recovery_key(mnemonic).unwrap();
+        let (wrong_private, _) = crate::hpke_backup::derive_recovery_keypair_from_recovery_key(
+            &crate::recovery_crypto::format_recovery_key(&[19; 32]),
+        )
+        .unwrap();
+        let retained_daily_secret =
+            crate::recovery_crypto::derive_vault_kek(b"former-device-account-checkpoint-secret")
+                .unwrap();
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[41; 32]);
+        let draft = ContentRootBackupDraft {
+            backup_id: original.backup_id,
+            actor_id: original.actor_id,
+            created_at: original.created_at,
+            expires_at: original.expires_at.flatten(),
+            author: ContentRootBackupAuthor::Device {
+                binding: arkret_crypto::backup::KeyBackupAuthBinding {
+                    device_id: original.signature_proof.device_id.unwrap(),
+                    verification_method: original.signature_proof.verification_method,
+                    signature_algorithm: original.signature_proof.signature_algorithm,
+                    device_authorize_event_id: original
+                        .signature_proof
+                        .device_authorize_event_id
+                        .unwrap(),
+                },
+                source: original.source_commit_ref.unwrap(),
+            },
+            recipient_key_ref: original.encryption.recipient_key_ref.unwrap(),
+            recovery_policy_ref: original.recovery_policy_ref.unwrap(),
+            domain_separation: original.domain_separation,
+            series_id: original.series_id,
+            series_sequence: original.series_sequence,
+            supersedes: original.supersedes_id.zip(original.supersedes_digest),
+            custody: None,
+        };
+        let seal = || {
+            draft
+                .clone()
+                .seal(roots.clone(), &public, |bytes| {
+                    Ok(signing.sign(bytes).to_bytes().to_vec())
+                })
+                .unwrap()
+        };
+        let first = seal();
+        let second = seal();
+        assert_ne!(first.encryption.aead.enc, second.encryption.aead.enc);
+        assert_ne!(first.ciphertext, second.ciphertext);
+        for backup in [first, second] {
+            let verify = |bytes: &[u8], proof: &arkret_models_crypto::KeyBackupSignatureProof| {
+                let signature = ed25519_dalek::Signature::from_slice(
+                    &arkret_sdk::canonical::base64url_decode(proof.signature.as_str())?,
+                )
+                .map_err(|error| arkret_crypto::Error::Crypto(error.to_string()))?;
+                signing
+                    .verifying_key()
+                    .verify(bytes, &signature)
+                    .map_err(|error| arkret_crypto::Error::Crypto(error.to_string()))
+            };
+            let recovered = open_content_root_backup(&backup, &recovered_private, verify).unwrap();
+            assert_eq!(
+                serde_json::to_value(&recovered.items).unwrap(),
+                serde_json::to_value(&bag.items).unwrap()
+            );
+            assert!(open_content_root_backup(&backup, &wrong_private, verify).is_err());
+            assert!(open_content_root_backup(&backup, &retained_daily_secret.key, verify).is_err());
+        }
+    }
+}

@@ -28,23 +28,6 @@ pub const MLS_ACCOUNT_SECRET_ITEM_KIND: SecretStorageItemKind =
 /// stable discriminator the recovery import path matches against.
 pub const MLS_ACCOUNT_SECRET_SECRET_ID: &str = "inkson_mls_account_secret";
 
-/// X5.3 — `item_kind` carried by the encrypted local-plaintext sidecar backup.
-///
-/// The sidecar (`LocalStateStore::mls_private_plaintext`, the author's own
-/// plaintext for their encrypted private strand fields) MUST cross devices: a new
-/// browser can never decrypt the author's own MLS ciphertext (OpenMLS
-/// `validation.rs` rejects own-leaf messages before any key lookup), so without
-/// this backup the author loses sight of everything they wrote after switching
-/// browsers. The sidecar JSON is encrypted under a KEK derived from the ACCOUNT
-/// SECRET (not the passphrase directly) so the restore flow — which imports the
-/// account secret first — can decrypt it with NO second passphrase prompt. Both
-/// coland's validator and the inkson client validator allowlist this content
-/// type under the `secret_storage` class.
-pub const MLS_PRIVATE_PLAINTEXT_ITEM_KIND: SecretStorageItemKind =
-    SecretStorageItemKind::MlsPrivatePlaintext;
-/// `secret_id` carried by the encrypted local-plaintext sidecar backup.
-pub const MLS_PRIVATE_PLAINTEXT_SECRET_ID: &str = "inkson_mls_private_plaintext";
-
 /// Build a `secret_storage` PUT body that wraps the account MLS snapshot secret
 /// behind an already-derived recovery KEK.
 ///
@@ -176,108 +159,6 @@ pub fn decrypt_mls_account_secret_backup(
         .decode(item.secret_base64url.as_bytes())
         .map_err(|error| anyhow!("key backup plaintext secret is not base64url: {error}"))?;
     Ok((secret, generation))
-}
-
-/// X5.3 — build a `secret_storage` PUT body that wraps the entire encrypted
-/// local-plaintext sidecar map behind a KEK derived from the ACCOUNT SECRET.
-///
-/// Mirrors [`build_mls_account_secret_backup_body_with_kek_and_version`] but
-/// with the sidecar identifiers and the sidecar JSON bytes as the encrypted
-/// payload. `sidecar_json` is the serialized `mls_private_plaintext` map
-/// (`serde_json::to_vec` of `realm -> strand -> field -> plaintext`); only its
-/// ciphertext, salt and nonce travel on the wire. The caller derives `kek` from
-/// the account secret (`derive_vault_kek(account_secret.as_bytes())`), so the
-/// restore path — which imports the account secret first — can decrypt with no
-/// second passphrase prompt. base64url-clean; domain separation re-attached so
-/// the AAD's `item_kinds` matches the rewritten contents.
-pub fn build_mls_private_plaintext_backup_body_with_kek(
-    backup_id: &str,
-    account_id: &arkret_sdk::AccountId,
-    device_id: &str,
-    kek: &VaultKek,
-    sidecar_json: &[u8],
-    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
-    sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
-    source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
-) -> Result<KeyBackup> {
-    build_passphrase_kdf_backup_body(
-        backup_id,
-        &arkret_sdk::ActorId::account(account_id.clone()),
-        device_id,
-        kek,
-        sidecar_json,
-        BackupKind::SecretStorage,
-        "recovery_vault",
-        &SecretStorageContentIndex {
-            item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND,
-            secret_id: MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned(),
-            root_ref: None,
-            root_context: None,
-        },
-        None,
-        auth,
-        sign,
-        source_commit_ref,
-    )
-}
-
-/// Build the next private-plaintext sidecar envelope with its predecessor link
-/// and optional accepted source checkpoint fixed before sealing.
-pub fn build_mls_private_plaintext_backup_successor_body_with_kek(
-    backup_id: &str,
-    predecessor: &KeyBackup,
-    device_id: &str,
-    kek: &VaultKek,
-    sidecar_json: &[u8],
-    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
-    sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
-    source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
-) -> Result<KeyBackup> {
-    crate::key_backup::build_passphrase_kdf_backup_successor_body(
-        backup_id,
-        predecessor,
-        device_id,
-        kek,
-        sidecar_json,
-        &SecretStorageContentIndex {
-            item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND,
-            secret_id: MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned(),
-            root_ref: None,
-            root_context: None,
-        },
-        None,
-        auth,
-        sign,
-        source_commit_ref,
-    )
-}
-
-/// X5.3 — decrypt a downloaded `mls_private_plaintext` backup body and return
-/// the serialized sidecar JSON bytes.
-///
-/// The KEK source is the ACCOUNT SECRET bytes (NOT the recovery passphrase):
-/// the restore flow imports the account secret first, then feeds its bytes here
-/// so the sidecar is recovered with no second passphrase prompt.
-/// `open_passphrase_kdf_backup_body` derives the Argon2id root from these bytes +
-/// the stored salt, exactly as the account-secret path does.
-pub fn decrypt_mls_private_plaintext_backup(
-    account_secret: &[u8],
-    body: &Value,
-) -> Result<Vec<u8>> {
-    let plaintext = open_passphrase_kdf_backup_body(account_secret, body)?;
-    let [arkret_models_crypto::SecretStorageEntry::Secret(item)] = plaintext.items.as_slice()
-    else {
-        return Err(anyhow!(
-            "single-secret key backup must decrypt to exactly one plaintext item"
-        ));
-    };
-    anyhow::ensure!(
-        item.item_kind == MLS_PRIVATE_PLAINTEXT_ITEM_KIND
-            && item.secret_id == MLS_PRIVATE_PLAINTEXT_SECRET_ID,
-        "private plaintext backup contains a different secret class"
-    );
-    B64.decode(item.secret_base64url.as_bytes())
-        .map_err(|error| anyhow!("key backup plaintext secret is not base64url: {error}"))
 }
 
 /// Build an HPKE account-secret backup that extends `previous_series_tail`.

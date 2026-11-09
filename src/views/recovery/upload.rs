@@ -82,11 +82,7 @@ pub(crate) fn upload_recovery_key_account_backup(
         }
         return;
     }
-    let sidecar_json = if state_store.read(|store| store.private_plaintext_is_empty()) {
-        None
-    } else {
-        Some(state_store.read(|store| store.private_plaintext_snapshot_json()))
-    };
+
     let recovery_material_evidence = state_store.read(|store| store.recovery_material_evidence());
     let needs_mls_backup_signal = crate::components::try_needs_mls_backup_state();
     let status_publishing = crate::i18n::tr("recovery.upload.publishing");
@@ -98,11 +94,6 @@ pub(crate) fn upload_recovery_key_account_backup(
         let task_owner = context.clone();
         let _ = task_owner.spawn(async move {
             let _publication_guard = publication_guard;
-            let actor_for_sidecar = actor.clone();
-            let authority_for_sidecar = authority.clone();
-            let device_for_sidecar = device.clone();
-            let base_for_sidecar = base.clone();
-            let session_for_sidecar = session.clone();
             let state_store = state_store;
             let result = with_authed_api(&base, session, |api| async move {
                 let evidence = recovery_material_evidence.ok_or_else(|| {
@@ -141,14 +132,14 @@ pub(crate) fn upload_recovery_key_account_backup(
                     &recovery_secret,
                 )
                 .await?;
-                Ok::<_, anyhow::Error>((account_backup_id, evidence.principal_control_realm_id))
+                Ok::<_, anyhow::Error>(account_backup_id)
             })
             .await;
             if !context.session_matches(started, &expected) {
                 return;
             }
             match result {
-                Ok((account_backup_id, principal_control_realm_id)) => {
+                Ok(account_backup_id) => {
                     // The caller already confirmed cold custody before invoking
                     // this function. Only public local metadata and the server fact
                     // that ciphertext exists are persisted after acceptance.
@@ -161,32 +152,7 @@ pub(crate) fn upload_recovery_key_account_backup(
                     if let Some(needs_mls_backup) = needs_mls_backup_signal {
                         needs_mls_backup.revise(|value| *value = false);
                     }
-                    // Best-effort: also back up the encrypted local-plaintext sidecar
-                    // so a fresh device recovers the author's own content. A failure
-                    // here must not block the (successful) account-secret backup.
-                    if let Some(sidecar_json) = sidecar_json {
-                        let actor = actor_for_sidecar;
-                        let device = device_for_sidecar;
-                        let _ = with_authed_api(
-                            &base_for_sidecar,
-                            session_for_sidecar,
-                            |api| async move {
-                                let secure =
-                                    crate::secure_key_store::default_secure_key_store("inkson");
-                                crate::mls::account_recovery::upload_mls_private_plaintext_backup(
-                                    &api,
-                                    secure.as_ref(),
-                                    &authority_for_sidecar,
-                                    &principal_control_realm_id,
-                                    &actor,
-                                    &device,
-                                    &sidecar_json,
-                                )
-                                .await
-                            },
-                        )
-                        .await;
-                    }
+
                     if !context.session_matches(started, &expected) {
                         return;
                     }
