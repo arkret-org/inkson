@@ -179,8 +179,8 @@ pub(crate) async fn retain_received_epoch_root(
 }
 
 /// The caller supplies an original already accepted through its own Station.
-/// The private group is currently usable only at this exact historical epoch;
-/// an unrelated current roster must not manufacture old producer provenance.
+/// Prefer a public exact-epoch proof prepared from a sealed accepted page.
+/// An unrelated current roster must not manufacture old producer provenance.
 pub(crate) fn material_from_accepted_original(
     state: &crate::state::LocalStateStore,
     secure: &dyn crate::secure_key_store::SecureKeyStore,
@@ -197,6 +197,27 @@ pub(crate) fn material_from_accepted_original(
     let arkret_models_crypto::EncryptedEnvelopeEncryptionContext::EpochContent { root_ref, .. } =
         &envelope.encryption_context;
     let root = vault.cached_root(root_ref).ok()??;
+    if let Some(material) =
+        state
+            .historical_content_rosters
+            .material(account, event, envelope, &root.root_context)
+    {
+        return Some(material);
+    }
+    // Only the installed-group fallback needs the current projection's epoch
+    // index. A verified public historical epoch requires no private snapshot.
+    let group_id = event.scope_ref.canonical_mls_group_id().ok()?;
+    if state
+        .mls_group_state_ref_for_scope(
+            &event.scope_ref,
+            &group_id,
+            envelope.encryption_context.epoch(),
+        )
+        .ok()?
+        != *envelope.encryption_context.group_state_ref()
+    {
+        return None;
+    }
     let snapshot = state.mls_checkpoint_for_scope(&event.scope_ref)?;
     let secret =
         crate::mls::runtime::load_device_checkpoint_secret(secure, account, device).ok()?;

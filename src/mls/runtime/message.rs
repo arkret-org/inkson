@@ -84,7 +84,6 @@ pub(crate) fn encrypted_payload_from_verified_event_context(
     verified_sender_domain: &[u8],
     reaction_routing_window: Option<u64>,
 ) -> Option<arkret_sdk::EncryptedPayload> {
-    let group_id = effective_scope.canonical_mls_group_id().ok()?;
     let warn_pending = |reason: &str| {
         warn_mls_decrypt_once(
             effective_scope
@@ -104,27 +103,6 @@ pub(crate) fn encrypted_payload_from_verified_event_context(
         );
     };
     let scheme = arkret_sdk::EncryptedPayloadScheme::EpochContentAead;
-    if !matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. })
-        && matches!(
-            state_store.installed_scope_mls_current(effective_scope),
-            crate::current_projection::ScopeMlsCurrent::NotActivated
-        )
-    {
-        warn_pending("the scope has no accepted MLS Genesis, so it carries no ciphertext");
-        return None;
-    }
-    let accepted_ref = state_store
-        .mls_group_state_ref_for_scope(
-            effective_scope,
-            &group_id,
-            envelope.encryption_context.epoch(),
-        )
-        .map_err(|error| warn_pending(&error))
-        .ok()?;
-    if accepted_ref != *envelope.encryption_context.group_state_ref() {
-        warn_pending("encrypted Event cites a different accepted MLS group-state reference");
-        return None;
-    }
     let sender_domain = std::str::from_utf8(verified_sender_domain).ok()?;
     let header = envelope
         .reconstruct_pre_encryption_header(
@@ -161,13 +139,6 @@ pub(crate) fn encrypted_payload_from_verified_original(
     sender: &[u8],
 ) -> Option<arkret_sdk::EncryptedPayload> {
     let scope = &event.scope_ref;
-    let group = scope.canonical_mls_group_id().ok()?;
-    let accepted = state
-        .mls_group_state_ref_for_scope(scope, &group, envelope.encryption_context.epoch())
-        .ok()?;
-    if accepted != *envelope.encryption_context.group_state_ref() {
-        return None;
-    }
     let material = crate::mls::content_roots::material_from_accepted_original(
         state, secure, account, device, event, envelope,
     )?;

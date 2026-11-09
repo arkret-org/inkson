@@ -181,6 +181,8 @@ pub struct LocalStateStore {
     /// blob carries no copy of it.
     current_view: Arc<Mutex<Option<CurrentProductView>>>,
     realm_security_view: Arc<Mutex<Option<RealmSecurityView>>>,
+    /// Non-portable public epoch proofs, fenced by their live source session.
+    pub(crate) historical_content_rosters: crate::mls::historical_content::HistoricalContentRosters,
     /// Perf: whether `cached` has been reconciled with the persistence layer at
     /// least once. Before this flag existed, an empty/default account (where
     /// `cached == ClientLocalState::default()`) re-read the backing store (disk
@@ -277,6 +279,7 @@ impl Clone for LocalStateStore {
             product_current_demand: Arc::clone(&self.product_current_demand),
             current_view: Arc::clone(&self.current_view),
             realm_security_view: Arc::clone(&self.realm_security_view),
+            historical_content_rosters: self.historical_content_rosters.clone(),
             loaded: AtomicBool::new(self.loaded.load(Ordering::Acquire)),
             flush_suspended: self.flush_suspended,
             flush_pending: AtomicBool::new(self.flush_pending.load(Ordering::Acquire)),
@@ -358,6 +361,7 @@ impl Default for LocalStateStore {
             product_current_demand: Arc::new(Mutex::new(None)),
             current_view: Arc::new(Mutex::new(None)),
             realm_security_view: Arc::new(Mutex::new(None)),
+            historical_content_rosters: Default::default(),
             loaded: AtomicBool::new(false),
             flush_suspended: 0,
             flush_pending: AtomicBool::new(false),
@@ -675,6 +679,7 @@ impl LocalStateStore {
             product_current_demand: Arc::new(Mutex::new(None)),
             current_view: Arc::new(Mutex::new(None)),
             realm_security_view: Arc::new(Mutex::new(None)),
+            historical_content_rosters: Default::default(),
             loaded: AtomicBool::new(false),
             flush_suspended: 0,
             flush_pending: AtomicBool::new(false),

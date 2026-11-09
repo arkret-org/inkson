@@ -953,6 +953,18 @@ async fn install_live_cut<F: Fn() -> bool>(
     .await
     .map_err(crate::state::current_index::current_stage_error)?;
     guard().map_err(crate::state::current_index::current_stage_error)?;
+    for page in pages {
+        if let Err(error) = crate::mls::historical_content::prepare_accepted_page(
+            client,
+            &projector.state_store,
+            page,
+        )
+        .await
+        {
+            tracing::warn!(%error, "live historical attribution remains pending");
+        }
+    }
+    guard().map_err(crate::state::current_index::current_stage_error)?;
     projector
         .state_store
         .read(|store| {

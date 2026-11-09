@@ -1414,6 +1414,14 @@ impl InksonAccountProjector {
             // cache failure must not turn it into an uncommitted frame.
             tracing::warn!(%error, "current product view remains pending");
         }
+        for page in verified.pages() {
+            crate::mls::historical_content::prepare_accepted_page_for_http(
+                self.transport.http().http(),
+                &self.ctx.state_store,
+                page,
+            )
+            .await;
+        }
         self.ctx
             .state_store
             .read(|store| {
@@ -1858,6 +1866,16 @@ impl InksonAccountProjector {
                     return Err(garth::Error::AuthorityCutBehind);
                 }
                 let mut history = crate::realm_events_engine::AccountRecoveryHistory::default();
+                for proof in &verified {
+                    for page in proof.own_pages() {
+                        crate::mls::historical_content::prepare_accepted_page_for_http(
+                            self.transport.http().http(),
+                            &self.ctx.state_store,
+                            page,
+                        )
+                        .await;
+                    }
+                }
                 self.ctx
                     .state_store
                     .read(|store| {
