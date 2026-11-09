@@ -1156,6 +1156,12 @@ impl ChatController {
         target_ref: String,
         emoji: String,
     ) {
+        if let Err(error) = arkret_sdk::EventId::new(target_ref.clone()) {
+            self.status_msg.revise(|value| {
+                *value = format!("Reaction skipped: invalid reaction target Event id: {error}");
+            });
+            return;
+        }
         self.messages.revise(|values| {
             if let Some(message) = values.iter_mut().find(|message| message.id == message_id) {
                 if let Some((_, senders)) =

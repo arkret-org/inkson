@@ -1,7 +1,7 @@
 //! Actual pinned Blitz admission and typed activation, without a GUI-hover claim.
 use std::rc::Rc;
 
-use glory::render::{DismissReason, Event, NodeId, Props, Role};
+use glory::render::{CheckMode, DismissReason, Event, NodeId, Props, Role};
 
 use super::*;
 fn context(app: &glory::App, path: &std::path::Path) -> Rc<InksonContext> {
@@ -91,7 +91,7 @@ fn actual_blitz_accepts_help_and_me_badge_and_operates_managed_dialogs() {
     }
 }
 #[test]
-fn actual_blitz_theme_buttons_publish_pressed_state_and_real_persist_callbacks() {
+fn actual_blitz_theme_radios_publish_checked_state_and_real_persist_callbacks() {
     let directory = tempfile::Builder::new()
         .prefix("native-theme-")
         .tempdir()
@@ -125,7 +125,10 @@ fn actual_blitz_theme_buttons_publish_pressed_state_and_real_persist_callbacks()
         );
     }
     for (index, value) in ["light", "night", "system"].into_iter().enumerate() {
-        assert!(app.dispatch(buttons[index], Event::Activate).unwrap());
+        assert!(
+            app.dispatch(buttons[index], Event::CheckedChanged(true))
+                .unwrap()
+        );
         app.flush().unwrap();
         assert_eq!(theme.get_untracked(), value);
         assert_eq!(
@@ -135,11 +138,8 @@ fn actual_blitz_theme_buttons_publish_pressed_state_and_real_persist_callbacks()
         for (candidate, node) in buttons.iter().enumerate() {
             let tree = app.tree();
             let view = tree.node(*node).unwrap().descriptor.view();
-            assert!(matches!(view.props, Props::Button(_)));
-            assert_eq!(
-                view.semantics.as_ref().unwrap().pressed,
-                Some(candidate == index)
-            );
+            assert!(matches!(&view.props, Props::Check(check)
+                if check.mode == CheckMode::Radio && check.checked == (candidate == index)));
         }
     }
 }

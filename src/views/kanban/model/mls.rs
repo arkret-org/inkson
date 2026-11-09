@@ -73,7 +73,7 @@ pub(crate) fn private_strand_event_field_value(
     if event.kind != arkret_sdk::EventKind::StrandUpdate
         || event.realm_id.as_str() != ctx.realm_id
         || event.scope_ref.realm_id_opt() != Some(&event.realm_id)
-        || event.payload.get("target_ref")?.as_str()? != strand_id
+        || event.payload.get("strand_id")?.as_str()? != strand_id
     {
         return None;
     }
@@ -114,22 +114,19 @@ pub(crate) fn private_strand_event_field_value(
         warn_pending(&format!("Strand sender proof is {verdict:?}"));
         None
     })?;
-    let plaintext =
-        crate::state::projection::try_local_mls_decrypt_core_for_scope_from_verified_sender(
-            ctx.state_store,
-            ctx.realm_id,
-            authority,
-            &device_id,
-            value,
-            &event.scope_ref,
-            event.kind.as_str(),
-            &sender,
-            None,
-        )
-        .or_else(|| {
-            warn_pending("Strand verified envelope or receive state is unavailable");
-            None
-        })?;
+    let plaintext = crate::state::projection::try_local_mls_decrypt_from_verified_original(
+        ctx.state_store,
+        ctx.realm_id,
+        authority,
+        &device_id,
+        value,
+        &event,
+        &sender,
+    )
+    .or_else(|| {
+        warn_pending("Strand verified envelope or receive state is unavailable");
+        None
+    })?;
     serde_json::from_slice(&plaintext).ok()
 }
 

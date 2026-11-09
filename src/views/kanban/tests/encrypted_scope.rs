@@ -863,7 +863,7 @@ async fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
 
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch.clone(),
-        "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        TEST_REALM_ID,
         "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "ak:did_core:web:alice.example",
         "ak:device:01904100-0000-7000-8000-000000000001",
@@ -891,7 +891,7 @@ async fn encrypted_write_accepts_resolvable_did_for_active_core_identity() {
 
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch.clone(),
-        "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        TEST_REALM_ID,
         "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "ak:did_core:web:alice.example",
         device,
@@ -913,7 +913,7 @@ async fn encrypted_write_rejects_did_for_a_different_active_identity() {
 
     let error = encrypt_private_card_detail_patch_values_with_store(
         json!({"summary": {"$op": "set", "value": "metadata summary"}}),
-        "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        TEST_REALM_ID,
         "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "ak:did_core:web:bob.example",
         device,

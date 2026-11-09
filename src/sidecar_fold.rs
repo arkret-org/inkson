@@ -179,13 +179,14 @@ fn decrypt_with_secure_store(
             "Sidecar fact awaits authenticated historical Agent signer and MLS binding evidence"
         );
     }
-    let payload = crate::mls::runtime::encrypted_payload_from_verified_event_context(
+    let payload = crate::mls::runtime::encrypted_payload_from_verified_original(
         store,
+        secure_store,
+        controller,
+        &local.device_id,
+        event,
         envelope,
-        &event.scope_ref,
-        event.kind.as_str(),
         &sender,
-        None,
     )
     .ok_or_else(|| anyhow::anyhow!("Sidecar fact awaits its exact accepted MLS state"))?;
     crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(

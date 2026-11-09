@@ -182,6 +182,7 @@ fn realm_create_carries_only_the_closed_genesis_members() {
             "genesis_salt".to_owned(),
             "governance_station_id".to_owned(),
             "initial_discoverability".to_owned(),
+            "initial_encryption_backup_strategy".to_owned(),
             "initial_history_access".to_owned(),
             "initial_join_rule".to_owned(),
             "purpose".to_owned(),

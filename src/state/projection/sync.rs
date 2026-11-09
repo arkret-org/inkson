@@ -1,7 +1,7 @@
 use arkret_wire::event_kind_str;
 use serde_json::Value;
 
-use super::decrypt::try_local_mls_decrypt_core_for_scope_from_verified_sender;
+use super::decrypt::try_local_mls_decrypt_from_verified_original;
 use super::model::ProjectionEvent;
 use crate::display_id::short_protocol_id;
 
@@ -9,10 +9,12 @@ use crate::display_id::short_protocol_id;
 ///
 /// Canonical envelopes expose `actor_id` / `sender_actor_id` only;
 /// forbidden `sender` fields are not accepted.
-fn projection_actor_id(event: &Value) -> Option<&str> {
-    ["actor_id", "sender_actor_id"]
-        .into_iter()
-        .find_map(|key| event.get(key).and_then(Value::as_str))
+fn projection_actor_id(event: &Value) -> Option<arkret_sdk::ActorId> {
+    ["actor_id", "sender_actor_id"].into_iter().find_map(|key| {
+        event
+            .get(key)
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+    })
 }
 
 /// Extract the display text from a decrypted canonical Content Block JSON.
@@ -96,23 +98,23 @@ pub fn projection_events_from_sync_realms(
                 .get("message_id")
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned);
-            let content = event.get("content").unwrap_or(&Value::Null);
-            let mut body = content
+            let content = event
+                .get("payload")
+                .or_else(|| event.get("content"))
+                .unwrap_or(&Value::Null);
+            let body_content = content.get("content").unwrap_or(content);
+            let mut body = body_content
                 .get("body")
                 .and_then(Value::as_str)
                 .or_else(|| event.get("body").and_then(Value::as_str))
-                .or_else(|| projection_text_from_content_value(content))
+                .or_else(|| projection_text_from_content_value(body_content))
                 .unwrap_or("[message]")
                 .to_owned();
             // B7: carry the raw `encrypted_content` block forward so local
             // consumers can try an MLS decrypt against it.
             let encrypted_payload = content.get("encrypted_content").cloned();
-            // Parity with the chat read path: for encrypted messages the wire
-            // body is just `[message]`. Recover plaintext, preferring the
-            // author's own local sidecar (OpenMLS forbids an author from
-            // decrypting their OWN ciphertext) and otherwise a remote-member
-            // decrypt-on-read. Leave the `[message]` fallback untouched when
-            // neither store nor identity is available, or recovery soft-fails.
+            // Content reads use the exact original and retained R. A missing
+            // original is pending; a partial projection cannot reconstruct E.
             if let Some(encrypted_content) = encrypted_payload.as_ref() {
                 let message_realm = content
                     .get("realm_id")
@@ -135,14 +137,9 @@ pub fn projection_events_from_sync_realms(
                 let decrypted_body = if sidecar_body.is_none() {
                     if let (Some((authority, device_id)), Some(store)) = (decrypt_identity, store) {
                         let actor_id = authority.principal_id.as_str();
-                        event
-                            .get("scope_ref")
-                            .or_else(|| event.get("effective_scope"))
-                            .cloned()
-                            .and_then(|scope| {
-                                serde_json::from_value::<arkret_sdk::ScopeRef>(scope).ok()
-                            })
-                            .and_then(|effective_scope| {
+                        serde_json::from_value::<arkret_sdk::Event>(event.clone())
+                            .ok()
+                            .and_then(|original| {
                                 let sender_domain =
                                     crate::identity::committed_sender::verified_chat_sender_domain_for_realm(
                                         message_realm,
@@ -150,16 +147,14 @@ pub fn projection_events_from_sync_realms(
                                         Some(store),
                                         Some((authority, actor_id, device_id)),
                                     );
-                                try_local_mls_decrypt_core_for_scope_from_verified_sender(
+                                try_local_mls_decrypt_from_verified_original(
                                     store,
                                     message_realm,
                                     authority,
                                     device_id,
                                     encrypted_content,
-                                    &effective_scope,
-                                    event_kind_str::MESSAGE_CREATE,
+                                    &original,
                                     sender_domain.as_deref()?,
-                                    None,
                                 )
                             })
                             .and_then(|plaintext| serde_json::from_slice::<Value>(&plaintext).ok())
@@ -182,6 +177,9 @@ pub fn projection_events_from_sync_realms(
                 // a DID-shaped principal that could be mistaken for authority.
                 continue;
             };
+            let Ok(sender_id) = serde_json::to_string(&sender) else {
+                continue;
+            };
             events.push(ProjectionEvent {
                 realm_id: Some(realm_id.clone()),
                 strand_id: content
@@ -194,8 +192,8 @@ pub fn projection_events_from_sync_realms(
                 // fields use the role-explicit `sender_actor_*` schema names.
                 // Envelope attribution uses `actor_id`; derived notification
                 // projections use the role-explicit `sender_actor_id`.
-                sender: sender.to_owned(),
-                sender_display: short_protocol_id(sender),
+                sender: sender_id,
+                sender_display: short_protocol_id(sender.signing_principal_id().as_str()),
                 body,
                 timestamp: event
                     .get("created_at")

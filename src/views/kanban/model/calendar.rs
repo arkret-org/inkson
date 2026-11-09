@@ -1102,18 +1102,15 @@ fn decrypt_rsvp_winner(
         Some((authority, authority.principal_id.as_str(), &device_id)),
     )?;
     let ciphertext = winner.entry.get("encrypted_response")?;
-    let plaintext =
-        crate::state::projection::try_local_mls_decrypt_core_for_scope_from_verified_sender(
-            ctx.state_store,
-            ctx.realm_id,
-            authority,
-            &device_id,
-            ciphertext,
-            &scope,
-            event.kind.as_str(),
-            &sender,
-            None,
-        )?;
+    let plaintext = crate::state::projection::try_local_mls_decrypt_from_verified_original(
+        ctx.state_store,
+        ctx.realm_id,
+        authority,
+        &device_id,
+        ciphertext,
+        &event,
+        &sender,
+    )?;
     let response: arkret_sdk::RsvpResponse = serde_json::from_slice(&plaintext).ok()?;
     response.validate().ok()?;
     Some(response)

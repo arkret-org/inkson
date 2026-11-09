@@ -73,59 +73,6 @@ pub(crate) fn decrypt_application_payload_for_effective_scope_internal(
     )
 }
 
-/// Reconstruct the authenticated pre-encryption header from a minimal wire
-/// envelope plus context already verified from the signed outer Event and the
-/// exact winning MLS group state. Any missing or stale coordinate fails closed.
-pub(crate) fn encrypted_payload_from_verified_event_context(
-    state_store: &crate::state::LocalStateStore,
-    envelope: &arkret_sdk::EncryptedEnvelope,
-    effective_scope: &arkret_sdk::ScopeRef,
-    event_kind: &str,
-    verified_sender_domain: &[u8],
-    reaction_routing_window: Option<u64>,
-) -> Option<arkret_sdk::EncryptedPayload> {
-    let warn_pending = |reason: &str| {
-        warn_mls_decrypt_once(
-            effective_scope
-                .realm_id_opt()
-                .map(|id| id.as_str())
-                .unwrap_or_default(),
-            envelope
-                .payload_digest()
-                .map(|digest| digest.to_string())
-                .unwrap_or_default()
-                .as_str(),
-            envelope.encryption_context.epoch(),
-            state_store
-                .mls_checkpoint_for_scope(effective_scope)
-                .map(|snapshot| snapshot.epoch),
-            reason,
-        );
-    };
-    let scheme = arkret_sdk::EncryptedPayloadScheme::EpochContentAead;
-    let sender_domain = std::str::from_utf8(verified_sender_domain).ok()?;
-    let header = envelope
-        .reconstruct_pre_encryption_header(
-            scheme,
-            effective_scope.clone(),
-            event_kind,
-            sender_domain,
-            reaction_routing_window,
-            crate::mls::content_roots::retained_original_material(
-                state_store,
-                envelope,
-                effective_scope,
-                event_kind,
-                verified_sender_domain,
-            )?,
-        )
-        .map_err(|error| warn_pending(&format!("reconstruct encrypted Event header: {error}")))
-        .ok()?;
-    arkret_sdk::mls::encrypted_envelope_to_payload_with_verified_header(envelope, header)
-        .map_err(|error| warn_pending(&format!("reconstruct encrypted Event payload: {error}")))
-        .ok()
-}
-
 /// The host has already consumed this exact accepted original. Keep its E and
 /// explicit reader endpoint instead of searching a bounded presentation tail.
 #[allow(clippy::too_many_arguments)]

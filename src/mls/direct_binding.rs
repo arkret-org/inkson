@@ -1274,7 +1274,18 @@ mod tests {
                 .unwrap()
                 .event_id
         );
-        assert!(mls_authoring_intent(&authorized, &create, &provisional).is_err());
+        let revalidated = mls_authoring_intent(&authorized, &create, &provisional).unwrap();
+        assert_eq!(
+            revalidated
+                .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+                .unwrap()
+                .event_id,
+            authorized
+                .clone()
+                .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+                .unwrap()
+                .event_id
+        );
         let mut completing = provisional.clone();
         if let arkret_sdk::direct_conversation::DirectConversationResolveResponseBody::Provisional {
             initial_exact_pair_group_state_ref,

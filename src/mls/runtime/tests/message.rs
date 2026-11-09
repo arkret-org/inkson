@@ -339,7 +339,7 @@ fn test_message_header(
         group.local_content_sender_domain().unwrap(),
         arkret_sdk::EventContentRoutingContext::None,
         crate::test_support::content::material(
-            &group,
+            group,
             arkret_wire::event_kind_str::MESSAGE_CREATE,
             &(arkret_sdk::EventId::new(
                 "ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM".to_owned(),
@@ -2297,6 +2297,23 @@ fn accepted_metadata_survives_later_messages_without_opening_its_view() {
             .is_some()
     );
     let sender = alice.local_content_sender_domain().unwrap();
+    assert!(state.load().raw_operations.is_empty());
+    let opened =
+        crate::state::projection::try_local_mls_decrypt_from_verified_original_with_secure_store(
+            &state,
+            realm,
+            &account,
+            &device,
+            &serde_json::to_value(&envelope).unwrap(),
+            &event,
+            sender.as_bytes(),
+            &secure,
+        )
+        .expect("the original read path does not search a bounded raw tail");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&opened).unwrap(),
+        plaintext
+    );
     let mut rebound = event.clone();
     rebound.created_at += chrono::Duration::seconds(1);
     rebound.producer_proof = None;
@@ -2412,6 +2429,28 @@ fn accepted_metadata_survives_later_messages_without_opening_its_view() {
             &secure,
         ),
         Some(plaintext)
+    );
+    assert_eq!(cold.metadata_originals_for(realm).len(), 1);
+    assert!(verify_native(&rebound).is_ok());
+    crate::identity::metadata::retain_accepted_metadata(
+        &cold, &rebound, &account, &device, &secure,
+    );
+    assert!(
+        cold.mls_decrypted_plaintext_for(realm, encrypted.payload_digest.as_str())
+            .is_some()
+    );
+    assert!(
+        crate::identity::metadata::open_metadata_with_secure_store(
+            &cold,
+            realm,
+            space.as_str(),
+            &envelope,
+            &account,
+            &device,
+            &secure,
+        )
+        .is_none(),
+        "an old digest cache cannot authenticate another original E"
     );
 }
 

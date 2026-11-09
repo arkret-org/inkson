@@ -1760,7 +1760,6 @@ impl EventSubmitter {
         let event = self.author_intent(&intent).await?;
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         trace.stage("authored");
-        self.retain_authored_metadata(event.event()).await?;
         tracing::debug!(
             local_operation_id = %local_operation_id,
             kind = %event.kind.as_str(),

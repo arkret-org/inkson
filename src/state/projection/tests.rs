@@ -141,3 +141,37 @@ fn projection_does_not_turn_audit_policy_access_into_chat_authority() {
             .all(|event| !event.id.starts_with("late-recovery-"))
     );
 }
+
+#[test]
+fn canonical_original_projection_keeps_its_payload_and_full_actor_identity() {
+    let original = golden_event(
+        arkret_sdk::EventKind::MessageCreate.as_str(),
+        "2026-11-10T00:00:00.000Z",
+        serde_json::json!({
+            "strand_id":"ak:strand:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
+            "track_name":"discussion",
+            "content":{"kind":"ak.content.text","body":"original payload","format":"plain"}
+        }),
+    );
+    let realms = std::collections::BTreeMap::from([(
+        GOLDEN_REALM.to_owned(),
+        serde_json::json!({"timeline":{"events":[original]}}),
+    )]);
+    let projection = projection_events_from_sync_realms(&realms, None, None);
+    let row = projection
+        .iter()
+        .find(|row| row.event_id.as_deref() == Some(original.event_id.as_str()))
+        .unwrap();
+    assert_eq!(row.body, "original payload");
+    assert_eq!(
+        serde_json::from_str::<arkret_sdk::ActorId>(&row.sender).unwrap(),
+        original.actor_id
+    );
+    assert_eq!(
+        row.strand_id.as_deref(),
+        original
+            .payload
+            .get("strand_id")
+            .and_then(serde_json::Value::as_str)
+    );
+}

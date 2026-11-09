@@ -78,58 +78,6 @@ impl EventSubmitter {
         unreachable!("the final read-only probe returns its outcome")
     }
 
-    pub(super) async fn retain_authored_metadata(
-        &self,
-        event: &arkret_sdk::Event,
-    ) -> anyhow::Result<()> {
-        if !matches!(
-            event.kind,
-            arkret_sdk::EventKind::SpaceCreate
-                | arkret_sdk::EventKind::SpaceUpdate
-                | arkret_sdk::EventKind::StrandCreate
-                | arkret_sdk::EventKind::StrandUpdate
-        ) || (event
-            .payload
-            .get("object")
-            .and_then(|value| value.get("encrypted_metadata"))
-            .is_none()
-            && event
-                .payload
-                .get("patch")
-                .and_then(|value| value.pointer("/encrypted_metadata/value"))
-                .is_none())
-        {
-            return Ok(());
-        }
-        let Some(store) = self.state_store.as_ref() else {
-            return Ok(());
-        };
-        let session_epoch = crate::identity::device_directory::session_cache_epoch();
-        let authority = self.authority()?;
-        let changed = store.write(|state| {
-            anyhow::ensure!(
-                state.active_authority().as_ref() == Some(authority),
-                "Metadata backup crossed its account fence"
-            );
-            retain_metadata_plaintext(state, event)
-        })?;
-        if changed {
-            store
-                .read(|state| state.begin_durable_flush())?
-                .wait()
-                .await?;
-            anyhow::ensure!(
-                crate::identity::device_directory::session_cache_epoch() == session_epoch
-                    && store
-                        .read(crate::state::LocalStateStore::active_authority)
-                        .as_ref()
-                        == Some(authority),
-                "Metadata backup crossed its session fence"
-            );
-        }
-        Ok(())
-    }
-
     pub(crate) async fn prepare_metadata(
         &self,
         intent: EventIntent,
@@ -349,92 +297,6 @@ impl EventSubmitter {
         );
         Ok(prepared)
     }
-}
-
-/// Use the final authored identity and the exact ciphertext digest. Draft IDs
-/// cannot name a create object's private backup, and mutable field paths would
-/// let an older backup mask a newer encrypted metadata revision.
-fn retain_metadata_plaintext(
-    store: &mut crate::state::LocalStateStore,
-    event: &arkret_sdk::Event,
-) -> anyhow::Result<bool> {
-    let (id, envelope, strand) = match event.kind {
-        arkret_sdk::EventKind::SpaceCreate => {
-            let payload: arkret_sdk::SpaceCreatePayload =
-                serde_json::from_value(serde_json::to_value(&event.payload)?)?;
-            (
-                arkret_sdk::SpaceId::from_event_id(&event.event_id).to_string(),
-                payload.object.encrypted_metadata,
-                false,
-            )
-        }
-        arkret_sdk::EventKind::StrandCreate => {
-            let payload: arkret_sdk::StrandCreatePayload =
-                serde_json::from_value(serde_json::to_value(&event.payload)?)?;
-            (
-                arkret_sdk::StrandId::from_event_id(&event.event_id).to_string(),
-                payload.object.encrypted_metadata,
-                true,
-            )
-        }
-        arkret_sdk::EventKind::SpaceUpdate => {
-            let payload: arkret_sdk::SpacePatchPayload =
-                serde_json::from_value(serde_json::to_value(&event.payload)?)?;
-            (
-                payload.space_id.to_string(),
-                payload
-                    .patch
-                    .as_ref()
-                    .map(metadata_patch_envelope)
-                    .transpose()?
-                    .flatten(),
-                false,
-            )
-        }
-        arkret_sdk::EventKind::StrandUpdate => {
-            let payload: arkret_sdk::StrandPatchPayload =
-                serde_json::from_value(serde_json::to_value(&event.payload)?)?;
-            (
-                payload.target_ref.to_string(),
-                metadata_patch_envelope(&payload.patch)?,
-                true,
-            )
-        }
-        _ => return Ok(false),
-    };
-    let Some(envelope) = envelope else {
-        return Ok(false);
-    };
-    let digest = envelope.payload_digest()?;
-    let Some(bytes) = store.mls_decrypted_plaintext_for(event.realm_id.as_str(), digest.as_str())
-    else {
-        return Ok(false);
-    };
-    let metadata: Value = serde_json::from_slice(&bytes)?;
-    if strand {
-        let _: StrandMetadata = serde_json::from_value(metadata)?;
-    } else {
-        serde_json::from_value::<SpaceMetadata>(metadata)?.validate()?;
-    }
-    store.save_private_plaintext(
-        event.realm_id.as_str(),
-        &id,
-        &format!("encrypted_metadata:{digest}"),
-        std::str::from_utf8(&bytes)?,
-    );
-    Ok(true)
-}
-
-fn metadata_patch_envelope(
-    patch: &arkret_sdk::Patch,
-) -> anyhow::Result<Option<arkret_sdk::EncryptedEnvelope>> {
-    let value = serde_json::to_value(patch)?;
-    value
-        .pointer("/encrypted_metadata/value")
-        .cloned()
-        .map(serde_json::from_value)
-        .transpose()
-        .map_err(Into::into)
 }
 
 fn machine_field(key: &str) -> bool {
@@ -1058,107 +920,37 @@ mod tests {
         assert!(current.metadata.is_none());
     }
 
-    #[tokio::test]
-    async fn authored_metadata_backup_restores_final_object_and_exact_ciphertext_revision() {
+    #[test]
+    fn metadata_digest_caches_cannot_authenticate_a_missing_original() {
         let directory = tempfile::tempdir().unwrap();
-        let mut source =
-            crate::state::LocalStateStore::with_path(directory.path().join("source.json"));
-        let mut restored =
-            crate::state::LocalStateStore::with_path(directory.path().join("restored.json"));
-        let object = arkret_sdk::Space::create_object(
-            arkret_sdk::RealmId::new(REALM).unwrap(),
-            "board",
-            "Restored board",
-            actor(),
-        );
-        let intent = arkret_sdk::TypedEventDraft::<event_spec::SpaceCreate>::new(
-            scope(),
-            actor(),
-            arkret_sdk::SpaceCreatePayload::new(object),
-        )
-        .unwrap()
-        .into_intent(crate::clock::now_utc())
-        .unwrap();
-        let mut authored_plaintext = None;
-        let prepared = seal_metadata(
-            &intent,
-            |_, _| panic!("create has no current"),
-            async |value: &Value| {
-                let envelope = encrypt(intent.kind().as_str(), value);
-                authored_plaintext = Some((envelope.payload_digest()?, serde_json::to_vec(value)?));
-                Ok(envelope)
-            },
-        )
-        .await
-        .unwrap();
-        let authored = prepared
-            .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+        let mut store =
+            crate::state::LocalStateStore::with_path(directory.path().join("local.json"));
+        let plaintext = serde_json::json!({"title":"Known plaintext"});
+        let envelope = encrypt("ak.space.create", &plaintext);
+        let digest = envelope.payload_digest().unwrap();
+        let bytes = serde_json::to_vec(&plaintext).unwrap();
+        store
+            .retain_authored_mls_plaintext(REALM, &digest, &bytes)
             .unwrap();
-        let event = authored.event();
-        let id = arkret_sdk::SpaceId::from_event_id(&event.event_id).to_string();
-        let payload: arkret_sdk::SpaceCreatePayload =
-            serde_json::from_value(serde_json::to_value(&event.payload).unwrap()).unwrap();
-        let envelope = payload.object.encrypted_metadata.unwrap();
-        let (digest, plaintext) = authored_plaintext.unwrap();
-        source
-            .retain_authored_mls_plaintext(REALM, &digest, &plaintext)
-            .unwrap();
-        assert!(
-            source.private_plaintext_is_empty(),
-            "device digest cache is not a cross-device backup"
-        );
-        assert!(retain_metadata_plaintext(&mut source, event).unwrap());
-        let backup = source.private_plaintext_snapshot_json();
-        restored.merge_private_plaintext_map(serde_json::from_slice(&backup).unwrap());
-        assert!(
-            restored
-                .mls_decrypted_plaintext_for(REALM, digest.as_str())
-                .is_none()
+        store.save_private_plaintext(
+            REALM,
+            SPACE,
+            &format!("encrypted_metadata:{digest}"),
+            std::str::from_utf8(&bytes).unwrap(),
         );
         let device =
             arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000002").unwrap();
-        let opened = crate::identity::metadata::open_metadata(
-            &restored,
-            REALM,
-            &id,
-            &envelope,
-            actor().as_account_id().unwrap(),
-            &device,
-        )
-        .expect("fresh device opens its restored authored metadata without replaying MLS");
-        assert_eq!(opened["title"], "Restored board");
         assert!(
             crate::identity::metadata::open_metadata(
-                &restored,
+                &store,
                 REALM,
                 SPACE,
                 &envelope,
                 actor().as_account_id().unwrap(),
-                &device,
+                &device
             )
             .is_none(),
-            "backup must not supply plaintext under another object identity"
-        );
-        let other = encrypt(
-            "ak.space.create",
-            &serde_json::json!({"title":"Another revision"}),
-        );
-        assert!(
-            crate::identity::metadata::open_metadata(
-                &restored,
-                REALM,
-                &id,
-                &other,
-                actor().as_account_id().unwrap(),
-                &device,
-            )
-            .is_none(),
-            "another ciphertext revision must not reuse the restored title"
-        );
-        assert!(
-            !serde_json::to_string(event)
-                .unwrap()
-                .contains("Restored board")
+            "a cipher-digest cache contains no authenticated original E"
         );
     }
 }

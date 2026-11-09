@@ -694,20 +694,21 @@ pub fn private_sidecar_response_plaintext(
     let envelope: arkret_sdk::EncryptedEnvelope =
         serde_json::from_value(event.payload["encrypted_content"].clone())?;
     let sender = arkret_sdk::mls_basic_credential_identity(event.actual_signer())?;
-    let payload = crate::mls::runtime::encrypted_payload_from_verified_event_context(
-        store,
-        &envelope,
-        scope,
-        event.kind.as_str(),
-        &sender,
-        None,
-    )
-    .ok_or_else(|| anyhow::anyhow!("response lacks its accepted MLS context"))?;
     let device = store
         .load()
         .device_authoring_authority
         .ok_or_else(|| anyhow::anyhow!("authorized device absent"))?;
     let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    let payload = crate::mls::runtime::encrypted_payload_from_verified_original(
+        store,
+        secure.as_ref(),
+        account,
+        &device.device_id,
+        &event,
+        &envelope,
+        &sender,
+    )
+    .ok_or_else(|| anyhow::anyhow!("response lacks its accepted MLS context"))?;
     crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
         store,
         secure.as_ref(),

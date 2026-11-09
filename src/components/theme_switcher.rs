@@ -92,6 +92,7 @@ pub fn theme_switcher(
                             sapid::radio(mode.as_persisted_str())
                                 .unstyled()
                                 .class(class)
+                                .name(mode.label())
                                 .label(mode.label())
                         }),
                 )

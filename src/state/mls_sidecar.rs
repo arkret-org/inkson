@@ -672,6 +672,47 @@ impl LocalStateStore {
         Ok(())
     }
 
+    /// The caller has consumed this exact original through a sealed accepted
+    /// page. Persist only the bytes locally; they mint no portable authority.
+    pub(crate) fn retain_metadata_original(&self, original: &arkret_sdk::Event) {
+        let Ok(bytes) = arkret_sdk::canonical::canonical_json_bytes(original) else {
+            return;
+        };
+        let Ok(serialized) = String::from_utf8(bytes) else {
+            return;
+        };
+        self.lock_mls_receive_overlay()
+            .metadata_originals
+            .entry(original.realm_id.to_string())
+            .or_default()
+            .insert(original.event_id.clone(), serialized);
+        let _ = self.flush();
+        self.persist_e2ee_plaintext_cache_if_ready();
+    }
+
+    pub(crate) fn metadata_originals_for(&self, realm: &str) -> Vec<arkret_sdk::Event> {
+        self.with_mls_receive_fields(|state, overlay| {
+            let mut originals = state
+                .metadata_originals
+                .get(realm)
+                .cloned()
+                .unwrap_or_default();
+            if let Some(entries) = overlay.metadata_originals.get(realm) {
+                originals.extend(entries.clone());
+            }
+            originals
+                .into_iter()
+                .filter_map(|(id, serialized)| {
+                    serde_json::from_str::<arkret_sdk::Event>(&serialized)
+                        .ok()
+                        .filter(|original| {
+                            original.event_id == id && original.realm_id.as_str() == realm
+                        })
+                })
+                .collect()
+        })
+    }
+
     /// Retain decrypted presentation bytes without rewriting group state.
     pub(crate) fn retain_decrypted_content(
         &self,

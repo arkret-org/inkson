@@ -19,6 +19,7 @@ struct MlsFixture {
     store: LocalStateStore,
     secure: MemorySecureKeyStore,
     controller: AccountId,
+    device: arkret_sdk::DeviceId,
     scope: ScopeRef,
     agent: arkret_sdk::ActorId,
     sender: arkret_sdk::ArkretMlsGroup,
@@ -148,7 +149,7 @@ impl MlsFixture {
         store
             .set_device_authoring_authority(Some(crate::state::PersistedDeviceAuthoringAuthority {
             account_id: controller.clone(),
-            device_id: device,
+            device_id: device.clone(),
             device_projection: arkret_models_crypto::VerifiedDeviceProjection {
                 device_signing_key_did: arkret_sdk::DidKey::new(
                     "did:key:z6MkhHrTbtosB4xyyJM217fS4ry35F7JhZ5oA9uVHErBJDL5",
@@ -177,6 +178,7 @@ impl MlsFixture {
             store,
             secure,
             controller,
+            device,
             scope,
             agent,
             sender,
@@ -190,6 +192,28 @@ impl MlsFixture {
         proof_seed: [u8; 32],
         position: u64,
     ) -> (Event, EncryptedEnvelope) {
+        let mut material = crate::test_support::content::material(
+            &self.sender,
+            EventKind::MessageCreate.as_str(),
+            &self.state_ref,
+        );
+        let outer = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+            EventKind::MessageCreate.as_str(),
+            self.scope.clone(),
+            self.agent.clone(),
+            serde_json::json!({}),
+        )
+        .build_unsigned()
+        .unwrap();
+        material.outer_event =
+            arkret_models_crypto::EventContentMaterial::outer_event_for(&outer).unwrap();
+        crate::test_support::content::retain_root(
+            &self.secure,
+            &self.controller,
+            &self.device,
+            &self.sender,
+            &material.content_context.root_context,
+        );
         let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
             "1.0",
             "application/json",
@@ -200,11 +224,7 @@ impl MlsFixture {
             (self.state_ref.clone()).clone(),
             self.sender.local_content_sender_domain().unwrap(),
             arkret_sdk::EventContentRoutingContext::None,
-            crate::test_support::content::material(
-                &self.sender,
-                EventKind::MessageCreate.as_str(),
-                &(self.state_ref.clone()),
-            ),
+            material,
         )
         .unwrap();
         let payload = self.sender.encrypt_payload(header, body).unwrap();
@@ -366,7 +386,7 @@ fn warm_mls_cache_reuses_the_verified_tree_but_checks_each_event_producer() {
     );
     assert_eq!(cache.agents.len(), 1);
     assert_eq!(cache.authors.len(), 1);
-    assert_eq!(
+    assert!(
         decrypt_with_secure_store(
             &fixture.store,
             &fixture.controller,
@@ -375,8 +395,8 @@ fn warm_mls_cache_reuses_the_verified_tree_but_checks_each_event_producer() {
             &mut cache,
             &empty_secure
         )
-        .unwrap(),
-        b"second response"
+        .is_err(),
+        "a warm attribution or plaintext cache cannot replace the retained content root"
     );
 
     let mut changed = second.clone();
@@ -388,7 +408,7 @@ fn warm_mls_cache_reuses_the_verified_tree_but_checks_each_event_producer() {
             &changed,
             &second_envelope,
             &mut cache,
-            &empty_secure
+            &fixture.secure
         )
         .is_err(),
         "warm tree and plaintext caches cannot replace each Event's proof/content binding"

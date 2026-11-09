@@ -1220,6 +1220,10 @@ pub struct ClientLocalState {
     /// hardened storage is unavailable it remains memory-only.
     #[serde(default, skip_serializing)]
     pub mls_decrypted_plaintext: imbl::OrdMap<String, imbl::OrdMap<String, String>>,
+    /// Exact signed metadata originals consumed at the sealed accepted-page boundary.
+    /// They are local read material, not portable admission or disclosure proofs.
+    #[serde(default, skip_serializing)]
+    pub(crate) metadata_originals: imbl::OrdMap<String, imbl::OrdMap<arkret_sdk::EventId, String>>,
     /// Exact IdentityLink and LeafNode bytes observed through an authenticated
     /// MLS decrypt. This pairwise-to-principal mapping is private and therefore
     /// persists only in the hardened E2EE cache.
@@ -1571,6 +1575,7 @@ impl Default for ClientLocalState {
             local_device_refresh_pending: false,
             mls_private_plaintext: imbl::OrdMap::new(),
             mls_decrypted_plaintext: imbl::OrdMap::new(),
+            metadata_originals: imbl::OrdMap::new(),
             authenticated_identity_links: imbl::OrdMap::new(),
             composer_drafts: imbl::OrdMap::new(),
             realm_remarks: imbl::OrdMap::new(),
@@ -1616,6 +1621,7 @@ pub(crate) struct MlsReceiveOverlay {
     /// `ClientLocalState::mls_decrypted_plaintext`
     /// (`realm_id -> payload_digest -> base64url(plaintext)`).
     pub(crate) plaintexts: BTreeMap<String, BTreeMap<String, String>>,
+    pub(crate) metadata_originals: BTreeMap<String, BTreeMap<arkret_sdk::EventId, String>>,
     pub(crate) identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
 }
 
@@ -1624,6 +1630,7 @@ impl MlsReceiveOverlay {
         self.snapshots.is_empty()
             && self.recovery_snapshots.is_empty()
             && self.plaintexts.is_empty()
+            && self.metadata_originals.is_empty()
             && self.identity_links.is_empty()
     }
 
@@ -1649,6 +1656,13 @@ impl MlsReceiveOverlay {
             for (digest, plaintext) in entries {
                 slot.insert(digest.clone(), plaintext.clone());
             }
+        }
+        for (realm, entries) in &self.metadata_originals {
+            state
+                .metadata_originals
+                .entry(realm.clone())
+                .or_default()
+                .extend(entries.clone());
         }
         for (key, identity_link) in &self.identity_links {
             state

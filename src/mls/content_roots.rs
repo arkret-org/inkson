@@ -251,62 +251,6 @@ pub(crate) fn material_from_accepted_original(
     .ok()
 }
 
-pub(crate) fn retained_original_material(
-    state: &crate::state::LocalStateStore,
-    envelope: &arkret_sdk::EncryptedEnvelope,
-    scope: &arkret_sdk::ScopeRef,
-    kind: &str,
-    sender: &[u8],
-) -> Option<arkret_models_crypto::EventContentMaterial> {
-    let active = crate::secure_key_store::active_device_seed_scope()?;
-    let secure = crate::secure_key_store::default_secure_key_store("inkson");
-    let local = state.load();
-    let mut originals = std::collections::BTreeMap::new();
-    for record in &local.raw_operations {
-        let value = record.payload.get("event").unwrap_or(&record.payload);
-        let Ok(event) = serde_json::from_value::<arkret_sdk::Event>(value.clone()) else {
-            continue;
-        };
-        if event.scope_ref != *scope || event.kind.as_str() != kind {
-            continue;
-        }
-        if !event
-            .event_content_envelopes()
-            .ok()?
-            .iter()
-            .any(|slot| &slot.envelope == envelope)
-        {
-            continue;
-        }
-        let verified = crate::identity::committed_sender::verified_chat_sender_domain_for_realm(
-            event.realm_id.as_str(),
-            value,
-            Some(state),
-            Some((
-                &active.authority,
-                active.authority.principal_id.as_str(),
-                &active.device_id,
-            )),
-        )?;
-        if verified != sender {
-            continue;
-        }
-        originals.insert(event.event_id.clone(), event);
-    }
-    if originals.len() != 1 {
-        return None;
-    }
-    let event = originals.into_values().next()?;
-    material_from_accepted_original(
-        state,
-        secure.as_ref(),
-        &active.authority,
-        &active.device_id,
-        &event,
-        envelope,
-    )
-}
-
 pub(crate) async fn resolve_root_context(
     http: &arkret_sdk::http_client::Client,
     group: &arkret_sdk::ArkretMlsGroup,

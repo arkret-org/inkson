@@ -340,13 +340,11 @@ mod custody_tests {
         let did = arkret_sdk::Did::new("did:web:controller.example").unwrap();
         let account = crate::test_support::authority(did.as_str());
         let device = DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001").unwrap();
-        let signer = std::sync::Arc::new(
-            crate::event_signer::build_ed25519_signer_with_verification_method(
-                [47; 32],
-                did.as_str(),
-                format!("{did}#{device}"),
-            ),
-        );
+        let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
+            [47; 32],
+            did.as_str(),
+            device.as_str(),
+        ));
         let _guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
         let material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
             &crate::recovery_crypto::format_recovery_key(&[7; 32]),

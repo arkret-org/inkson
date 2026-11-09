@@ -10,6 +10,37 @@ pub(crate) fn retain_accepted_page_metadata(
     store: &LocalStateStore,
     page: &impl crate::transport::own_station_results::AcceptedPageRows,
 ) -> Result<(), String> {
+    let originals = page
+        .accepted_rows()?
+        .iter()
+        .filter_map(|row| {
+            let arkret_sdk::CommittedEventView::Full(full) = row else {
+                return None;
+            };
+            (matches!(
+                full.event.kind,
+                arkret_sdk::EventKind::SpaceCreate
+                    | arkret_sdk::EventKind::SpaceUpdate
+                    | arkret_sdk::EventKind::StrandCreate
+                    | arkret_sdk::EventKind::StrandUpdate
+            ) && (full
+                .event
+                .payload
+                .get("object")
+                .and_then(|object| object.get("encrypted_metadata"))
+                .is_some()
+                || full
+                    .event
+                    .payload
+                    .get("patch")
+                    .and_then(|patch| patch.pointer("/encrypted_metadata/value"))
+                    .is_some()))
+            .then_some(&full.event)
+        })
+        .collect::<Vec<_>>();
+    if originals.is_empty() {
+        return Ok(());
+    }
     let Some(endpoint) = crate::secure_key_store::active_device_seed_scope() else {
         return Ok(());
     };
@@ -21,16 +52,14 @@ pub(crate) fn retain_accepted_page_metadata(
         return Err("metadata page belongs to another active account".into());
     }
     let secure = crate::secure_key_store::default_secure_key_store("inkson");
-    for row in page.accepted_rows()? {
-        if let arkret_sdk::CommittedEventView::Full(full) = row {
-            retain_accepted_metadata_original(
-                store,
-                &full.event,
-                &endpoint.authority,
-                &endpoint.device_id,
-                secure.as_ref(),
-            );
-        }
+    for event in originals {
+        retain_accepted_metadata_original(
+            store,
+            event,
+            &endpoint.authority,
+            &endpoint.device_id,
+            secure.as_ref(),
+        );
     }
     Ok(())
 }
@@ -77,6 +106,7 @@ fn retain_accepted_metadata_original(
     ) else {
         return;
     };
+    store.retain_metadata_original(event);
     let Some(payload) = crate::mls::runtime::encrypted_payload_from_verified_original(
         store, secure, account, device, event, &envelope, &sender,
     ) else {
@@ -184,104 +214,91 @@ pub(crate) fn open_metadata_with_secure_store(
     secure: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Option<Value> {
     let digest = envelope.payload_digest().ok()?;
-    let path = format!("encrypted_metadata:{digest}");
-    let local = store
-        .private_plaintext_for(realm, id, &path)
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .or_else(|| {
-            store
-                .mls_decrypted_plaintext_for(realm, digest.as_str())
-                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        });
-    observe_open_gate(&digest, "cache", local.is_some());
-    let opened = local.or_else(|| {
-        if let Some((scope, context)) = current_metadata_context(store, realm, id, envelope) {
-            let sender =
-                arkret_models_crypto::mls_basic_credential_identity(&context.signer_id).ok()?;
-            let payload = crate::mls::runtime::encrypted_payload_from_verified_event_context(
-                store,
-                envelope,
-                &scope,
-                context.event_kind.as_str(),
-                &sender,
-                None,
-            )?;
-            let bytes =
-                crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
-                    store, secure, realm, account, device, &payload, &scope, &sender,
-                )?;
-            return serde_json::from_slice(&bytes).ok();
+    let expected = current_metadata_context(store, realm, id, envelope);
+    let cipher = serde_json::to_value(envelope).ok()?;
+    let snapshot = store.load();
+    let mut retained = store.metadata_originals_for(realm);
+    retained.extend(snapshot.raw_operations.iter().filter_map(|record| {
+        let value = record.payload.get("event").unwrap_or(&record.payload);
+        serde_json::from_value::<arkret_sdk::Event>(value.clone()).ok()
+    }));
+    let mut originals = std::collections::BTreeMap::new();
+    for original in retained {
+        let value = serde_json::to_value(&original).ok()?;
+        if original.realm_id.as_str() != realm {
+            continue;
         }
-        let cipher = serde_json::to_value(envelope).ok()?;
-        let snapshot = store.load();
-        let event = snapshot.raw_operations.iter().find_map(|record| {
-            let event = record.payload.get("event").unwrap_or(&record.payload);
-            let body = event.get("payload")?;
-            let kind = event.get("kind").and_then(Value::as_str);
-            let target = if kind == Some(arkret_sdk::EventKind::SpaceUpdate.as_str()) {
-                body.get("space_id")
-            } else if kind == Some(arkret_sdk::EventKind::StrandUpdate.as_str()) {
-                body.get("strand_id")
-            } else {
-                None
-            };
-            let creation = event
-                .get("event_id")
+        let target = match original.kind {
+            arkret_sdk::EventKind::SpaceCreate => {
+                Some(arkret_sdk::SpaceId::from_event_id(&original.event_id).to_string())
+            }
+            arkret_sdk::EventKind::StrandCreate => {
+                Some(arkret_sdk::StrandId::from_event_id(&original.event_id).to_string())
+            }
+            arkret_sdk::EventKind::SpaceUpdate => original
+                .payload
+                .get("space_id")
                 .and_then(Value::as_str)
-                .and_then(|id| arkret_sdk::EventId::new(id).ok())
-                .is_some_and(|event_id| match event.get("kind").and_then(Value::as_str) {
-                    Some(arkret_wire::CapabilityActionId::SPACE_CREATE) => {
-                        arkret_sdk::SpaceId::from_event_id(&event_id).as_str() == id
-                    }
-                    Some(arkret_wire::CapabilityActionId::STRAND_CREATE) => {
-                        arkret_sdk::StrandId::from_event_id(&event_id).as_str() == id
-                    }
-                    _ => false,
-                });
-            let candidate = body
-                .pointer("/object/encrypted_metadata")
-                .or_else(|| body.pointer("/patch/encrypted_metadata/value"));
-            ((creation || target.and_then(Value::as_str) == Some(id)) && candidate == Some(&cipher))
-                .then_some(event)
-        });
-        observe_open_gate(&digest, "original", event.is_some());
-        let event = event?;
-        let signed: arkret_sdk::Event = serde_json::from_value(event.clone()).ok()?;
-        if signed.realm_id.as_str() != realm {
-            return None;
+                .map(ToOwned::to_owned),
+            arkret_sdk::EventKind::StrandUpdate => original
+                .payload
+                .get("strand_id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+            _ => continue,
+        };
+        let Some(target) = target else {
+            continue;
+        };
+        let body = value.get("payload")?;
+        let candidate = body
+            .pointer("/object/encrypted_metadata")
+            .or_else(|| body.pointer("/patch/encrypted_metadata/value"));
+        if target != id || candidate != Some(&cipher) {
+            continue;
         }
-        let sender = crate::identity::committed_sender::verified_chat_sender_domain_for_realm(
-            realm,
-            event,
-            Some(store),
-            Some((account, account.principal_id.as_str(), device)),
-        );
-        observe_open_gate(&digest, "sender", sender.is_some());
-        let sender = sender?;
-        let payload = crate::mls::runtime::encrypted_payload_from_verified_event_context(
-            store,
-            envelope,
-            &signed.scope_ref,
-            signed.kind.as_str(),
-            &sender,
-            None,
-        );
-        observe_open_gate(&digest, "context", payload.is_some());
-        let payload = payload?;
-        let bytes = crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
-            store,
-            secure,
-            realm,
-            account,
-            device,
-            &payload,
-            &signed.scope_ref,
-            &sender,
-        );
-        observe_open_gate(&digest, "decrypt", bytes.is_some());
-        let bytes = bytes?;
-        serde_json::from_slice(&bytes).ok()
-    })?;
+        if let Some((scope, context)) = &expected
+            && (original.event_id != context.source.event_id
+                || original.scope_ref != *scope
+                || original.kind != context.event_kind
+                || original.actual_signer() != &context.signer_id)
+        {
+            continue;
+        }
+        originals.insert(original.event_id.clone(), (original, value));
+    }
+    // A cipher digest excludes E. Neither a plaintext cache hit nor the first
+    // matching ciphertext may choose which accepted original to authenticate.
+    observe_open_gate(&digest, "original", originals.len() == 1);
+    if originals.len() != 1 {
+        return None;
+    }
+    let (original, value) = originals.into_values().next()?;
+    let sender = crate::identity::committed_sender::verified_chat_sender_domain_for_realm(
+        realm,
+        &value,
+        Some(store),
+        Some((account, account.principal_id.as_str(), device)),
+    );
+    observe_open_gate(&digest, "sender", sender.is_some());
+    let sender = sender?;
+    let payload = crate::mls::runtime::encrypted_payload_from_verified_original(
+        store, secure, account, device, &original, envelope, &sender,
+    );
+    observe_open_gate(&digest, "context", payload.is_some());
+    let payload = payload?;
+    let bytes = crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
+        store,
+        secure,
+        realm,
+        account,
+        device,
+        &payload,
+        &original.scope_ref,
+        &sender,
+    );
+    observe_open_gate(&digest, "decrypt", bytes.is_some());
+    let opened = serde_json::from_slice(&bytes?).ok()?;
     if id.starts_with("ak:space:") {
         let metadata: arkret_sdk::SpaceMetadata = serde_json::from_value(opened).ok()?;
         metadata.validate().ok()?;

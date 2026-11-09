@@ -30,6 +30,7 @@ pub(crate) struct PendingE2eePlaintextClear {
     json: String,
     previous_private: imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
     previous_decrypted: imbl::OrdMap<String, imbl::OrdMap<String, String>>,
+    previous_metadata_originals: imbl::OrdMap<String, imbl::OrdMap<arkret_sdk::EventId, String>>,
     previous_identity_links: imbl::OrdMap<String, LocallyAuthenticatedIdentityLink>,
     previous_drafts: imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
     hydration_fence: Arc<CacheClearFence>,
@@ -133,6 +134,7 @@ impl PendingE2eePlaintextClear {
             backup: E2eePlaintextCacheV1 {
                 private_plaintext: self.previous_private.clone(),
                 decrypted_plaintext: self.previous_decrypted.clone(),
+                metadata_originals: self.previous_metadata_originals.clone(),
                 authenticated_identity_links: self.previous_identity_links.clone(),
                 composer_drafts: self.previous_drafts.clone(),
                 ..Default::default()
@@ -247,6 +249,8 @@ struct E2eePlaintextCacheV1 {
     #[serde(default)]
     decrypted_plaintext: imbl::OrdMap<String, imbl::OrdMap<String, String>>,
     #[serde(default)]
+    metadata_originals: imbl::OrdMap<String, imbl::OrdMap<arkret_sdk::EventId, String>>,
+    #[serde(default)]
     authenticated_identity_links: imbl::OrdMap<String, LocallyAuthenticatedIdentityLink>,
     #[serde(default)]
     composer_drafts: imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
@@ -295,6 +299,20 @@ impl E2eePlaintextCacheV1 {
             });
             !entries.is_empty()
         });
+        self.metadata_originals.retain(|realm, entries| {
+            let Some(now) = current.metadata_originals.get(realm) else {
+                return false;
+            };
+            entries.retain(|id, original| {
+                if let Some(latest) = now.get(id) {
+                    *original = latest.clone();
+                    true
+                } else {
+                    false
+                }
+            });
+            !entries.is_empty()
+        });
         self.authenticated_identity_links.retain(|key, value| {
             if let Some(latest) = current.authenticated_identity_links.get(key) {
                 *value = latest.clone();
@@ -325,6 +343,14 @@ impl E2eePlaintextCacheV1 {
                 current.entry(event.clone()).or_insert_with(|| body.clone());
             }
         }
+        for (realm, entries) in &backup.metadata_originals {
+            let current = self.metadata_originals.entry(realm.clone()).or_default();
+            for (id, original) in entries {
+                current
+                    .entry(id.clone())
+                    .or_insert_with(|| original.clone());
+            }
+        }
         for (id, link) in &backup.authenticated_identity_links {
             self.authenticated_identity_links
                 .entry(id.clone())
@@ -352,12 +378,14 @@ impl E2eePlaintextCacheV1 {
             E2eePlaintextCacheClearScope::All => {
                 self.private_plaintext.clear();
                 self.decrypted_plaintext.clear();
+                self.metadata_originals.clear();
                 self.authenticated_identity_links.clear();
                 self.composer_drafts.clear();
             }
             E2eePlaintextCacheClearScope::Realm(realm) => {
                 self.private_plaintext.remove(realm);
                 self.decrypted_plaintext.remove(realm);
+                self.metadata_originals.remove(realm);
                 self.authenticated_identity_links
                     .retain(|_, entry| entry.identity_link.realm_id.as_str() != realm);
                 self.composer_drafts.for_each_mut(|_, realms| {
@@ -372,6 +400,7 @@ impl E2eePlaintextCacheV1 {
             mls_local_checkpoints: state.mls_local_checkpoints.clone(),
             private_plaintext: state.mls_private_plaintext.clone(),
             decrypted_plaintext: state.mls_decrypted_plaintext.clone(),
+            metadata_originals: state.metadata_originals.clone(),
             authenticated_identity_links: state.authenticated_identity_links.clone(),
             composer_drafts: state.composer_drafts.clone(),
         }
@@ -396,6 +425,12 @@ impl E2eePlaintextCacheV1 {
                 .or_default()
                 .extend(entries.clone());
         }
+        for (realm, entries) in &overlay.metadata_originals {
+            self.metadata_originals
+                .entry(realm.clone())
+                .or_default()
+                .extend(entries.clone());
+        }
         self.authenticated_identity_links
             .extend(overlay.identity_links.clone());
     }
@@ -404,6 +439,7 @@ impl E2eePlaintextCacheV1 {
         self.mls_local_checkpoints.is_empty()
             && self.private_plaintext.is_empty()
             && self.decrypted_plaintext.is_empty()
+            && self.metadata_originals.is_empty()
             && self.authenticated_identity_links.is_empty()
             && self.composer_drafts.is_empty()
     }
@@ -499,6 +535,15 @@ impl E2eePlaintextCacheV1 {
                 local_entries.entry(payload_digest).or_insert_with(|| {
                     changed = true;
                     plaintext
+                });
+            }
+        }
+        for (realm, entries) in self.metadata_originals {
+            let local = state.metadata_originals.entry(realm).or_default();
+            for (id, original) in entries {
+                local.entry(id).or_insert_with(|| {
+                    changed = true;
+                    original
                 });
             }
         }
@@ -644,6 +689,7 @@ impl LocalStateStore {
             }
             self.cached.mls_private_plaintext = cache.private_plaintext;
             self.cached.mls_decrypted_plaintext = cache.decrypted_plaintext;
+            self.cached.metadata_originals = cache.metadata_originals;
             self.cached.authenticated_identity_links = cache.authenticated_identity_links;
             self.cached.composer_drafts = cache.composer_drafts;
         }
@@ -975,16 +1021,19 @@ impl LocalStateStore {
 
         let mut previous_private = self.cached.mls_private_plaintext.clone();
         let mut previous_decrypted = self.cached.mls_decrypted_plaintext.clone();
+        let mut previous_metadata_originals = self.cached.metadata_originals.clone();
         let mut previous_identity_links = self.cached.authenticated_identity_links.clone();
         let mut previous_drafts = self.cached.composer_drafts.clone();
         let changed = match scope {
             E2eePlaintextCacheClearScope::All => {
                 let changed = !self.cached.mls_private_plaintext.is_empty()
                     || !self.cached.mls_decrypted_plaintext.is_empty()
+                    || !self.cached.metadata_originals.is_empty()
                     || !self.cached.authenticated_identity_links.is_empty()
                     || !self.cached.composer_drafts.is_empty();
                 self.cached.mls_private_plaintext.clear();
                 self.cached.mls_decrypted_plaintext.clear();
+                self.cached.metadata_originals.clear();
                 self.cached.authenticated_identity_links.clear();
                 self.cached.composer_drafts.clear();
                 changed
@@ -996,6 +1045,7 @@ impl LocalStateStore {
                     .mls_decrypted_plaintext
                     .remove(realm_id)
                     .is_some();
+                let removed_originals = self.cached.metadata_originals.remove(realm_id).is_some();
                 let retained = self.cached.authenticated_identity_links.len();
                 self.cached
                     .authenticated_identity_links
@@ -1005,6 +1055,7 @@ impl LocalStateStore {
                     removed_draft |= realms.remove(realm_id).is_some();
                 });
                 removed_private
+                    || removed_originals
                     || removed_draft
                     || removed_decrypted
                     || retained != self.cached.authenticated_identity_links.len()
@@ -1018,6 +1069,7 @@ impl LocalStateStore {
         if !matches!(&write, Ok(Some(_))) {
             self.cached.mls_private_plaintext = previous_private;
             self.cached.mls_decrypted_plaintext = previous_decrypted;
+            self.cached.metadata_originals = previous_metadata_originals;
             self.cached.authenticated_identity_links = previous_identity_links;
             self.cached.composer_drafts = previous_drafts;
             if let Err(error) = write {
@@ -1042,6 +1094,7 @@ impl LocalStateStore {
             drop(fences);
             self.cached.mls_private_plaintext = previous_private;
             self.cached.mls_decrypted_plaintext = previous_decrypted;
+            self.cached.metadata_originals = previous_metadata_originals;
             self.cached.authenticated_identity_links = previous_identity_links;
             self.cached.composer_drafts = previous_drafts;
             anyhow::bail!("secure-cache clear generation exhausted");
@@ -1051,6 +1104,7 @@ impl LocalStateStore {
         if let E2eePlaintextCacheClearScope::Realm(realm) = scope {
             previous_private.retain(|id, _| id == realm);
             previous_decrypted.retain(|id, _| id == realm);
+            previous_metadata_originals.retain(|id, _| id == realm);
             previous_identity_links
                 .retain(|_, entry| entry.identity_link.realm_id.as_str() == realm);
             previous_drafts.for_each_mut(|_, realms| {
@@ -1088,6 +1142,7 @@ impl LocalStateStore {
             json: json.unwrap_or_else(|| "{}".to_owned()),
             previous_private,
             previous_decrypted,
+            previous_metadata_originals,
             previous_identity_links,
             previous_drafts,
             hydration_fence: Arc::new(CacheClearFence {
@@ -1308,6 +1363,7 @@ impl LocalStateStore {
         self.absorb_mls_receive_overlay();
         self.cached.mls_private_plaintext.clear();
         self.cached.mls_decrypted_plaintext.clear();
+        self.cached.metadata_originals.clear();
         self.cached.authenticated_identity_links.clear();
         self.cached.composer_drafts.clear();
     }
@@ -1904,6 +1960,99 @@ mod cache_persist_driver {
 #[cfg(test)]
 mod cache_persist_tests {
     use super::*;
+
+    fn original_for_cache_lifecycle() -> arkret_sdk::Event {
+        let account = crate::test_support::authority("did:web:alice.example");
+        let realm =
+            crate::test_support::realm_id("ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN");
+        let original = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+            arkret_sdk::EventKind::SpaceUpdate.as_str(),
+            arkret_sdk::ScopeRef::Realm { realm_id: realm },
+            arkret_sdk::ActorId::account(account),
+            serde_json::json!({
+                "space_id":arkret_sdk::SpaceId::from_event_id(&arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[97;32])),
+                "patch":{"metadata":{"$op":"set","value":{"title":"local metadata"}}}
+            }),
+        ).build_unsigned().unwrap();
+        let signer = arkret_test_kit::keys::seeded_signer(
+            "did:web:alice.example".parse().unwrap(),
+            arkret_sdk::DidUrl::new(
+                "did:web:alice.example#ak:device:01964137-0000-7000-8000-000000000001",
+            )
+            .unwrap(),
+        );
+        // This models the protected-cache lifecycle after source consumption;
+        // it is not Native admission, history authorization or a recovery test.
+        arkret_test_kit::signed_event::sign_verifiable_event(
+            original,
+            &signer,
+            arkret_sdk::DigestSuite::Sha256,
+        )
+        .unwrap()
+        .expect_verifiable()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn metadata_original_cache_is_protected_and_clear_does_not_resurrect_it() {
+        let secure = crate::secure_key_store::MemorySecureKeyStore::default();
+        let mut state =
+            super::super::storage_util::isolated_store_for_tests("metadata-original-clear");
+        state.switch_test_account("did:web:alice.example");
+        let original = original_for_cache_lifecycle();
+        let realm = original.realm_id.to_string();
+        state.retain_metadata_original(&original);
+        assert_eq!(state.metadata_originals_for(&realm), vec![original.clone()]);
+        let public = serde_json::to_value(state.load()).unwrap();
+        assert!(public.get("metadata_originals").is_none());
+        assert!(
+            !serde_json::to_string(&public)
+                .unwrap()
+                .contains(original.event_id.as_str())
+        );
+        state
+            .persist_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        let mut cold = LocalStateStore::with_path(state.path.clone());
+        cold.switch_test_account("did:web:alice.example");
+        cold.hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        assert_eq!(cold.metadata_originals_for(&realm), vec![original]);
+        cold.clear_e2ee_plaintext_cache_with_secure_store(
+            &E2eePlaintextCacheClearScope::Realm(realm.clone()),
+            &secure,
+        )
+        .await
+        .unwrap();
+        assert!(cold.metadata_originals_for(&realm).is_empty());
+        cold.hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        assert!(cold.metadata_originals_for(&realm).is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn metadata_original_cache_clear_rollback_and_account_switch_keep_their_fences() {
+        let secure = crate::secure_key_store::MemorySecureKeyStore::default();
+        let mut state =
+            super::super::storage_util::isolated_store_for_tests("metadata-original-rollback");
+        state.switch_test_account("did:web:alice.example");
+        let original = original_for_cache_lifecycle();
+        let realm = original.realm_id.to_string();
+        state.retain_metadata_original(&original);
+        let pending = state
+            .prepare_e2ee_plaintext_cache_clear_with_secure_store(
+                &E2eePlaintextCacheClearScope::All,
+                &secure,
+            )
+            .unwrap()
+            .unwrap();
+        assert!(state.metadata_originals_for(&realm).is_empty());
+        state.rollback_e2ee_plaintext_cache_clear(pending);
+        assert_eq!(state.metadata_originals_for(&realm), vec![original]);
+        state.switch_test_account("did:web:bob.example");
+        assert!(state.metadata_originals_for(&realm).is_empty());
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
