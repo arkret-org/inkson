@@ -834,6 +834,32 @@ mod tests {
             &actor,
         )
         .unwrap();
+        let create: arkret_sdk::RealmCreatePayload =
+            serde_json::from_value(serde_json::to_value(&unit.create().payload).unwrap()).unwrap();
+        let arkret_sdk::PrincipalRegistrationAnchor::WebvhRegistration {
+            log_entries,
+            witness_records,
+            ..
+        } = &checkpoint.principal_registration_anchor;
+        let history = log_entries
+            .iter()
+            .map(|entry| serde_json::to_value(entry).unwrap())
+            .collect::<Vec<_>>();
+        let witnesses = witness_records
+            .iter()
+            .map(|entry| serde_json::to_value(entry).unwrap())
+            .collect::<Vec<_>>();
+        let recovered_anchor = arkret_sdk::identity::recover_principal_registration_anchor(
+            create.object.initial_resolution.as_ref().unwrap(),
+            &history,
+            &witnesses,
+        )
+        .unwrap();
+        let recovered_pair =
+            arkret_sdk::verify_pcr_genesis_events(&unit, &recovered_anchor, &actor).unwrap();
+        for (original, recovered) in pair.iter().zip(&recovered_pair) {
+            assert_eq!(original.canonical_bytes(), recovered.canonical_bytes());
+        }
         for (wire, verified) in unit.events.iter().zip(&pair) {
             assert_eq!(
                 arkret_sdk::canonical::canonical_json_bytes(wire).unwrap(),
