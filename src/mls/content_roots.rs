@@ -178,6 +178,69 @@ pub(crate) async fn retain_received_epoch_root(
     Ok(())
 }
 
+/// The caller supplies an original already accepted through its own Station.
+/// The private group is currently usable only at this exact historical epoch;
+/// an unrelated current roster must not manufacture old producer provenance.
+pub(crate) fn material_from_original(
+    state: &crate::state::LocalStateStore,
+    secure: &dyn crate::secure_key_store::SecureKeyStore,
+    account: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    event: &arkret_sdk::Event,
+    envelope: &arkret_sdk::EncryptedEnvelope,
+) -> Option<arkret_models_crypto::EventContentMaterial> {
+    let actor = arkret_sdk::ActorId::account(account.clone());
+    let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+        device_id: device.clone(),
+    };
+    let vault = garth::mls::content_roots::ContentRootVault::new(secure, &actor, &endpoint);
+    let arkret_models_crypto::EncryptedEnvelopeEncryptionContext::EpochContent { root_ref, .. } =
+        &envelope.encryption_context;
+    let root = vault.cached_root(root_ref).ok()??;
+    let snapshot = state.mls_checkpoint_for_scope(&event.scope_ref)?;
+    let secret =
+        crate::mls::runtime::load_device_checkpoint_secret(secure, account, device).ok()?;
+    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
+    if group.scope() != &event.scope_ref || group.epoch() != root.root_context.epoch {
+        return None;
+    }
+    if !event
+        .event_content_envelopes()
+        .ok()?
+        .iter()
+        .any(|slot| &slot.envelope == envelope)
+    {
+        return None;
+    }
+    let producer = group.original_content_endpoint(event).ok()?;
+    let suite = event.realm_id.digest_suite_code().digest_suite();
+    event
+        .verify_event_id_matches_content_with_digest_suite(suite)
+        .ok()?;
+    event.verify_producer_proof_self_consistency(suite).ok()?;
+    let bytes = arkret_sdk::signatures::EventProofBuilder::new()
+        .envelope_bytes(event)
+        .ok()?;
+    let key = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+        bytes: arkret_sdk::base64url_decode(&producer.signature_key_base64url).ok()?,
+    };
+    arkret_sdk::signatures::verify_ed25519_detached_jws_proof_with_digest_suite(
+        event.producer_proof.as_ref()?,
+        &bytes,
+        &event.actor_id,
+        &key,
+        suite,
+    )
+    .ok()?;
+    arkret_models_crypto::EventContentMaterial::from_original(
+        event,
+        envelope,
+        root.root_context,
+        producer,
+    )
+    .ok()
+}
+
 pub(crate) fn retained_original_material(
     state: &crate::state::LocalStateStore,
     envelope: &arkret_sdk::EncryptedEnvelope,
@@ -187,23 +250,6 @@ pub(crate) fn retained_original_material(
 ) -> Option<arkret_models_crypto::EventContentMaterial> {
     let active = crate::secure_key_store::active_device_seed_scope()?;
     let secure = crate::secure_key_store::default_secure_key_store("inkson");
-    let actor = arkret_sdk::ActorId::account(active.authority.clone());
-    let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
-        device_id: active.device_id.clone(),
-    };
-    let vault =
-        garth::mls::content_roots::ContentRootVault::new(secure.as_ref(), &actor, &endpoint);
-    let arkret_models_crypto::EncryptedEnvelopeEncryptionContext::EpochContent { root_ref, .. } =
-        &envelope.encryption_context;
-    let root = vault.cached_root(root_ref).ok()??;
-    let snapshot = state.mls_checkpoint_for_scope(scope)?;
-    let secret = crate::mls::runtime::load_device_checkpoint_secret(
-        secure.as_ref(),
-        &active.authority,
-        &active.device_id,
-    )
-    .ok()?;
-    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
     let local = state.load();
     let mut originals = std::collections::BTreeMap::new();
     for record in &local.raw_operations {
@@ -241,14 +287,14 @@ pub(crate) fn retained_original_material(
         return None;
     }
     let event = originals.into_values().next()?;
-    let producer = group.original_content_endpoint(&event).ok()?;
-    arkret_models_crypto::EventContentMaterial::from_original(
+    material_from_original(
+        state,
+        secure.as_ref(),
+        &active.authority,
+        &active.device_id,
         &event,
         envelope,
-        root.root_context,
-        producer,
     )
-    .ok()
 }
 
 pub(crate) async fn resolve_root_context(
@@ -388,6 +434,30 @@ mod tests {
             )
             .unwrap(),
             b"retained original body"
+        );
+        let state = crate::state::LocalStateStore::default();
+        let opened =
+            crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
+                &state,
+                &secure,
+                context.effective_scope.realm_id().as_str(),
+                actor.as_account_id().unwrap(),
+                match &endpoint {
+                    arkret_sdk::MlsWelcomeRecipientEndpoint::Device { device_id } => device_id,
+                    _ => unreachable!(),
+                },
+                &payload,
+                &context.effective_scope,
+                payload.pre_encryption_header.sender_domain.as_bytes(),
+            );
+        assert_eq!(
+            opened.as_deref(),
+            Some(b"retained original body".as_slice())
+        );
+        assert!(
+            state
+                .mls_checkpoint_for_scope(&context.effective_scope)
+                .is_none()
         );
         let wrong_endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
             device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000b1")

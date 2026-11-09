@@ -615,28 +615,16 @@ impl LocalStateStore {
         }
     }
 
-    // ── MLS receive-chain persistence + plaintext cache ──
-    //
-    // `encryption-and-audit.md` §5.6 (normative): after every successful
-    // decrypt of an application message the advanced MLS group state MUST
-    // be persisted — the ratchet must never be replayed from an earlier
-    // snapshot on the next decrypt. These entry points are deliberately
-    // `&self` (interior mutability through [`MlsReceiveOverlay`]) because
-    // the decrypt-on-read callers run inside render passes that only hold
-    // a read borrow of the `SyncSignal<LocalStateStore>`.
+    // Retained content decryption never mutates a private MLS checkpoint.
+    // The overlay also carries checkpoint state for independent MLS transitions.
 
-    /// Acquire the receive-chain serialization guard. The caller holds it
-    /// across the whole restore→decrypt→export→[`Self::advance_mls_receive_chain`]
-    /// sequence so concurrent views can't both advance the same group from
-    /// the same base snapshot.
+    /// Serialize local presentation-cache installation for concurrent views.
     pub fn mls_decrypt_serial_guard(&self) -> std::sync::MutexGuard<'_, ()> {
         self.lock_mls_decrypt_serial()
     }
 
-    /// Look up a previously decrypted plaintext by the envelope's canonical
-    /// `payload_digest`. Render paths consult this BEFORE attempting an MLS
-    /// decrypt — after the receive chain advanced past a message, this cache
-    /// is the only way to re-render it.
+    /// Read an optional local presentation cache by the exact envelope digest.
+    /// Retained roots allow the original to be opened again without this cache.
     pub fn mls_decrypted_plaintext_for(
         &self,
         realm_id: &str,
@@ -661,9 +649,8 @@ impl LocalStateStore {
             .ok()
     }
 
-    /// Retain locally authored application bytes by their exact ciphertext digest.
-    /// MLS cannot decrypt a normal echo from its own leaf after the send ratchet
-    /// advances. The existing secure cache supplies rendering without ratchet replay.
+    /// Cache locally authored bytes for rendering; retained roots remain the
+    /// independent cryptographic history path, including own-author originals.
     pub(crate) fn retain_authored_mls_plaintext(
         &mut self,
         realm_id: &str,
@@ -685,11 +672,29 @@ impl LocalStateStore {
         Ok(())
     }
 
-    /// Persist a successful decrypt: the advanced (post-decrypt) snapshot
-    /// envelope AND the decrypted plaintext (cached under `payload_digest`).
-    /// Both are recorded through the shared overlay and immediately flushed
-    /// to the backing store, so a restart never replays the ratchet from
-    /// the pre-decrypt snapshot (§5.6 MUST) and the message stays readable.
+    /// Retain decrypted presentation bytes without rewriting group state.
+    pub(crate) fn retain_decrypted_content(
+        &self,
+        realm_id: &str,
+        payload_digest: &str,
+        plaintext: &[u8],
+    ) {
+        use base64::Engine as _;
+        self.lock_mls_receive_overlay()
+            .plaintexts
+            .entry(realm_id.to_owned())
+            .or_default()
+            .insert(
+                payload_digest.to_owned(),
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(plaintext),
+            );
+        let _ = self.flush();
+        self.persist_e2ee_plaintext_cache_if_ready();
+    }
+
+    // Local checkpoint-overlay fixtures exercise atomic persistence separately
+    // from application content. Production content cannot call this old path.
+    #[cfg(test)]
     pub fn advance_mls_receive_chain(
         &self,
         realm_id: &str,
@@ -706,6 +711,7 @@ impl LocalStateStore {
         );
     }
 
+    #[cfg(test)]
     pub fn advance_mls_receive_chain_for_effective_scope(
         &self,
         realm_id: &str,
@@ -720,6 +726,7 @@ impl LocalStateStore {
         self.advance_mls_receive_chain_for_scope(&scope, envelope, payload_digest, plaintext);
     }
 
+    #[cfg(test)]
     pub fn advance_mls_receive_chain_for_scope(
         &self,
         effective_scope: &arkret_sdk::ScopeRef,

@@ -1,5 +1,5 @@
 //! Tests for welcome application, application-payload encrypt / decrypt, and
-//! §5.6 receive-chain persistence.
+//! retained content roots, original AAD and private-checkpoint independence.
 
 use serde_json::json;
 
@@ -642,9 +642,8 @@ fn direct_epoch_zero_send_requires_exact_verified_founder_bootstrap_context() {
 
 /// Sidecar exchange binding transport (`zh/models/sidecar.md` §7.2.1): the
 /// optional `encrypted_metadata` plaintext is encrypted as a SECOND
-/// application message on the same restored group session, riding the same
-/// epoch as the content payload (never a separate restore, which would fork
-/// the ratchet or double-commit).
+/// content slot at the same accepted epoch, with its own fresh salt and the
+/// same frozen outer Event; content AEAD does not advance an MLS ratchet.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
@@ -894,11 +893,14 @@ fn encrypted_write_uses_accepted_mls_group_without_legacy_scheme_projection() {
     .expect("accepted MLS current permits encrypted content without a legacy scheme field");
 
     assert_eq!(encrypted_values.len(), 1);
-    assert_eq!(encrypted_values[0]["scheme"], "mls_rfc9420");
+    assert_eq!(
+        encrypted_values[0]["scheme"],
+        "ak.encryption.epoch_content_aead.v1"
+    );
     assert_eq!(state.mls_checkpoint_for(realm).unwrap().epoch, 0);
 }
 
-// ── receive-chain persistence (§5.6) ─────────────────
+// ── Retained content and independent MLS checkpoints ──
 
 /// Build a two-member group: alice (in-memory sender) + bob, whose
 /// post-Welcome group state is persisted into `state` under `realm` the
@@ -917,10 +919,15 @@ fn two_member_group_with_bob_snapshot(
 ) {
     let alice_actor = crate::test_support::account_actor("did:web:alice.example");
     let bob_actor_id = crate::test_support::account_actor(bob_actor);
-    let alice = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
+    let alice = arkret_sdk::ArkretMlsIdentity::new_human_device(
         alice_actor.clone(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
+        arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(
+            arkret_test_kit::keys::development_signing_key(
+                "did:web:alice.example#ak:device:01904100-0000-7000-8000-0000000000a1",
+            ),
+        ),
     )
     .unwrap();
     let bob = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
@@ -1009,6 +1016,20 @@ fn two_member_group_with_bob_snapshot(
         .install_test_leaf_bindings(endpoints.clone())
         .unwrap();
 
+    alice_group
+        .install_test_leaf_bindings(endpoints.clone())
+        .unwrap();
+    let context = test_message_header(&alice_group, realm)
+        .material
+        .content_context
+        .root_context;
+    crate::test_support::content::retain_root(
+        secure,
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
+        &bob_group,
+        &context,
+    );
     let secret = load_or_create_account_mls_secret(secure, &fixture::authority(bob_actor)).unwrap();
     let post_state = bob_group.export_state_record().unwrap();
     let serialized = serde_json::to_vec(&post_state).unwrap();
@@ -1151,15 +1172,16 @@ async fn replaced_device_incarnation_still_needs_its_welcome_at_the_installed_ep
         &state, &account, &device
     ));
     assert_eq!(state.mls_checkpoint_for_scope(&scope).unwrap(), before);
-    assert!(
-        joined.decrypt_payload(&payload).is_err(),
-        "the consumed receive key stays consumed"
+    assert_eq!(
+        joined.decrypt_payload(&payload).unwrap(),
+        b"new incarnation content",
+        "retained epoch content opens repeatedly without consuming a message key"
     );
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn committed_sender_credential_reconstructs_real_standard_mls_content_aad() {
+fn committed_sender_credential_reconstructs_original_epoch_content_aad() {
     let mut state = temp_state_store("committed-content-aad");
     let secure = MemorySecureKeyStore::new();
     let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
@@ -1167,22 +1189,24 @@ fn committed_sender_credential_reconstructs_real_standard_mls_content_aad() {
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
     let (mut alice, _) =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
-    let header = test_message_header(&alice, realm);
+    let mut unsigned = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+        arkret_sdk::EventKind::MessageCreate.as_str(), alice.scope().clone(),
+        fixture::account_actor("did:web:alice.example"),
+        json!({"strand_id":"ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",
+            "track_name":"discussion", "content":{"kind":"ak.content.text","body":"verified private content","format":"plain"}}),
+    ).build_unsigned().unwrap();
+    let mut header = test_message_header(&alice, realm);
+    header.material.outer_event =
+        arkret_models_crypto::EventContentMaterial::outer_event_for(&unsigned).unwrap();
     let encrypted = alice
         .encrypt_payload(header.clone(), b"verified private content")
         .unwrap();
     let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(&encrypted).unwrap();
-    let event = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
-        arkret_sdk::EventKind::MessageCreate.as_str(),
-        header.effective_scope.clone(),
-        fixture::account_actor("did:web:alice.example"),
-        json!({
-            "strand_id": "ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",
-            "track_name": "discussion", "encrypted_content": envelope,
-        }),
-    )
-    .build_unsigned()
-    .unwrap();
+    unsigned.payload.remove("content");
+    unsigned.payload.insert(
+        "encrypted_content".to_owned(),
+        serde_json::to_value(&envelope).unwrap(),
+    );
     let signer = arkret_test_kit::keys::seeded_signer(
         arkret_sdk::Did::new("did:web:alice.example").unwrap(),
         arkret_sdk::DidUrl::new(
@@ -1191,7 +1215,7 @@ fn committed_sender_credential_reconstructs_real_standard_mls_content_aad() {
         .unwrap(),
     );
     let event = arkret_test_kit::signed_event::sign_verifiable_event(
-        event,
+        unsigned,
         &signer,
         arkret_sdk::DigestSuite::Sha256,
     )
@@ -1211,7 +1235,13 @@ fn committed_sender_credential_reconstructs_real_standard_mls_content_aad() {
             event.kind.as_str(),
             std::str::from_utf8(&sender).unwrap(),
             None,
-            header.material.clone(),
+            arkret_models_crypto::EventContentMaterial::from_original(
+                &event,
+                &envelope,
+                header.material.content_context.root_context.clone(),
+                alice.original_content_endpoint(&event).unwrap(),
+            )
+            .unwrap(),
         )
         .unwrap();
     assert_eq!(
@@ -1325,6 +1355,9 @@ fn historical_author_view_survives_epoch_rotation() {
         .install_accepted_commit(&accepted_commit, &base_current)
         .unwrap();
     leaf_endpoints.push(charlie_endpoint);
+    alice_group
+        .install_test_leaf_bindings(leaf_endpoints.clone())
+        .unwrap();
     bob_group
         .install_test_leaf_bindings(leaf_endpoints)
         .unwrap();
@@ -1517,186 +1550,152 @@ fn sidecar_author_leaf_view_preserves_exact_scope_and_historical_epoch() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
-    // §5.6 MUST + E2EE-at-rest hardening: after a successful decrypt the
-    // advanced group state is persisted (so the same-epoch NEXT message
-    // decrypts after a "restart"), and the already-decrypted message re-renders
-    // from the in-session plaintext cache (its ratchet key was deliberately
-    // consumed by the write-back). Crucially, that plaintext cache is
-    // in-memory ONLY: `e2ee_safe_persist_state` strips `mls_decrypted_plaintext`
-    // before anything touches durable storage, so a real restart (fresh store
-    // over the same backing file) must NOT be able to re-render the consumed
-    // message — its plaintext is never written at rest.
-    let path = std::env::temp_dir().join(format!(
-        "inkson-test-receive-chain-{}.json",
-        crate::operation::uuid_v7()
-    ));
-    let mut state = crate::state::LocalStateStore::with_path(path.clone());
+fn retained_content_reopens_after_restart_without_private_group_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("receiver.json");
+    let mut state = crate::state::LocalStateStore::with_path(&path);
+    state.promote_accepted_context_for_test(&"did:web:bob.example".parse().unwrap());
     let secure = MemorySecureKeyStore::new();
     let realm = "ak:realm:AZaaHAEvC1DejakImwHCcJHb0F1pgE-Jd-3_9BGirbuW";
-    let bob_actor = "did:web:bob.example";
-    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
-
-    let (mut alice_group, _) =
-        two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
-    let base_envelope = state.mls_checkpoint_for(realm).unwrap();
-
-    let m1_header = test_message_header(&alice_group, realm);
-    let m1 = alice_group
-        .encrypt_payload(m1_header, br#"{"body":"m1"}"#)
-        .unwrap();
-    let m2_header = test_message_header(&alice_group, realm);
-    let m2 = alice_group
-        .encrypt_payload(m2_header, br#"{"body":"m2"}"#)
-        .unwrap();
-
-    // Decrypt m1: plaintext returned AND the persisted snapshot advanced
-    // (same epoch, new ciphertext, observed-message counter bumped).
-    let plain1 = decrypt_application_payload_for_effective_scope_internal(
-        &state,
+    let account = fixture::authority("did:web:bob.example");
+    let device = fixture::device_id("ak:device:01904100-0000-7000-8000-0000000000b2");
+    let (mut alice, _) = two_member_group_with_bob_snapshot(
+        &mut state,
         &secure,
         realm,
-        &fixture::authority(bob_actor),
-        &fixture::device_id(bob_device),
-        &m1,
-        None,
-        None,
-    )
-    .expect("bob decrypts m1");
-    assert_eq!(plain1, br#"{"body":"m1"}"#);
-    let advanced = state.mls_checkpoint_for(realm).unwrap();
-    assert_eq!(advanced.epoch, base_envelope.epoch);
-    assert_ne!(advanced.ciphertext_hex, base_envelope.ciphertext_hex);
-    assert_eq!(advanced.app_messages_observed, 1);
-
-    // Same session: m1 re-renders from the in-memory plaintext cache (a ratchet
-    // replay would fail — its message key was consumed before the write-back).
-    let same_session_replay1 = decrypt_application_payload_for_effective_scope_internal(
-        &state,
-        &secure,
-        realm,
-        &fixture::authority(bob_actor),
-        &fixture::device_id(bob_device),
-        &m1,
-        None,
-        None,
-    )
-    .expect("m1 served from the in-session plaintext cache");
-    assert_eq!(same_session_replay1, br#"{"body":"m1"}"#);
-
-    // "Restart": a brand-new store over the same backing file must see
-    // the advanced receive chain (NOT the pre-decrypt snapshot).
-    let restarted = crate::state::LocalStateStore::with_path(path.clone());
-    let reloaded = restarted.mls_checkpoint_for(realm).unwrap();
-    assert_eq!(reloaded.ciphertext_hex, advanced.ciphertext_hex);
-    // E2EE-at-rest: the plaintext cache is stripped before persist, so after a
-    // real restart m1 is NOT recoverable — its ratchet key was consumed and its
-    // plaintext was never written to durable storage.
-    assert!(
-        decrypt_application_payload_for_effective_scope_internal(
-            &restarted,
+        "did:web:bob.example",
+        device.as_str(),
+    );
+    let checkpoint = state.mls_checkpoint_for(realm).unwrap();
+    let first = alice
+        .encrypt_payload(
+            test_message_header(&alice, realm),
+            b"first retained original",
+        )
+        .unwrap();
+    let second = alice
+        .encrypt_payload(
+            test_message_header(&alice, realm),
+            b"second retained original",
+        )
+        .unwrap();
+    let scope = alice.scope().clone();
+    let open = |state: &crate::state::LocalStateStore, payload: &arkret_sdk::EncryptedPayload| {
+        decrypt_application_payload_for_scope_from_verified_sender(
+            state,
             &secure,
             realm,
-            &fixture::authority(bob_actor),
-            &fixture::device_id(bob_device),
-            &m1,
-            None,
-            None,
+            &account,
+            &device,
+            payload,
+            &scope,
+            payload.pre_encryption_header.sender_domain.as_bytes(),
         )
-        .is_none(),
-        "consumed-message plaintext must never survive a restart (nothing at rest)"
-    );
-    // m2 (the next generation in the same epoch) still decrypts from the
-    // persisted advanced chain.
-    let plain2 = decrypt_application_payload_for_effective_scope_internal(
-        &restarted,
-        &secure,
-        realm,
-        &fixture::authority(bob_actor),
-        &fixture::device_id(bob_device),
-        &m2,
-        None,
-        None,
-    )
-    .expect("bob decrypts m2 after restart");
-    assert_eq!(plain2, br#"{"body":"m2"}"#);
+    };
     assert_eq!(
-        restarted
-            .mls_checkpoint_for(realm)
-            .unwrap()
-            .app_messages_observed,
-        2
+        open(&state, &first).as_deref(),
+        Some(b"first retained original".as_slice())
     );
-    let _ = std::fs::remove_file(path);
+    assert_eq!(state.mls_checkpoint_for(realm).unwrap(), checkpoint);
+    let mut cold = crate::state::LocalStateStore::with_path(&path);
+    cold.promote_accepted_context_for_test(&"did:web:bob.example".parse().unwrap());
+    cold.drop_mls_checkpoint_for_test(realm);
+    assert!(cold.mls_checkpoint_for(realm).is_none());
+    assert_eq!(
+        open(&cold, &first).as_deref(),
+        Some(b"first retained original".as_slice())
+    );
+    assert_eq!(
+        open(&cold, &second).as_deref(),
+        Some(b"second retained original".as_slice())
+    );
+    assert!(cold.mls_checkpoint_for(realm).is_none());
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn circle_scoped_decrypt_uses_and_advances_only_the_circle_snapshot() {
-    let mut state = temp_state_store("circle-scoped-receive-chain");
+fn circle_content_root_never_borrows_or_advances_the_realm_checkpoint() {
+    let mut state = temp_state_store("circle-content-root");
     let secure = MemorySecureKeyStore::new();
     let realm = "ak:realm:Ab-u0alSwVcrUhqmeFQmMzuYs83_IrjXlRSBnpm-B-JL";
-    let circle = "ak:circle:AZSmUwZFkNevUaVm0adiKDKw0OuAQqfAX6DFwhnIqF9I";
-    let bob_actor = "did:web:bob.example";
-    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b5";
-
-    let (mut alice_group, _) =
-        two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
-    let circle_snapshot = state.mls_checkpoint_for(realm).unwrap();
-    state.drop_mls_checkpoint_for_test(realm);
-    state
-        .save_mls_checkpoint_for_effective_scope(
-            realm.to_owned(),
-            Some(circle),
-            circle_snapshot.clone(),
-        )
-        .expect("valid effective scope");
-    let header = test_message_header(&alice_group, realm);
-    let encrypted = alice_group
-        .encrypt_payload(header, br#"{"body":"sidecar"}"#)
-        .unwrap();
-
-    assert!(
-        decrypt_application_payload_for_effective_scope_internal(
+    let account = fixture::authority("did:web:bob.example");
+    let device = fixture::device_id("ak:device:01904100-0000-7000-8000-0000000000b5");
+    let (..) = two_member_group_with_bob_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        "did:web:bob.example",
+        device.as_str(),
+    );
+    let realm_checkpoint = state.mls_checkpoint_for(realm).unwrap();
+    let scope = arkret_sdk::ScopeRef::Circle {
+        realm_id: realm.parse().unwrap(),
+        circle_id: "ak:circle:AZSmUwZFkNevUaVm0adiKDKw0OuAQqfAX6DFwhnIqF9I"
+            .parse()
+            .unwrap(),
+    };
+    let identity = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
+        arkret_sdk::ActorId::account(account.clone()),
+        device.clone(),
+    )
+    .unwrap();
+    let mut group = identity.create_group(&scope).unwrap();
+    let reference = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x67; 32]);
+    let material = crate::test_support::content::material(&group, "ak.message.create", &reference);
+    crate::test_support::content::retain_root(
+        &secure,
+        &account,
+        &device,
+        &group,
+        &material.content_context.root_context,
+    );
+    let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
+        "1.0",
+        "application/json",
+        arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
+        scope.clone(),
+        "ak.message.create",
+        group.epoch(),
+        reference,
+        group.local_content_sender_domain().unwrap(),
+        arkret_sdk::EventContentRoutingContext::None,
+        material,
+    )
+    .unwrap();
+    let payload = group.encrypt_payload(header, b"circle original").unwrap();
+    let open = |scope: &arkret_sdk::ScopeRef| {
+        decrypt_application_payload_for_scope_from_verified_sender(
             &state,
             &secure,
             realm,
-            &fixture::authority(bob_actor),
-            &fixture::device_id(bob_device),
-            &encrypted,
-            None,
-            None,
+            &account,
+            &device,
+            &payload,
+            scope,
+            payload.pre_encryption_header.sender_domain.as_bytes(),
         )
-        .is_none(),
-        "Realm-scoped decrypt must not borrow a Circle snapshot"
+    };
+    assert!(
+        open(&arkret_sdk::ScopeRef::Realm {
+            realm_id: realm.parse().unwrap()
+        })
+        .is_none()
     );
-    let plaintext = decrypt_application_payload_for_effective_scope_internal(
-        &state,
-        &secure,
-        realm,
-        &fixture::authority(bob_actor),
-        &fixture::device_id(bob_device),
-        &encrypted,
-        Some(circle),
-        None,
-    )
-    .expect("Circle-scoped message decrypts with the Circle snapshot");
-    assert_eq!(plaintext, br#"{"body":"sidecar"}"#);
-    assert!(state.mls_checkpoint_for(realm).is_none());
-    let advanced = state
-        .mls_checkpoint_for_effective_scope(realm, Some(circle))
-        .unwrap();
-    assert_ne!(advanced.ciphertext_hex, circle_snapshot.ciphertext_hex);
-    assert_eq!(advanced.app_messages_observed, 1);
+    assert_eq!(open(&scope).as_deref(), Some(b"circle original".as_slice()));
+    assert!(
+        open(&arkret_sdk::ScopeRef::Realm {
+            realm_id: realm.parse().unwrap()
+        })
+        .is_none()
+    );
+    assert!(state.mls_checkpoint_for_scope(&scope).is_none());
+    assert_eq!(state.mls_checkpoint_for(realm).unwrap(), realm_checkpoint);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn out_of_order_skipped_keys_survive_restart() {
-    // §5.6: the persisted state includes the bounded skipped-message-key
-    // cache. Bob decrypts m3 first (m1/m2 keys become skipped keys),
-    // restarts, then decrypts the earlier m1 — which requires the
-    // skipped keys to have been persisted with the advanced chain.
+fn out_of_order_retained_content_survives_restart() {
+    // Epoch content roots allow arbitrary original order without skipped message keys.
     let path = std::env::temp_dir().join(format!(
         "inkson-test-skipped-keys-{}.json",
         crate::operation::uuid_v7()
@@ -1718,8 +1717,7 @@ fn out_of_order_skipped_keys_survive_restart() {
         .encrypt_payload(m3_header, br#""three""#)
         .unwrap();
 
-    // Out-of-order: m3 first (within OpenMLS's default
-    // out_of_order_tolerance of 5).
+    // Read the later original first; content AEAD has no receive-ratchet window.
     let plain3 = decrypt_application_payload_for_effective_scope_internal(
         &state,
         &secure,
@@ -1733,7 +1731,7 @@ fn out_of_order_skipped_keys_survive_restart() {
     .expect("bob decrypts m3 ahead of m1/m2");
     assert_eq!(plain3, br#""three""#);
 
-    // Restart, then decrypt the skipped earlier message.
+    // Restart with an empty presentation cache, then open the earlier original.
     let restarted = crate::state::LocalStateStore::with_path(path.clone());
     let plain1 = decrypt_application_payload_for_effective_scope_internal(
         &restarted,
@@ -1745,18 +1743,17 @@ fn out_of_order_skipped_keys_survive_restart() {
         None,
         None,
     )
-    .expect("persisted skipped key decrypts m1 after restart");
+    .expect("retained root decrypts the earlier original after restart");
     assert_eq!(plain1, br#""one""#);
     let _ = std::fs::remove_file(path);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn author_own_ciphertext_uses_secure_cache_without_state_regression() {
+fn own_author_original_reopens_without_presentation_cache_or_state_regression() {
     // Creator fixtures share the session tests' exact device-directory cache.
     let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
-    // Own-leaf echoes are not decryptable. Retained send bytes can render
-    // without replaying the ratchet; without that cache the echo stays pending.
+    // Own-author originals also reopen using their retained content root.
     let mut state = temp_state_store("own-ciphertext-soft-fail");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
@@ -1806,7 +1803,7 @@ fn author_own_ciphertext_uses_secure_cache_without_state_regression() {
     uncached
         .save_mls_checkpoint_for_scope(&scope, after_send.clone())
         .unwrap();
-    assert!(
+    assert_eq!(
         decrypt_application_payload_for_effective_scope_internal(
             &uncached,
             &secure,
@@ -1817,12 +1814,8 @@ fn author_own_ciphertext_uses_secure_cache_without_state_regression() {
             None,
             None,
         )
-        .is_none()
-    );
-    assert!(
-        uncached
-            .mls_decrypted_plaintext_for(realm, payload.payload_digest.as_str())
-            .is_none()
+        .as_deref(),
+        Some(br#""mine""#.as_slice())
     );
     assert_eq!(
         uncached.mls_checkpoint_for(realm).unwrap().ciphertext_hex,
@@ -1837,9 +1830,7 @@ fn author_own_ciphertext_uses_secure_cache_without_state_regression() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn plaintext_cache_outlives_group_state() {
-    // Once decrypted, a message stays renderable from the cache even if
-    // the MLS snapshot is later dropped (e.g. leave/rotate) — the cache,
-    // not a ratchet replay, is the §5.6-compliant re-render path.
+    // The optional local presentation cache remains independent of active group state.
     let mut state = temp_state_store("plaintext-cache-outlives");
     let secure = MemorySecureKeyStore::new();
     let realm = "ak:realm:AWLjsk0JkbLdfBfaY2GoxT61q1Ttw6HFu7sU-XGFywHc";
@@ -2208,6 +2199,30 @@ fn accepted_metadata_survives_later_messages_without_opening_its_view() {
         )
         .unwrap();
     fixture::install_accepted_mls_group_at_epoch(&mut state, &scope, snapshot.epoch, 0);
+    let plaintext = json!({"title":"Community deliverables"});
+    let space = arkret_sdk::SpaceId::from_event_id(&arkret_sdk::EventId::from_digest(
+        arkret_sdk::DigestSuite::Sha256,
+        [62; 32],
+    ));
+    let mut unsigned = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+        "ak.space.update",
+        scope.clone(),
+        fixture::account_actor("did:web:alice.example"),
+        json!({"space_id":space,"patch":{"metadata":{"$op":"set","value":plaintext}}}),
+    )
+    .build_unsigned()
+    .unwrap();
+    let mut material =
+        crate::test_support::content::material(&alice, "ak.space.update", &group_ref);
+    material.outer_event =
+        arkret_models_crypto::EventContentMaterial::outer_event_for(&unsigned).unwrap();
+    crate::test_support::content::retain_root(
+        &secure,
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
+        &alice,
+        &material.content_context.root_context,
+    );
     let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
         "1.0",
         "application/json",
@@ -2218,25 +2233,15 @@ fn accepted_metadata_survives_later_messages_without_opening_its_view() {
         (group_ref).clone(),
         alice.local_content_sender_domain().unwrap(),
         arkret_sdk::EventContentRoutingContext::None,
-        crate::test_support::content::material(&alice, "ak.space.update", &(group_ref)),
+        material,
     )
     .unwrap();
-    let plaintext = json!({"title":"Community deliverables"});
     let encrypted = alice
         .encrypt_payload(header, &serde_json::to_vec(&plaintext).unwrap())
         .unwrap();
     let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(&encrypted).unwrap();
-    let space = arkret_sdk::SpaceId::from_event_id(&arkret_sdk::EventId::from_digest(
-        arkret_sdk::DigestSuite::Sha256,
-        [62; 32],
-    ));
-    let unsigned = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
-        "ak.space.update",
-        scope.clone(),
-        fixture::account_actor("did:web:alice.example"),
-        json!({"target_ref":space, "patch":{"encrypted_metadata":{"$op":"set","value":envelope}}}),
-    )
-    .build_unsigned()
+    unsigned.payload = serde_json::from_value(json!({"space_id":space,
+        "patch":{"encrypted_metadata":{"$op":"set","value":envelope}}}))
     .unwrap();
     let account = fixture::authority(bob_actor);
     let device = fixture::device_id(bob_device);
@@ -2268,6 +2273,97 @@ fn accepted_metadata_survives_later_messages_without_opening_its_view() {
             .mls_decrypted_plaintext_for(realm, encrypted.payload_digest.as_str())
             .is_some()
     );
+    let sender = alice.local_content_sender_domain().unwrap();
+    let mut rebound = event.clone();
+    rebound.created_at += chrono::Duration::seconds(1);
+    rebound.producer_proof = None;
+    let rebound = arkret_test_kit::signed_event::sign_verifiable_event(
+        rebound,
+        &signer,
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap()
+    .expect_verifiable();
+    let rebound_payload = encrypted_payload_from_verified_original(
+        &state,
+        &secure,
+        &account,
+        &device,
+        &rebound,
+        &envelope,
+        sender.as_bytes(),
+    )
+    .unwrap();
+    assert_eq!(rebound_payload.payload_digest, encrypted.payload_digest);
+    assert!(
+        decrypt_application_payload_for_scope_from_verified_sender(
+            &state,
+            &secure,
+            realm,
+            &account,
+            &device,
+            &rebound_payload,
+            &scope,
+            sender.as_bytes()
+        )
+        .is_none(),
+        "a cached envelope cannot bypass the original E in AEAD authentication"
+    );
+    let mut unrelated = event.clone();
+    unrelated.producer_proof = None;
+    unrelated.payload = serde_json::from_value(json!({"space_id":space,
+        "patch":{"metadata":{"$op":"set","value":plaintext}}}))
+    .unwrap();
+    let unrelated = arkret_test_kit::signed_event::sign_verifiable_event(
+        unrelated,
+        &signer,
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap()
+    .expect_verifiable();
+    assert!(
+        encrypted_payload_from_verified_original(
+            &state,
+            &secure,
+            &account,
+            &device,
+            &unrelated,
+            &envelope,
+            sender.as_bytes()
+        )
+        .is_none(),
+        "the signed original must contain the exact content slot"
+    );
+    let mut forged = event.clone();
+    let wrong_signer = arkret_test_kit::keys::seeded_signer_for_seed(
+        [99; 32],
+        "did:web:alice.example".parse().unwrap(),
+        arkret_sdk::DidUrl::new(
+            "did:web:alice.example#ak:device:01904100-0000-7000-8000-0000000000a1",
+        )
+        .unwrap(),
+    );
+    forged.producer_proof = None;
+    let forged = arkret_test_kit::signed_event::sign_verifiable_event(
+        forged,
+        &wrong_signer,
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap()
+    .expect_verifiable();
+    assert!(
+        encrypted_payload_from_verified_original(
+            &state,
+            &secure,
+            &account,
+            &device,
+            &forged,
+            &envelope,
+            sender.as_bytes()
+        )
+        .is_none(),
+        "shape-consistent signatures do not replace the accepted leaf key"
+    );
     for _ in 0..20 {
         let message = alice
             .encrypt_payload(test_message_header(&alice, realm), b"later discussion")
@@ -2285,11 +2381,6 @@ fn accepted_metadata_survives_later_messages_without_opening_its_view() {
         state
             .persist_e2ee_plaintext_cache_with_secure_store(&secure)
             .unwrap()
-    );
-    assert!(
-        !std::fs::read_to_string(&path)
-            .unwrap()
-            .contains("Community deliverables")
     );
     let mut cold = crate::state::LocalStateStore::with_path(path);
     cold.promote_accepted_context_for_test(&bob_actor.parse().unwrap());
@@ -2312,7 +2403,7 @@ fn accepted_metadata_survives_later_messages_without_opening_its_view() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache() {
+fn calendar_current_projection_cannot_replace_missing_original_encryption_header() {
     let mut state = temp_state_store("calendar-current-cold");
     let secure = MemorySecureKeyStore::new();
     let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
@@ -2446,7 +2537,10 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
     assert!(open(&state, &secure).is_none());
     fixture::install_current_entries(&mut state, realm, rows);
     assert!(open(&state, &MemorySecureKeyStore::new()).is_none());
-    assert_eq!(open(&state, &secure), Some(plaintext));
+    assert!(
+        open(&state, &secure).is_none(),
+        "a current source selector omits the original E, producer and root context; fetch the actual original before opening"
+    );
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -2498,7 +2592,7 @@ fn ordinary_recovery_refreezes_received_private_base_after_proof() {
     let frozen = refreeze_recovery_base(&received, &requested).unwrap();
     assert_eq!(frozen, received);
     let mut recovered = crate::mls::persistence::restore_envelope(&frozen, &secret, 1).unwrap();
-    // The newer provider retains its skipped receive key after serialization.
+    // Retained epoch content remains readable after provider serialization.
     assert_eq!(recovered.decrypt_payload(&first).unwrap(), b"first");
     let changed_state = recovered.export_state_record().unwrap();
     let mut changed = garth::mls::checkpoint::encrypt_state(

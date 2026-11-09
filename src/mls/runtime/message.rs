@@ -148,6 +148,42 @@ pub(crate) fn encrypted_payload_from_verified_event_context(
         .ok()
 }
 
+/// The host has already consumed this exact accepted original. Keep its E and
+/// explicit reader endpoint instead of searching a bounded presentation tail.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encrypted_payload_from_verified_original(
+    state: &crate::state::LocalStateStore,
+    secure: &dyn SecureKeyStore,
+    account: &AccountId,
+    device: &DeviceId,
+    event: &arkret_sdk::Event,
+    envelope: &arkret_sdk::EncryptedEnvelope,
+    sender: &[u8],
+) -> Option<arkret_sdk::EncryptedPayload> {
+    let scope = &event.scope_ref;
+    let group = scope.canonical_mls_group_id().ok()?;
+    let accepted = state
+        .mls_group_state_ref_for_scope(scope, &group, envelope.encryption_context.epoch())
+        .ok()?;
+    if accepted != *envelope.encryption_context.group_state_ref() {
+        return None;
+    }
+    let material = crate::mls::content_roots::material_from_original(
+        state, secure, account, device, event, envelope,
+    )?;
+    let header = envelope
+        .reconstruct_pre_encryption_header(
+            arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
+            scope.clone(),
+            event.kind.as_str(),
+            std::str::from_utf8(sender).ok()?,
+            None,
+            material,
+        )
+        .ok()?;
+    arkret_sdk::mls::encrypted_envelope_to_payload_with_verified_header(envelope, header).ok()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn decrypt_application_payload_for_scope_from_verified_sender(
     state_store: &crate::state::LocalStateStore,
@@ -284,127 +320,52 @@ fn decrypt_application_payload_for_scope_internal(
     device_id: &DeviceId,
     payload: &arkret_sdk::EncryptedPayload,
     effective_scope: &arkret_sdk::ScopeRef,
-    _verified_sender_domain: Option<&[u8]>,
+    verified_sender_domain: Option<&[u8]>,
 ) -> Option<Vec<u8>> {
-    if state_store.realm_projection_has_retired_minimal_metadata_marker(realm_id) {
+    if state_store.realm_projection_has_retired_minimal_metadata_marker(realm_id)
+        || effective_scope.realm_id_opt()?.as_str() != realm_id
+        || !matches!(
+            effective_scope,
+            arkret_sdk::ScopeRef::Realm { .. }
+                | arkret_sdk::ScopeRef::Circle { .. }
+                | arkret_sdk::ScopeRef::Sidecar { .. }
+        )
+    {
         return None;
     }
-    if effective_scope.realm_id_opt()?.as_str() != realm_id {
+    // The original Event, historical producer and accepted epoch are checked
+    // by the caller. Opening retained application content is stateless: it
+    // neither restores an old endpoint nor advances an MLS receive chain.
+    payload.verify_payload_digest().ok()?;
+    let header = &payload.pre_encryption_header;
+    let context = &header.material.content_context;
+    if payload.scheme != arkret_sdk::EncryptedPayloadScheme::EpochContentAead
+        || header.effective_scope != *effective_scope
+        || payload.group_id != effective_scope.canonical_mls_group_id().ok()?
+        || verified_sender_domain.is_some_and(|sender| sender != header.sender_domain.as_bytes())
+    {
         return None;
     }
-    let circle = match effective_scope {
-        arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str()),
-        arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Sidecar { .. } => None,
-        _ => return None,
-    };
-    let sidecar_scoped = matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. });
     let digest = payload.payload_digest.as_str();
-    if let Some(plaintext) = state_store.mls_decrypted_plaintext_for(realm_id, digest) {
-        return Some(plaintext);
-    }
-    // Serialize the whole decrypt→write-back sequence per store so two views
-    // can't advance the same group from the same base snapshot concurrently.
+    // The envelope digest excludes E. A presentation-cache hit cannot replace
+    // authenticating this original's complete header with the retained root.
     let _serial = state_store.mls_decrypt_serial_guard();
-    // Double-check under the guard: a racing call may have already decrypted
-    // and persisted this exact payload.
-    if let Some(plaintext) = state_store.mls_decrypted_plaintext_for(realm_id, digest) {
-        return Some(plaintext);
-    }
-    // Decryption needs this device's own installed group state: MLS content is
-    // readable only by an endpoint that holds a leaf in the group. A device
-    // that has not been welcomed into the scope has nothing to try.
-    let Some(snapshot) = state_store.mls_checkpoint_for_scope(effective_scope) else {
-        if !sidecar_scoped {
-            warn_mls_decrypt_once(
-                realm_id,
-                digest,
-                payload.epoch,
-                None,
-                "no local MLS group state for this scope",
-            );
-        }
+    let actor = arkret_sdk::ActorId::account(authority.clone());
+    let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+        device_id: device_id.clone(),
+    };
+    let vault = garth::mls::content_roots::ContentRootVault::new(secure_store, &actor, &endpoint);
+    let root = vault.cached_root(&context.root_ref).ok()??;
+    if root.root_context != context.root_context {
         return None;
-    };
-    let secret = match load_device_checkpoint_secret(secure_store, authority, device_id) {
-        Ok(secret) => secret,
-        Err(error) => {
-            if circle.is_none() && !sidecar_scoped {
-                warn_mls_decrypt_once(
-                    realm_id,
-                    digest,
-                    payload.epoch,
-                    Some(snapshot.epoch),
-                    &format!("device snapshot secret unavailable: {error}"),
-                );
-            }
-            return None;
-        }
-    };
-    // Read/decrypt path: floor 0 is intentional. The receive ratchet legitimately
-    // reads epochs at or below the installed one, so an epoch-floor reject here
-    // would refuse readable content. No ratchet advance happens before the
-    // write-back below.
-    let mut group = match crate::mls::persistence::restore_envelope(&snapshot, &secret, 0) {
-        Ok(group) => group,
-        Err(error) => {
-            if circle.is_none() && !sidecar_scoped {
-                warn_mls_decrypt_once(
-                    realm_id,
-                    digest,
-                    payload.epoch,
-                    Some(snapshot.epoch),
-                    &format!("restore local MLS snapshot: {error}"),
-                );
-            }
-            return None;
-        }
-    };
-    let plaintext = match group.decrypt_payload(payload) {
-        Ok(plaintext) => plaintext,
-        Err(live_error) => {
-            if !sidecar_scoped {
-                warn_mls_decrypt_once(
-                    realm_id,
-                    digest,
-                    payload.epoch,
-                    Some(snapshot.epoch),
-                    &format!("MLS decrypt failed ({live_error})"),
-                );
-            }
-            return None;
-        }
-    };
-    // §5.6 MUST: persist the advanced receive chain. A failure to export /
-    // serialize the post-decrypt state is NOT a soft failure we may swallow
-    // silently — without the write-back the consumed message key would make
-    // this very plaintext unrecoverable after restart. Latch a loud error and
-    // fail closed without exposing or caching the plaintext.
-    let advanced = export_receive_chain_envelope(&group, realm_id, &secret, &snapshot);
-    match advanced {
-        Ok(envelope) => {
-            state_store.advance_mls_receive_chain_for_scope(
-                effective_scope,
-                envelope,
-                digest,
-                &plaintext,
-            );
-        }
-        Err(err) => {
-            if circle.is_none() {
-                tracing::error!(
-                    %realm_id,
-                    error = %err.user_message(),
-                    "MLS receive-chain write-back failed after successful decrypt \
-                     (spec §5.6 violation risk: message may be unreadable after restart)",
-                );
-            } else {
-                tracing::error!(
-                    "Circle-scoped MLS receive-chain write-back failed after successful decrypt"
-                );
-            }
-            return None;
-        }
     }
+    let plaintext = arkret_crypto::content_history::open_content(
+        &root.root_base64url,
+        header,
+        &payload.ciphertext,
+    )
+    .ok()?;
+    state_store.retain_decrypted_content(realm_id, digest, &plaintext);
     Some(plaintext)
 }
 
@@ -691,37 +652,6 @@ pub(crate) fn mls_group_member_endpoints_for_effective_scope(
             .map(|binding| binding.endpoint)
             .collect(),
     )
-}
-
-fn export_receive_chain_envelope(
-    group: &arkret_sdk::ArkretMlsGroup,
-    realm_id: &str,
-    secret: &str,
-    previous: &garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
-) -> Result<garth::mls::checkpoint::MlsLocalCheckpointEnvelope, MlsRuntimeError> {
-    let post_state = group
-        .export_state_record()
-        .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
-    let serialized_state = serde_json::to_vec(&post_state)
-        .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
-    let mut salt = [0u8; 16];
-    getrandom::fill(&mut salt)
-        .map_err(|err| MlsRuntimeError::Encrypt(format!("MLS checkpoint salt: {err}")))?;
-    let observed = if post_state.epoch == previous.epoch {
-        previous.app_messages_observed.saturating_add(1)
-    } else {
-        1
-    };
-    Ok(garth::mls::checkpoint::encrypt_state(
-        realm_id,
-        &post_state.group_id,
-        post_state.epoch,
-        &serialized_state,
-        secret,
-        &salt,
-    )
-    .carry_epoch_started_at(previous)
-    .with_app_messages_observed(observed))
 }
 
 #[cfg(test)]

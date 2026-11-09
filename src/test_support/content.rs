@@ -104,7 +104,15 @@ pub(crate) fn checkpoint_material(
         crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()
     });
     if let Some(group) = restored {
-        return material(&group, kind, reference);
+        let material = material(&group, kind, reference);
+        retain_root(
+            secure,
+            account,
+            device,
+            &group,
+            &material.content_context.root_context,
+        );
+        return material;
     }
     // Negative readiness tests supply complete formal staging material, then
     // assert production rejects the absent/invalid checkpoint before sealing.
@@ -116,4 +124,37 @@ pub(crate) fn checkpoint_material(
         "protection":fixture["kat"]["envelope"]["encryption_context"]["protection"],
         "key_commitment":fixture["kat"]["envelope"]["encryption_context"]["key_commitment"],
     })).unwrap()
+}
+
+/// Model authorized local root possession for cryptographic runtime fixtures.
+/// This does not establish native reader rights, backup admission or coverage.
+pub(crate) fn retain_root(
+    secure: &dyn crate::secure_key_store::SecureKeyStore,
+    account: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    group: &arkret_sdk::ArkretMlsGroup,
+    context: &ContentRootContext,
+) {
+    let root = group.export_content_root(context).unwrap();
+    let reference = arkret_crypto::content_history::content_root_ref(&root, context).unwrap();
+    let entry = arkret_models_crypto::ContentRootBackupEntry {
+        item_kind: arkret_models_crypto::ContentRootItemKind::ContentEpochRoot,
+        secret_id: format!("root_{}", reference.as_str().trim_start_matches("sha256:")),
+        root_ref: reference,
+        root_context: context.clone(),
+        root_base64url: root,
+    };
+    let actor = arkret_sdk::ActorId::account(account.clone());
+    let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+        device_id: device.clone(),
+    };
+    let vault = garth::mls::content_roots::ContentRootVault::new(secure, &actor, &endpoint);
+    let mut future = std::pin::pin!(vault.retain_root(&entry));
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    match std::future::Future::poll(future.as_mut(), &mut context) {
+        std::task::Poll::Ready(result) => result.unwrap(),
+        std::task::Poll::Pending => {
+            panic!("fixture requires an immediately durable in-memory store")
+        }
+    }
 }

@@ -5,7 +5,7 @@ use serde_json::Value;
 use crate::state::LocalStateStore;
 
 /// Run only after the accepted projection transaction and its durability
-/// barrier. A refused installation must not consume an MLS receive key.
+/// barrier. A refused installation must not install decrypted presentation data.
 pub(crate) fn retain_accepted_page_metadata(
     store: &LocalStateStore,
     page: &impl crate::transport::own_station_results::AcceptedPageRows,
@@ -35,9 +35,8 @@ pub(crate) fn retain_accepted_page_metadata(
     Ok(())
 }
 
-/// Consume metadata while its accepted Event is received, before later
-/// application messages can evict its skipped MLS generation. Rendering must
-/// not decide which application keys survive in the durable receive chain.
+/// Retain metadata from its accepted original and exact frozen encryption
+/// header. Reading content never consumes an MLS application message key.
 pub(crate) fn retain_accepted_metadata(
     store: &LocalStateStore,
     event: &arkret_sdk::Event,
@@ -78,18 +77,13 @@ pub(crate) fn retain_accepted_metadata(
     ) else {
         return;
     };
-    let Some(payload) = crate::mls::runtime::encrypted_payload_from_verified_event_context(
-        store,
-        &envelope,
-        &event.scope_ref,
-        event.kind.as_str(),
-        &sender,
-        None,
+    let Some(payload) = crate::mls::runtime::encrypted_payload_from_verified_original(
+        store, secure, account, device, event, &envelope, &sender,
     ) else {
         return;
     };
-    // The runtime atomically retains the advanced chain and the exact digest's
-    // plaintext. Failure leaves metadata pending and never installs structure.
+    // The runtime opens the retained content root without changing MLS state.
+    // Missing original material leaves metadata pending.
     let _ = crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
         store,
         secure,
@@ -210,7 +204,14 @@ pub(crate) fn open_metadata_with_secure_store(
         let event = snapshot.raw_operations.iter().find_map(|record| {
             let event = record.payload.get("event").unwrap_or(&record.payload);
             let body = event.get("payload")?;
-            let target = body.get("target_ref").or_else(|| body.get("space_id"));
+            let kind = event.get("kind").and_then(Value::as_str);
+            let target = if kind == Some(arkret_sdk::EventKind::SpaceUpdate.as_str()) {
+                body.get("space_id")
+            } else if kind == Some(arkret_sdk::EventKind::StrandUpdate.as_str()) {
+                body.get("strand_id")
+            } else {
+                None
+            };
             let creation = event
                 .get("event_id")
                 .and_then(Value::as_str)
