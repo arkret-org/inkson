@@ -777,12 +777,16 @@ fn check_registration_result_binding(
     Ok(())
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "principal_registration/pcr_genesis_read_tests.rs"]
+mod pcr_genesis_read_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn native_registration_pair_enters_verified_submission_only_with_its_anchor() {
+    #[tokio::test]
+    async fn native_registration_pair_enters_verified_submission_only_with_its_anchor() {
         let device_id = "ak:device:019f0000-0000-7000-8000-000000000001";
         let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         let mut handoff = handoff(device_id, 1);
@@ -866,6 +870,12 @@ mod tests {
                 verified.canonical_bytes()
             );
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        super::pcr_genesis_read_tests::assert_original_read(
+            &unit,
+            &checkpoint.principal_registration_anchor,
+        )
+        .await;
         // Keep both real signatures valid while changing only the claimed anchor pin.
         let mut wrong_payload: arkret_sdk::RealmCreatePayload =
             serde_json::from_value(serde_json::to_value(&unit.create().payload).unwrap()).unwrap();

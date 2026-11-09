@@ -263,21 +263,51 @@ pub(crate) async fn resolve_root_context(
         anyhow::bail!("content group original is withheld");
     };
     group.verify_installed_historical_base(accepted, reference)?;
-    let strategy =
-        crate::transport::own_station_results::genesis_response(&source, group.scope().realm_id())
-            .await?;
-    let arkret_sdk::CommittedEventView::Full(strategy) = strategy.value()? else {
-        anyhow::bail!("content strategy original is withheld");
+    let principal_request = arkret_sdk::CurrentPrincipalRequestBody {
+        request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
+        account_id: source.session()?.account_id().clone(),
     };
-    let payload = strategy.event.as_realm_create()?;
+    let principal = source.current_principal(&principal_request).await?;
+    let (strategy, strategy_ref) =
+        if principal.value()?.principal_control_realm_id == *group.scope().realm_id() {
+            let pcr =
+                garth::own_station_results::read_own_station_human_pcr_genesis(&source, principal)
+                    .await?;
+            let original = pcr.genesis()?;
+            (
+                original
+                    .event
+                    .as_realm_create()?
+                    .object
+                    .initial_encryption_backup_strategy,
+                original.event.event_id.clone(),
+            )
+        } else {
+            let strategy = crate::transport::own_station_results::genesis_response(
+                &source,
+                group.scope().realm_id(),
+            )
+            .await?;
+            let arkret_sdk::CommittedEventView::Full(strategy) = strategy.value()? else {
+                anyhow::bail!("content strategy original is withheld");
+            };
+            (
+                strategy
+                    .event
+                    .as_realm_create()?
+                    .object
+                    .initial_encryption_backup_strategy,
+                strategy.event.event_id.clone(),
+            )
+        };
     let context = arkret_models_crypto::ContentRootContext {
         effective_scope: group.scope().clone(),
         genesis_event_ref: genesis.clone(),
         epoch: group.epoch(),
         group_state_ref: reference.clone(),
         cipher_suite: group.group_ciphersuite_canonical_id()?.to_owned(),
-        encryption_backup_strategy: payload.object.initial_encryption_backup_strategy,
-        backup_strategy_ref: strategy.event.event_id.clone(),
+        encryption_backup_strategy: strategy,
+        backup_strategy_ref: strategy_ref,
     };
     context.validate()?;
     source.check_session()?;

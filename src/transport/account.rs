@@ -60,7 +60,11 @@ pub(crate) async fn current_principal_for_authority(
         request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
         account_id: authority.clone(),
     };
-    let result = http.current_principal(&request).await?;
+    let result = if let Some(own) = &own {
+        own.current_principal(&request).await?.into_value()?
+    } else {
+        http.current_principal(&request).await?
+    };
     if let Some(own) = &own {
         own.check_session()?;
     }
