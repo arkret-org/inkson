@@ -181,7 +181,7 @@ pub(crate) async fn retain_received_epoch_root(
 /// The caller supplies an original already accepted through its own Station.
 /// The private group is currently usable only at this exact historical epoch;
 /// an unrelated current roster must not manufacture old producer provenance.
-pub(crate) fn material_from_original(
+pub(crate) fn material_from_accepted_original(
     state: &crate::state::LocalStateStore,
     secure: &dyn crate::secure_key_store::SecureKeyStore,
     account: &arkret_sdk::AccountId,
@@ -218,20 +218,9 @@ pub(crate) fn material_from_original(
         .verify_event_id_matches_content_with_digest_suite(suite)
         .ok()?;
     event.verify_producer_proof_self_consistency(suite).ok()?;
-    let bytes = arkret_sdk::signatures::EventProofBuilder::new()
-        .envelope_bytes(event)
-        .ok()?;
-    let key = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
-        bytes: arkret_sdk::base64url_decode(&producer.signature_key_base64url).ok()?,
-    };
-    arkret_sdk::signatures::verify_ed25519_detached_jws_proof_with_digest_suite(
-        event.producer_proof.as_ref()?,
-        &bytes,
-        &event.actor_id,
-        &key,
-        suite,
-    )
-    .ok()?;
+    // The accepted-source boundary verifies the Event proof with its exact
+    // native historical key. This independent roster binds the MLS leaf key;
+    // the protocol permits these two keys to differ for the same endpoint.
     arkret_models_crypto::EventContentMaterial::from_original(
         event,
         envelope,
@@ -287,7 +276,7 @@ pub(crate) fn retained_original_material(
         return None;
     }
     let event = originals.into_values().next()?;
-    material_from_original(
+    material_from_accepted_original(
         state,
         secure.as_ref(),
         &active.authority,

@@ -168,7 +168,7 @@ pub(crate) fn encrypted_payload_from_verified_original(
     if accepted != *envelope.encryption_context.group_state_ref() {
         return None;
     }
-    let material = crate::mls::content_roots::material_from_original(
+    let material = crate::mls::content_roots::material_from_accepted_original(
         state, secure, account, device, event, envelope,
     )?;
     let header = envelope

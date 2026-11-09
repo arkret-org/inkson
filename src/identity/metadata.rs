@@ -23,7 +23,7 @@ pub(crate) fn retain_accepted_page_metadata(
     let secure = crate::secure_key_store::default_secure_key_store("inkson");
     for row in page.accepted_rows()? {
         if let arkret_sdk::CommittedEventView::Full(full) = row {
-            retain_accepted_metadata(
+            retain_accepted_metadata_original(
                 store,
                 &full.event,
                 &endpoint.authority,
@@ -37,7 +37,7 @@ pub(crate) fn retain_accepted_page_metadata(
 
 /// Retain metadata from its accepted original and exact frozen encryption
 /// header. Reading content never consumes an MLS application message key.
-pub(crate) fn retain_accepted_metadata(
+fn retain_accepted_metadata_original(
     store: &LocalStateStore,
     event: &arkret_sdk::Event,
     account: &arkret_sdk::AccountId,
@@ -94,6 +94,19 @@ pub(crate) fn retain_accepted_metadata(
         &event.scope_ref,
         &sender,
     );
+}
+
+/// A fixture models the already verified sealed-page boundary separately
+/// from Root/AEAD behavior. Production callers cannot inject a raw Event here.
+#[cfg(test)]
+pub(crate) fn retain_accepted_metadata(
+    store: &LocalStateStore,
+    event: &arkret_sdk::Event,
+    account: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    secure: &dyn crate::secure_key_store::SecureKeyStore,
+) {
+    retain_accepted_metadata_original(store, event, account, device, secure);
 }
 
 fn observe_open_gate(digest: &arkret_sdk::Hash, gate: &'static str, passed: bool) {

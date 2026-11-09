@@ -919,15 +919,9 @@ fn two_member_group_with_bob_snapshot(
 ) {
     let alice_actor = crate::test_support::account_actor("did:web:alice.example");
     let bob_actor_id = crate::test_support::account_actor(bob_actor);
-    let alice = arkret_sdk::ArkretMlsIdentity::new_human_device(
+    let alice = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
         alice_actor.clone(),
-        arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
-            .unwrap(),
-        arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(
-            arkret_test_kit::keys::development_signing_key(
-                "did:web:alice.example#ak:device:01904100-0000-7000-8000-0000000000a1",
-            ),
-        ),
+        arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1").unwrap(),
     )
     .unwrap();
     let bob = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
@@ -2267,6 +2261,35 @@ fn accepted_metadata_survives_later_messages_without_opening_its_view() {
     )
     .unwrap()
     .expect_verifiable();
+    let native_public = arkret_test_kit::keys::development_verifying_key(
+        "did:web:alice.example#ak:device:01904100-0000-7000-8000-0000000000a1",
+    );
+    assert_ne!(
+        alice
+            .original_content_endpoint(&event)
+            .unwrap()
+            .signature_key_base64url,
+        arkret_sdk::base64url_encode(native_public.as_bytes()),
+        "the MLS leaf key is independent of the native Event key"
+    );
+    let native_key = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+        bytes: native_public.as_bytes().to_vec(),
+    };
+    // Native key selection is exercised by the real bound HTTP tests in Garth.
+    // This local fixture composes that source contract with independent leaf/R.
+    let verify_native = |original: &arkret_sdk::Event| {
+        let bytes = arkret_sdk::signatures::EventProofBuilder::new()
+            .envelope_bytes(original)
+            .unwrap();
+        arkret_sdk::signatures::verify_ed25519_detached_jws_proof_with_digest_suite(
+            original.producer_proof.as_ref().unwrap(),
+            &bytes,
+            &original.actor_id,
+            &native_key,
+            arkret_sdk::DigestSuite::Sha256,
+        )
+    };
+    assert!(verify_native(&event).is_ok());
     crate::identity::metadata::retain_accepted_metadata(&state, &event, &account, &device, &secure);
     assert!(
         state
@@ -2352,17 +2375,8 @@ fn accepted_metadata_survives_later_messages_without_opening_its_view() {
     .unwrap()
     .expect_verifiable();
     assert!(
-        encrypted_payload_from_verified_original(
-            &state,
-            &secure,
-            &account,
-            &device,
-            &forged,
-            &envelope,
-            sender.as_bytes()
-        )
-        .is_none(),
-        "shape-consistent signatures do not replace the accepted leaf key"
+        verify_native(&forged).is_err(),
+        "the accepted source must reject a wrong Event signature before metadata consumption"
     );
     for _ in 0..20 {
         let message = alice
