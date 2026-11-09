@@ -155,7 +155,7 @@ pub(crate) async fn prepare_accepted_page(
         }
     }
     for (root_ref, context) in roots {
-        let roster = read_public_epoch(source, &context).await?;
+        let roster = read_public_epoch(source, state, &context).await?;
         // Re-check both the sealed page and the live account after all I/O.
         page.accepted_rows().map_err(anyhow::Error::msg)?;
         source.check_session()?;
@@ -197,14 +197,28 @@ pub(crate) async fn prepare_accepted_page_for_http(
 
 async fn read_public_epoch(
     source: &OwnStationStateClient,
+    state: &crate::runtime::input::StateStoreHandle,
     context: &ContentRootContext,
 ) -> anyhow::Result<arkret_sdk::VerifiedMlsHistoricalContentRoster> {
+    // The read target must be a cut where this reader is authorized. It is
+    // independent of the old content epoch and needs no private checkpoint.
+    let input = crate::mls::send_gate::MlsSendGateInput::capture(state, &context.effective_scope);
+    let current = crate::mls::send_gate::read_durable_mls_current(&input, &context.effective_scope)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("historical scope has no accepted MLS current"))?;
+    anyhow::ensure!(
+        current.effective_scope == context.effective_scope
+            && current.genesis_event_ref == context.genesis_event_ref
+            && current.cipher_suite.as_str() == context.cipher_suite
+            && current.epoch >= context.epoch,
+        "historical content differs from the authorized current group"
+    );
     let request = arkret_sdk::MlsMemberRosterAuthorityReadRequestBody {
         realm_id: context.effective_scope.realm_id().clone(),
         effective_scope: context.effective_scope.clone(),
         mls_group_id: context.effective_scope.canonical_mls_group_id()?,
-        target_commit_event_ref: context.group_state_ref.clone(),
-        target_epoch: context.epoch,
+        target_commit_event_ref: current.current_mls_commit_event_ref,
+        target_epoch: current.epoch,
         caller_actor_id: arkret_sdk::ActorId::account(source.session()?.account_id().clone()),
         cursor: None,
     };
@@ -234,57 +248,60 @@ async fn read_public_epoch(
         }
     }
     let peer = arkret_sdk::verify_mls_member_roster_authority_pages(&pages, &request)?;
-    let genesis = garth::own_station_results::read_window_dependency_by_event_id(
-        source,
-        &context.genesis_event_ref,
-    )
-    .await?;
-    let target = garth::own_station_results::read_window_dependency_by_event_id(
-        source,
-        &context.group_state_ref,
-    )
-    .await?;
     let genesis_request =
         arkret_sdk::mls_roster_genesis_material_request(&peer, &pages[0].roster.manifest);
     let genesis_material = source
         .self_mls_group_state_material(&genesis_request)
         .await?;
-    let original = &target.full()?.event;
-    let payload = serde_json::to_value(&original.payload)?;
-    let (info, tree) = match original.kind {
-        arkret_sdk::EventKind::MlsGenesis => {
-            let payload: arkret_models_collaboration::events_payloads::MlsGenesisPayload =
-                serde_json::from_value(payload)?;
-            (payload.group_info_ref, payload.ratchet_tree_ref)
-        }
-        arkret_sdk::EventKind::MlsCommit => {
-            let payload: arkret_models_crypto::MlsCommitPayload = serde_json::from_value(payload)?;
-            (
-                payload.group_info_ref().clone(),
-                payload.ratchet_tree_ref().clone(),
+    let content_original = if context.epoch == 0 {
+        // The signed manifest binds the original Genesis public refs. Do not
+        // attempt a forbidden pre-join business Event read.
+        None
+    } else {
+        Some(
+            garth::own_station_results::read_window_dependency_by_event_id(
+                source,
+                &context.group_state_ref,
             )
-        }
-        _ => anyhow::bail!("historical target is not an MLS group original"),
+            .await?,
+        )
     };
-    let material_request = arkret_sdk::MlsMemberGroupStateMaterialReadRequestBody {
-        realm_id: request.realm_id.clone(),
-        effective_scope: request.effective_scope.clone(),
-        mls_group_id: request.mls_group_id.clone(),
-        epoch: context.epoch,
-        group_state_event_id: context.group_state_ref.clone(),
-        caller_actor_id: request.caller_actor_id.clone(),
-        target_commit_event_ref: context.group_state_ref.clone(),
-        target_epoch: context.epoch,
-        group_info_ref: info,
-        ratchet_tree_ref: tree,
-        max_response_bytes: None,
+    let content_material = if let Some(original) = &content_original {
+        let original = &original.full()?.event;
+        anyhow::ensure!(
+            original.kind == arkret_sdk::EventKind::MlsCommit,
+            "historical content epoch is not an MLS Commit"
+        );
+        let payload: arkret_models_crypto::MlsCommitPayload =
+            serde_json::from_value(serde_json::to_value(&original.payload)?)?;
+        let material_request = arkret_sdk::MlsMemberGroupStateMaterialReadRequestBody {
+            realm_id: request.realm_id.clone(),
+            effective_scope: request.effective_scope.clone(),
+            mls_group_id: request.mls_group_id.clone(),
+            epoch: context.epoch,
+            group_state_event_id: context.group_state_ref.clone(),
+            caller_actor_id: request.caller_actor_id.clone(),
+            target_commit_event_ref: request.target_commit_event_ref.clone(),
+            target_epoch: request.target_epoch,
+            group_info_ref: payload.group_info_ref().clone(),
+            ratchet_tree_ref: payload.ratchet_tree_ref().clone(),
+            max_response_bytes: None,
+        };
+        source
+            .self_mls_group_state_material(&material_request)
+            .await?
+            .into_value()?
+    } else {
+        genesis_material.value()?.clone()
     };
-    let target_material = source
-        .self_mls_group_state_material(&material_request)
-        .await?;
     let mut recovery_material = BTreeMap::new();
     for record in pages.iter().flat_map(|page| &page.roster.records) {
         if let arkret_sdk::MlsRosterRecord::Recovery { commit_event, .. } = record {
+            let payload: arkret_models_crypto::MlsCommitPayload =
+                serde_json::from_value(serde_json::to_value(&commit_event.payload)?)?;
+            if payload.next_epoch() > context.epoch {
+                continue;
+            }
             let request = arkret_sdk::mls_roster_recovery_material_request(record, &peer)
                 .map_err(anyhow::Error::msg)?;
             let material = source
@@ -303,10 +320,13 @@ async fn read_public_epoch(
         arkret_sdk::MlsHistoricalContentRosterMaterials {
             request: &request,
             pages: &pages,
-            genesis_original: genesis.full()?,
+            genesis_original: None,
             genesis_material: genesis_material.value()?,
-            target_original: target.full()?,
-            target_material: target_material.value()?,
+            content_original: content_original
+                .as_ref()
+                .map(|original| original.full())
+                .transpose()?,
+            content_material: &content_material,
             recovery_material: &recovery_material,
             root_context: context,
         },
