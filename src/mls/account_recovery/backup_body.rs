@@ -111,6 +111,8 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
         &SecretStorageContentIndex {
             item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND,
             secret_id: MLS_ACCOUNT_SECRET_SECRET_ID.to_owned(),
+            root_ref: None,
+            root_context: None,
         },
         Some(u64::from(account_secret_version)),
         auth,
@@ -142,6 +144,8 @@ pub fn build_mls_account_secret_backup_successor_body_with_kek_and_version(
         &SecretStorageContentIndex {
             item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND,
             secret_id: MLS_ACCOUNT_SECRET_SECRET_ID.to_owned(),
+            root_ref: None,
+            root_context: None,
         },
         Some(u64::from(account_secret_version)),
         auth,
@@ -161,7 +165,8 @@ pub fn decrypt_mls_account_secret_backup(
     body: &Value,
 ) -> Result<(Vec<u8>, u32)> {
     let plaintext = open_passphrase_kdf_backup_body(passphrase, body)?;
-    let [item] = plaintext.items.as_slice() else {
+    let [arkret_models_crypto::SecretStorageEntry::Secret(item)] = plaintext.items.as_slice()
+    else {
         return Err(anyhow!(
             "account-secret backup must decrypt to exactly one item"
         ));
@@ -206,6 +211,8 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
         &SecretStorageContentIndex {
             item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND,
             secret_id: MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned(),
+            root_ref: None,
+            root_context: None,
         },
         None,
         auth,
@@ -235,6 +242,8 @@ pub fn build_mls_private_plaintext_backup_successor_body_with_kek(
         &SecretStorageContentIndex {
             item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND,
             secret_id: MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned(),
+            root_ref: None,
+            root_context: None,
         },
         None,
         auth,
@@ -255,16 +264,18 @@ pub fn decrypt_mls_private_plaintext_backup(
     account_secret: &[u8],
     body: &Value,
 ) -> Result<Vec<u8>> {
-    opened_single_secret(account_secret, body)
-}
-
-fn opened_single_secret(unlock_key: &[u8], body: &Value) -> Result<Vec<u8>> {
-    let plaintext = open_passphrase_kdf_backup_body(unlock_key, body)?;
-    let [item] = plaintext.items.as_slice() else {
+    let plaintext = open_passphrase_kdf_backup_body(account_secret, body)?;
+    let [arkret_models_crypto::SecretStorageEntry::Secret(item)] = plaintext.items.as_slice()
+    else {
         return Err(anyhow!(
             "single-secret key backup must decrypt to exactly one plaintext item"
         ));
     };
+    anyhow::ensure!(
+        item.item_kind == MLS_PRIVATE_PLAINTEXT_ITEM_KIND
+            && item.secret_id == MLS_PRIVATE_PLAINTEXT_SECRET_ID,
+        "private plaintext backup contains a different secret class"
+    );
     B64.decode(item.secret_base64url.as_bytes())
         .map_err(|error| anyhow!("key backup plaintext secret is not base64url: {error}"))
 }
@@ -300,6 +311,8 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
         &SecretStorageContentIndex {
             item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND,
             secret_id: MLS_ACCOUNT_SECRET_SECRET_ID.to_owned(),
+            root_ref: None,
+            root_context: None,
         },
         account_secret.as_bytes(),
         Some(u64::from(account_secret_version)),
@@ -357,7 +370,8 @@ pub fn open_mls_account_secret_recovery_public_key_backup(
     ensure_recovery_public_key_backup_policy_matches(body, expected_recovery_policy_ref)?;
     let plaintext =
         crate::key_backup::open_recovery_public_key_backup_body(recovery_private_key, body)?;
-    let [item] = plaintext.items.as_slice() else {
+    let [arkret_models_crypto::SecretStorageEntry::Secret(item)] = plaintext.items.as_slice()
+    else {
         return Err(anyhow!(
             "account-secret backup must decrypt to exactly one plaintext item"
         ));
@@ -371,6 +385,11 @@ pub fn open_mls_account_secret_recovery_public_key_backup(
 }
 
 fn account_secret_generation(item: &SecretStorageSecret) -> Result<u32> {
+    anyhow::ensure!(
+        item.item_kind == MLS_ACCOUNT_SECRET_ITEM_KIND
+            && item.secret_id == MLS_ACCOUNT_SECRET_SECRET_ID,
+        "account-secret backup contains a different secret class"
+    );
     let generation = item
         .secret_generation
         .ok_or_else(|| anyhow!("decrypted MLS account secret has no secret_generation"))?;

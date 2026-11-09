@@ -73,6 +73,8 @@ fn build_recovery_vault_backup_body_signed(
         &SecretStorageContentIndex {
             item_kind: SecretStorageItemKind::PrivateAccountState,
             secret_id: "inkson_recovery_vault_payload".to_owned(),
+            root_ref: None,
+            root_context: None,
         },
         None,
         &auth,
@@ -86,8 +88,10 @@ fn wire(body: &KeyBackup) -> Value {
 }
 
 fn plaintext_secret(plaintext: &arkret_sdk::KeyBackupPlaintext) -> Vec<u8> {
-    B64.decode(plaintext.items[0].secret_base64url.as_bytes())
-        .unwrap()
+    let arkret_sdk::SecretStorageEntry::Secret(item) = &plaintext.items[0] else {
+        panic!("ordinary secret helper cannot open an epoch content root");
+    };
+    B64.decode(item.secret_base64url.as_bytes()).unwrap()
 }
 
 fn validate_wire_envelope(body: &Value, expected_kind: BackupKind) -> Result<KeyBackup, String> {
@@ -176,6 +180,8 @@ fn successor_binds_the_current_device_without_breaking_the_series() {
         &SecretStorageContentIndex {
             item_kind: SecretStorageItemKind::PrivateAccountState,
             secret_id: "inkson_recovery_vault_payload".to_owned(),
+            root_ref: None,
+            root_context: None,
         },
         None,
         &auth,
@@ -228,7 +234,11 @@ fn key_backup_auth_data_sign_verify_round_trip() {
         arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519
     );
     assert_eq!(
-        signature_proof.device_authorize_event_id.as_str(),
+        signature_proof
+            .device_authorize_event_id
+            .as_ref()
+            .unwrap()
+            .as_str(),
         DEVICE_AUTHORIZE_EVENT
     );
     body.validate()
@@ -254,7 +264,11 @@ fn key_backup_auth_data_sign_verify_service_attested_round_trip() {
     .unwrap();
 
     assert_eq!(
-        body.signature_proof.device_authorize_event_id.as_str(),
+        body.signature_proof
+            .device_authorize_event_id
+            .as_ref()
+            .unwrap()
+            .as_str(),
         DEVICE_AUTHORIZE_EVENT
     );
     verify_key_backup_auth_data(&body, &signing_key.verifying_key())
@@ -464,6 +478,8 @@ fn recovery_public_key_backup_round_trips_and_validates() {
         &SecretStorageContentIndex {
             item_kind: SecretStorageItemKind::MlsAccountSecret,
             secret_id: "inkson_mls_account_secret".to_owned(),
+            root_ref: None,
+            root_context: None,
         },
         b"opaque account secret bytes",
         Some(1),

@@ -651,7 +651,7 @@ async fn reconcile_existing_sidecar_leaves(
             crate::mls::group_events::mls_commit_event_with_binding(
                 store,
                 authority.principal_id.as_str(),
-                &staged.envelope,
+                &staged,
                 &binding,
             )
         })
@@ -985,7 +985,7 @@ async fn reconcile_sidecar_mls_attempt(
             .mls()
             .claim_key_package(
                 agent.as_str(),
-                scope.realm_id().as_str(),
+                &scope,
                 authority.principal_id.as_str(),
                 device.as_str(),
                 Some(authority.station_id.as_str()),
@@ -1205,8 +1205,11 @@ pub(crate) mod tests {
         let first_accepted = fixture::accepted_mls_commit_with_binding(
             ActorId::account(authority.clone()),
             &first.commit,
-            first_binding,
+            (first_binding).clone(),
             63,
+            owner
+                .pending_public_group_state_bytes(&first.commit, &first_binding)
+                .unwrap(),
         );
         owner
             .install_recovered_own_commit(&first_accepted, &genesis)
@@ -1250,8 +1253,11 @@ pub(crate) mod tests {
         let second_accepted = fixture::accepted_mls_commit_with_binding(
             ActorId::account(authority.clone()),
             &second.commit,
-            second_binding.clone(),
+            (second_binding.clone()).clone(),
             64,
+            owner
+                .pending_public_group_state_bytes(&second.commit, &second_binding)
+                .unwrap(),
         );
         let current1 = current(&scope, &genesis, &first_accepted.event.event_id, 1);
         owner
@@ -1303,8 +1309,11 @@ pub(crate) mod tests {
             let accepted = fixture::accepted_mls_commit_with_binding(
                 ActorId::account(authority.clone()),
                 &add.commit,
-                next.clone(),
+                (next.clone()).clone(),
                 67,
+                owner
+                    .pending_public_group_state_bytes(&add.commit, &next)
+                    .unwrap(),
             );
             let prior = current(&scope, &genesis, &base, 2);
             owner.install_accepted_commit(&accepted, &prior).unwrap();
@@ -1446,8 +1455,9 @@ pub(crate) mod tests {
         let accepted = fixture::accepted_mls_commit_with_binding(
             ActorId::account(f.authority.clone()),
             &staged.envelope,
-            next,
+            (next).clone(),
             66,
+            staged.public_material.clone(),
         );
         recovered
             .install_recovered_own_commit(&accepted, &f.base)
@@ -1486,13 +1496,18 @@ pub(crate) mod tests {
         let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
             "1.0",
             "application/json",
-            arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+            arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
             f.scope.clone(),
             arkret_wire::event_kind_str::MESSAGE_CREATE,
             3,
-            accepted.event.event_id.clone(),
+            (accepted.event.event_id.clone()).clone(),
             recovered.local_content_sender_domain().unwrap(),
             arkret_sdk::EventContentRoutingContext::None,
+            crate::test_support::content::material(
+                &recovered,
+                arkret_wire::event_kind_str::MESSAGE_CREATE,
+                &(accepted.event.event_id.clone()),
+            ),
         )
         .unwrap();
         let encrypted = recovered
@@ -1563,8 +1578,9 @@ pub(crate) mod tests {
         let accepted = fixture::accepted_mls_commit_with_binding(
             ActorId::account(f.authority.clone()),
             &staged.envelope,
-            next.clone(),
+            (next.clone()).clone(),
             68,
+            staged.public_material.clone(),
         );
         let secret =
             crate::mls::runtime::load_device_checkpoint_secret(&f.secure, &f.authority, &f.device)
@@ -1610,13 +1626,18 @@ pub(crate) mod tests {
         let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
             "1.0",
             "application/json",
-            arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+            arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
             f.scope.clone(),
             arkret_wire::event_kind_str::MESSAGE_CREATE,
             4,
-            accepted.event.event_id.clone(),
+            (accepted.event.event_id.clone()).clone(),
             repaired.local_content_sender_domain().unwrap(),
             arkret_sdk::EventContentRoutingContext::None,
+            crate::test_support::content::material(
+                &repaired,
+                arkret_wire::event_kind_str::MESSAGE_CREATE,
+                &(accepted.event.event_id.clone()),
+            ),
         )
         .unwrap();
         let encrypted = repaired
@@ -1753,8 +1774,9 @@ pub(crate) mod tests {
         let accepted = fixture::accepted_mls_commit_with_binding(
             ActorId::account(f.authority.clone()),
             &staged.envelope,
-            next,
+            (next).clone(),
             69,
+            staged.public_material.clone(),
         );
         let secret =
             crate::mls::runtime::load_device_checkpoint_secret(&f.secure, &f.authority, &f.device)
@@ -1792,13 +1814,18 @@ pub(crate) mod tests {
         let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
             "1.0",
             "application/json",
-            arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+            arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
             f.scope.clone(),
             arkret_wire::event_kind_str::MESSAGE_CREATE,
             3,
-            accepted.event.event_id,
+            (accepted.event.event_id).clone(),
             repaired.local_content_sender_domain().unwrap(),
             arkret_sdk::EventContentRoutingContext::None,
+            crate::test_support::content::material(
+                &repaired,
+                arkret_wire::event_kind_str::MESSAGE_CREATE,
+                &(accepted.event.event_id),
+            ),
         )
         .unwrap();
         let encrypted = repaired

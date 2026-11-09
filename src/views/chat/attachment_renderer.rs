@@ -260,12 +260,22 @@ async fn load_verified_attachment(
             "attachment checkpoint is not the winning public tree"
         );
     }
-    let key = arkret_sdk::mls::derive_attachment_content_key(&group, &context)?;
+    let root = crate::mls::content_roots::resolve_root_context(
+        &http,
+        &group,
+        &context.genesis_event_ref,
+        &reference,
+    )
+    .await?;
+    let key = arkret_sdk::mls::derive_attachment_content_key(&group, &root, &context)?;
     let resolver = |r: &EncryptedAttachmentGroupStateRef| {
-        r.event_id()
-            .ok()
-            .filter(|id| id == &reference)
-            .map(|_| context.epoch)
+        r.event_id().ok().filter(|id| id == &reference).map(|_| {
+            arkret_crypto::blob_aead::ResolvedAttachmentGroupState {
+                effective_scope: context.effective_scope.clone(),
+                genesis_event_ref: context.genesis_event_ref.clone(),
+                epoch: context.epoch,
+            }
+        })
     };
     let mut decryptor =
         arkret_crypto::blob_aead::StreamDecryptor::new(descriptor, &key, &resolver)?;

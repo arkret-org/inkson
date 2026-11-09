@@ -136,7 +136,7 @@ mod tests {
             .realm_id
             .to_string();
         let actor = "ak:did_core:web:alice.example";
-        let builder = builder_for(&write, &realm, actor, None).unwrap();
+        let builder = builder_for(&write, &realm, actor).unwrap();
         let intent = builder.intent().unwrap();
         assert_eq!(intent.kind(), &arkret_sdk::EventKind::StrandUpdate);
         let payload = intent
@@ -155,7 +155,7 @@ mod tests {
             action: "unplace".into(),
             ..write
         };
-        let clear_builder = builder_for(&clear, &realm, actor, None).unwrap();
+        let clear_builder = builder_for(&clear, &realm, actor).unwrap();
         let clear = clear_builder.intent().unwrap();
         assert_eq!(clear.payload()["patch"]["topic"], json!({"$op":"unset"}));
         assert!(!clear.payload().contains_key("board_space_id"));
@@ -174,12 +174,12 @@ mod tests {
             .to_string();
         let actor = "ak:did_core:web:alice.example";
         write.view.chat_state_digests.clear();
-        assert!(builder_for(&write, &realm, actor, None).is_err());
+        assert!(builder_for(&write, &realm, actor).is_err());
         let write = StructureWrite {
             action: "reorder".into(),
             ..sample_write("place")
         };
-        let builder = builder_for(&write, &realm, actor, None).unwrap();
+        let builder = builder_for(&write, &realm, actor).unwrap();
         let payload = builder.intent().unwrap();
         assert_eq!(
             payload.payload()["patch"]["topic"]["value"]["space_id"],
@@ -202,7 +202,6 @@ fn builder_for(
     write: &StructureWrite,
     realm: &str,
     actor: &str,
-    encrypted: Option<arkret_sdk::EncryptedEnvelope>,
 ) -> anyhow::Result<crate::operation::TypedOperationBuilder> {
     use arkret_sdk::event_spec;
 
@@ -216,7 +215,7 @@ fn builder_for(
                 crate::mls_api_helpers::local_account_actor_id(actor)?,
             )
             .with_track("discussion", arkret_sdk::StrandTrack::discussion_primary());
-            object.encrypted_metadata = encrypted;
+            object.metadata = Some(arkret_sdk::StrandMetadata::with_title(write.title.trim()));
             let at = object.created_at;
             TypedOperationBuilder::new::<event_spec::StrandCreate>(
                 realm,
@@ -232,8 +231,7 @@ fn builder_for(
                 "",
                 crate::mls_api_helpers::local_account_actor_id(actor)?,
             );
-            space.title = None;
-            space.encrypted_metadata = encrypted;
+            space.title = Some(write.title.trim().to_owned());
             let at = space.created_at;
             TypedOperationBuilder::new::<event_spec::SpaceCreate>(
                 realm,
@@ -246,7 +244,7 @@ fn builder_for(
             realm,
             actor,
             &write.chat,
-            json!({"encrypted_metadata":{"$op":"set","value":encrypted}}),
+            json!({"metadata.title":{"$op":"set","value":write.title.trim()}}),
         )?,
         "reorder_topic" => {
             let id = space_id(&write.topic_target)?;
@@ -270,7 +268,7 @@ fn builder_for(
             realm,
             actor,
             &write.topic_target,
-            json!({"encrypted_metadata":{"$op":"set","value":encrypted}}),
+            json!({"title":{"$op":"set","value":write.title.trim()}}),
         )?,
         "archive_chat" => ak_ops::strand_archive(realm, actor, &write.chat)?,
         "restore_chat" => ak_ops::strand_restore(realm, actor, &write.chat)?,
@@ -402,52 +400,7 @@ async fn submit_structure(
         );
         fence.check()?;
     }
-    let plaintext = if needs_metadata {
-        anyhow::ensure!(!write.title.trim().is_empty(), "Enter a title");
-        Some(
-            if matches!(write.action.as_str(), "new_chat" | "rename_chat") {
-                serde_json::to_value(arkret_sdk::StrandMetadata::with_title(write.title.trim()))?
-            } else {
-                let metadata = arkret_sdk::SpaceMetadata::title(write.title.trim());
-                metadata.validate()?;
-                serde_json::to_value(metadata)?
-            },
-        )
-    } else {
-        None
-    };
-    let kind = match write.action.as_str() {
-        "new_chat" => arkret_sdk::EventKind::StrandCreate,
-        "rename_chat" => arkret_sdk::EventKind::StrandUpdate,
-        "new_topic" => arkret_sdk::EventKind::SpaceCreate,
-        _ => arkret_sdk::EventKind::SpaceUpdate,
-    };
-    let envelope = if let Some(plaintext) = &plaintext {
-        let bytes = serde_json::to_vec(plaintext)?;
-        let encryption = crate::views::secure_send::run_local_mls_encrypt_for_event(
-            &state_store,
-            &realm,
-            &account,
-            &device,
-            "application/json",
-            kind.as_str(),
-            &bytes,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .map_err(|error| anyhow::anyhow!(error.user_message()))?;
-        Some(arkret_sdk::mls::encrypted_envelope_from_payload(
-            &encryption.content,
-        )?)
-    } else {
-        None
-    };
-    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-    tracing::warn!(action = %write.action, stage = "encrypted", "Direct structure write diagnostic");
-    let draft = builder_for(&write, &realm, actor, envelope.clone())?;
+    let draft = builder_for(&write, &realm, actor)?;
     let intent = crate::mls::direct_binding::participant_authoring_intent(
         draft.intent()?,
         context.authority_source,
@@ -470,25 +423,7 @@ async fn submit_structure(
     let event_id = arkret_sdk::EventId::new(&accepted.event_id)?;
     let created_chat = (write.action == "new_chat")
         .then(|| arkret_sdk::StrandId::from_event_id(&event_id).to_string());
-    if let (Some(envelope), Some(plaintext)) = (envelope, plaintext) {
-        let id = match write.action.as_str() {
-            "new_chat" => arkret_sdk::StrandId::from_event_id(&event_id).to_string(),
-            "new_topic" => arkret_sdk::SpaceId::from_event_id(&event_id).to_string(),
-            "rename_chat" => write.chat,
-            _ => write.topic_target,
-        };
-        store.write(|value| -> anyhow::Result<_> {
-            value.save_private_plaintext(
-                &realm,
-                &id,
-                &format!("encrypted_metadata:{}", envelope.payload_digest()?),
-                &serde_json::to_string(&plaintext)?,
-            );
-            Ok(())
-        })?;
-        let barrier = store.read(|value| value.begin_durable_flush())?;
-        barrier.wait().await?;
-    }
+
     Ok((accepted, created_chat))
 }
 

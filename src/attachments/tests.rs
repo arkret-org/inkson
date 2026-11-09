@@ -36,6 +36,7 @@ fn scopes() -> Vec<ScopeRef> {
 }
 
 fn parameters(
+    scope: &ScopeRef,
     reference: EventId,
     suite: arkret_sdk::DigestSuite,
 ) -> arkret_crypto::blob_aead::StreamEncryptParams {
@@ -44,7 +45,22 @@ fn parameters(
             algorithm: EncryptedAttachmentKeyAlgorithm::Mls,
             group_state_ref: EncryptedAttachmentGroupStateRef::Event(reference),
         },
-        content_key_salt: AttachmentContentKeySalt::from_bytes([7; 32]),
+        content_context: AttachmentContentKeyContext {
+            effective_scope: scope.clone(),
+            genesis_event_ref: event(20),
+            epoch: 0,
+            scheme: arkret_crypto::blob_aead::SCHEME_STREAM.into(),
+            encryption_algorithm: arkret_crypto::blob_aead::ALG_STREAM_XCHACHA.into(),
+            content_key_salt: AttachmentContentKeySalt::from_bytes([7; 32]),
+            producer: serde_json::from_value(
+                arkret_schema_conformance::spec_json_artifact(
+                    "fixtures/content-history-fixture.json",
+                )
+                .unwrap()["kat"]["content_context"]["producer"]
+                    .clone(),
+            )
+            .unwrap(),
+        },
         digest_suite: suite,
         media_type: "text/plain".into(),
         segment_bytes: SEGMENT_BYTES,
@@ -101,8 +117,14 @@ async fn authorized_durable_cut_resolves_history_and_alias_without_a_product_vie
         let (_, descriptor) = arkret_crypto::blob_aead::encrypt_stream(
             b"history",
             &[9; 32],
-            &parameters(event(20), arkret_sdk::DigestSuite::Sha256),
-            &|_: &EncryptedAttachmentGroupStateRef| Some(0),
+            &parameters(&scope, event(20), arkret_sdk::DigestSuite::Sha256),
+            &|_: &EncryptedAttachmentGroupStateRef| {
+                Some(arkret_crypto::blob_aead::ResolvedAttachmentGroupState {
+                    effective_scope: scope.clone(),
+                    genesis_event_ref: event(20),
+                    epoch: 0,
+                })
+            },
         )
         .unwrap();
         let (context, checkpoint, reference) =
@@ -178,7 +200,13 @@ fn real_checkpoint_restore_and_registered_kdf_bind_scope_epoch_account_and_devic
             device.clone(),
         )
         .unwrap();
-        let group = identity.create_group(&scope).unwrap();
+        let mut group = identity.create_group(&scope).unwrap();
+        group
+            .install_local_creator_binding(
+                arkret_sdk::ActorId::account(authority.clone()),
+                Some(event(21)),
+            )
+            .unwrap();
         let record = group.export_state_record().unwrap();
         let snapshot = garth::mls::checkpoint::encrypt_state(
             scope.realm_id().as_str(),
@@ -195,26 +223,47 @@ fn real_checkpoint_restore_and_registered_kdf_bind_scope_epoch_account_and_devic
             scheme: "ak.blob.stream_aead.v1".into(),
             encryption_algorithm: arkret_crypto::blob_aead::ALG_STREAM_XCHACHA.into(),
             content_key_salt: AttachmentContentKeySalt::from_bytes([7; 32]),
+            producer: group.local_content_endpoint().unwrap(),
         };
         let restored =
             restore_attachment_group_from_store(&snapshot, &authority, &device, &context, &secure)
                 .unwrap();
-        let key = arkret_sdk::mls::derive_attachment_content_key(&restored, &context).unwrap();
+        let root_context = arkret_models_crypto::ContentRootContext {
+            effective_scope: scope.clone(),
+            genesis_event_ref: event(20),
+            epoch: 0,
+            group_state_ref: event(20),
+            cipher_suite: group.group_ciphersuite_canonical_id().unwrap().into(),
+            encryption_backup_strategy: arkret_sdk::EncryptionBackupStrategy::EpochContentRoots,
+            backup_strategy_ref: event(1),
+        };
+        let key =
+            arkret_sdk::mls::derive_attachment_content_key(&restored, &root_context, &context)
+                .unwrap();
         assert_eq!(
             key,
-            arkret_sdk::mls::derive_attachment_content_key(&group, &context).unwrap()
+            arkret_sdk::mls::derive_attachment_content_key(&group, &root_context, &context)
+                .unwrap()
         );
         for suite in [
             arkret_sdk::DigestSuite::Sha256,
             arkret_sdk::DigestSuite::Blake3,
         ] {
             let resolve = |r: &EncryptedAttachmentGroupStateRef| {
-                (r.event_id().ok() == Some(event(20))).then_some(0)
+                (r.event_id().ok() == Some(event(20))).then(|| {
+                    arkret_crypto::blob_aead::ResolvedAttachmentGroupState {
+                        effective_scope: scope.clone(),
+                        genesis_event_ref: event(20),
+                        epoch: 0,
+                    }
+                })
             };
+            let mut params = parameters(&scope, event(20), suite);
+            params.content_context = context.clone();
             let (ciphertext, descriptor) = arkret_crypto::blob_aead::encrypt_stream(
                 b"real scoped MLS attachment",
                 &key,
-                &parameters(event(20), suite),
+                &params,
                 &resolve,
             )
             .unwrap();
@@ -223,7 +272,7 @@ fn real_checkpoint_restore_and_registered_kdf_bind_scope_epoch_account_and_devic
                     .unwrap(),
                 b"real scoped MLS attachment"
             );
-            let mut alias_parameters = parameters(event(20), suite);
+            let mut alias_parameters = params.clone();
             alias_parameters.key_ref.group_state_ref = EncryptedAttachmentGroupStateRef::Digest(
                 arkret_sdk::Hash::new(format!("sha256:{}", hex::encode([20; 32]))).unwrap(),
             );
@@ -256,15 +305,11 @@ fn real_checkpoint_restore_and_registered_kdf_bind_scope_epoch_account_and_devic
             );
             let mut wrong_genesis = context.clone();
             wrong_genesis.genesis_event_ref = event(99);
-            let wrong_key =
-                arkret_sdk::mls::derive_attachment_content_key(&restored, &wrong_genesis).unwrap();
-            assert_ne!(wrong_key, key);
             assert!(
-                arkret_crypto::blob_aead::decrypt_stream(
-                    &ciphertext,
-                    &descriptor,
-                    &wrong_key,
-                    &resolve
+                arkret_sdk::mls::derive_attachment_content_key(
+                    &restored,
+                    &root_context,
+                    &wrong_genesis
                 )
                 .is_err()
             );

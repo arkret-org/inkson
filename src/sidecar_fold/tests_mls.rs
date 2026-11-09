@@ -88,8 +88,15 @@ impl MlsFixture {
         let add = sender
             .add_member_with_governance_binding(&package, &binding)
             .unwrap();
-        let accepted =
-            fixture::accepted_mls_commit_with_binding(agent.clone(), &add.commit, binding, 22);
+        let accepted = fixture::accepted_mls_commit_with_binding(
+            agent.clone(),
+            &add.commit,
+            (binding).clone(),
+            22,
+            sender
+                .pending_public_group_state_bytes(&add.commit, &binding)
+                .unwrap(),
+        );
         let current = arkret_wire::MlsGroupValue {
             effective_scope: scope.clone(),
             genesis_event_ref: base.clone(),
@@ -186,13 +193,18 @@ impl MlsFixture {
         let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
             "1.0",
             "application/json",
-            arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+            arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
             self.scope.clone(),
             EventKind::MessageCreate.as_str(),
             self.sender.epoch(),
-            self.state_ref.clone(),
+            (self.state_ref.clone()).clone(),
             self.sender.local_content_sender_domain().unwrap(),
             arkret_sdk::EventContentRoutingContext::None,
+            crate::test_support::content::material(
+                &self.sender,
+                EventKind::MessageCreate.as_str(),
+                &(self.state_ref.clone()),
+            ),
         )
         .unwrap();
         let payload = self.sender.encrypt_payload(header, body).unwrap();

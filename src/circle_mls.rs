@@ -127,7 +127,7 @@ pub(crate) fn build_remove_scope_rotate_draft(
         &realm_id,
         circle_id.as_deref(),
         actor_id,
-        &staged.envelope,
+        &staged,
     )?;
     Ok(CircleScopeRotateDraft {
         commit_event,

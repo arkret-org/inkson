@@ -3446,6 +3446,9 @@ mod tests {
                 &add.commit,
                 queued.event_id.clone(),
                 0x71,
+                group
+                    .pending_public_group_state_bytes(&add.commit, &binding)
+                    .unwrap(),
             );
             group
                 .install_recovered_own_commit(&accepted_commit, &queued.event_id)
@@ -4522,7 +4525,15 @@ mod tests {
         let commit = group
             .self_update_commit_with_governance_binding(&binding)
             .unwrap();
-        let payload = arkret_sdk::MlsCommitPayload::new(base.clone(), 1, &commit, binding).unwrap();
+        let payload = {
+            let public_material = group
+                .pending_public_group_state_bytes(&commit, &binding)
+                .unwrap();
+            let (info, tree) =
+                crate::test_support::content::public_refs(&public_material.0, &public_material.1);
+            arkret_sdk::MlsCommitPayload::new(base.clone(), 1, &commit, binding, info, tree)
+        }
+        .unwrap();
         let mut authored = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MlsCommit>::new(
             scope, actor, payload,
         )
@@ -4539,6 +4550,7 @@ mod tests {
         let submission = garth::QueuedSubmission::new(
             arkret_wire::AuthoritySubmitRequestBody::MlsCommit(arkret_wire::MlsCommitSubmission {
                 commit_event: authored.into_event(),
+                recovery_source: None,
                 welcomes: Vec::new(),
                 idempotency_key: arkret_wire::UuidV7::new(arkret_sdk::identifiers::uuid_v7_at(
                     crate::clock::now_unix_ms(),

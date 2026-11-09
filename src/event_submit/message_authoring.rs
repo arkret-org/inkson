@@ -79,6 +79,24 @@ fn classify_presubmit_failure(error: &anyhow::Error) -> MessageAuthoringFailure 
 }
 
 impl EventSubmitter {
+    pub(crate) async fn prepare_message_encryption_intent(
+        &self,
+        scope: arkret_sdk::ScopeRef,
+        message: &MessageAuthoringIntent,
+        created_at: chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<arkret_sdk::EventIntent> {
+        let operation = crate::operation::TypedOperationBuilder::new_for_actor::<
+            arkret_sdk::event_spec::MessageCreate,
+        >(
+            scope,
+            arkret_sdk::ActorId::account(self.authority()?.clone()),
+            message.payload(),
+        )
+        .target_ref(message.strand_id.as_str())
+        .created_at(created_at)
+        .build_sdk_event("inkson")?;
+        self.prepare_content_intent(operation.intent()).await
+    }
     /// Freeze one ordinary message against the target this client verified.
     ///
     /// The Station is not consulted here. A producer Event carries no
@@ -140,10 +158,91 @@ impl EventSubmitter {
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         tracing::warn!(stage = "authoring", "ordinary message pre-submit stage");
         let event = self
-            .author_intent(&event_intent)
+            .author_message_intent(&event_intent, &plan.intent)
             .await
             .map_err(|error| classify_presubmit_failure(&error))?;
         event_submission(&event).map_err(|error| failure(format!("{error}")))
+    }
+
+    async fn author_message_intent(
+        &self,
+        intent: &arkret_sdk::EventIntent,
+        message: &MessageAuthoringIntent,
+    ) -> anyhow::Result<arkret_sdk::AuthoredEvent> {
+        if !matches!(
+            message.content,
+            arkret_sdk::MessageAuthoringContent::Mls { .. }
+        ) {
+            return self.author_intent(intent).await;
+        }
+        let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
+        let session_epoch = crate::identity::device_directory::session_cache_epoch();
+        let authority = self.authority()?.clone();
+        let device = arkret_sdk::DeviceId::new(
+            fence
+                .signer
+                .device_id()
+                .ok_or_else(|| anyhow::anyhow!("encrypted message requires an active device"))?
+                .to_owned(),
+        )?;
+        let check = || -> anyhow::Result<()> {
+            fence.check()?;
+            self.ensure_device_authoring_fence(&authority, &device, &fence.signer, session_epoch)
+        };
+        check()?;
+        let prepared = self.prepare_authoring_intent(intent).await?;
+        check()?;
+        let suite = self.digest_suite_for_intent(&prepared)?;
+        let proof_context = self.event_proof_context(suite).await?;
+        check()?;
+        let directory_epoch = crate::identity::device_directory::cache_epoch();
+        let native = crate::identity::device_directory::authenticated_device_authoring_authority(
+            &self.http,
+            &authority,
+            &device,
+            &fence.signer,
+        )
+        .await?
+        .ok_or_else(|| {
+            anyhow::anyhow!("encrypted message producer has no current native authoring authority")
+        })?;
+        check()?;
+        anyhow::ensure!(
+            crate::identity::device_directory::cache_epoch() == directory_epoch
+                && crate::identity::device_directory::restore_persisted_device_authoring_authority(
+                    directory_epoch,
+                    &authority,
+                    &device,
+                    &native,
+                ),
+            "encrypted message native authoring authority changed during resolution"
+        );
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let store = self
+            .state_store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("encrypted message has no current local group store"))?;
+        let producer = store
+            .read(|state| {
+                crate::mls::runtime::current_local_content_endpoint(
+                    state,
+                    secure_store.as_ref(),
+                    &authority,
+                    &device,
+                    prepared.scope_ref(),
+                )
+            })
+            .map_err(|error| anyhow::anyhow!(error.user_message()))?;
+        anyhow::ensure!(
+            producer.authorization_event_ref == native.device_projection.device_authorize_event_id,
+            "encrypted message leaf differs from current native Device authorization"
+        );
+        prepared.validate_message_encryption_binding(message, &producer)?;
+        check()?;
+        let mut event = prepared.clone().author_with_digest_suite(suite)?;
+        self.sign_authored_event(&prepared, &mut event, proof_context)?;
+        check()?;
+        Ok(event)
     }
 
     async fn send_frozen_message(

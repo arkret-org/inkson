@@ -251,7 +251,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
     let commit_event = crate::mls::group_events::mls_commit_event_with_binding(
         &local_state,
         actor_id,
-        &staged.envelope,
+        &staged,
         &binding,
     )
     .map_err(|error| format!("building ak.mls.commit event failed: {error}"))?;

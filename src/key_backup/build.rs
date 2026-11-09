@@ -25,6 +25,8 @@ fn public_content_item(item: &SecretStorageSecret) -> anyhow::Result<SecretStora
     Ok(SecretStorageContentIndex {
         item_kind: item.item_kind,
         secret_id: item.secret_id.clone(),
+        root_ref: None,
+        root_context: None,
     })
 }
 
@@ -264,9 +266,11 @@ fn build_recovery_public_key_backup_body_for_items_and_index_in_series(
     let mut body = KeyBackup {
         backup_id: arkret_sdk::BackupId::new(backup_id.to_owned())?,
         actor_id: actor_id.clone(),
+        custodian_actor_id: None,
+        custody_authorization_ref: None,
         device_id: device_id.clone(),
         backup_kind: class,
-        mixed_secret_storage: false,
+        mixed_secret_storage: None,
         backup_version: "kb_1".to_owned(),
         created_at,
         updated_at: None,
@@ -296,11 +300,12 @@ fn build_recovery_public_key_backup_body_for_items_and_index_in_series(
         ciphertext_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))?,
         plaintext_commitment: None,
         signature_proof: arkret_sdk::KeyBackupSignatureProof {
-            device_id: auth.device_id.clone(),
+            device_id: Some(auth.device_id.clone()),
             verification_method: auth.verification_method.clone(),
             signature_algorithm: auth.signature_algorithm,
             signature: Base64UrlString::new("AA".to_owned()).map_err(anyhow::Error::msg)?,
-            device_authorize_event_id: auth.device_authorize_event_id.clone(),
+            device_authorize_event_id: Some(auth.device_authorize_event_id.clone()),
+            agent_authorization_event_ref: None,
         },
         retention: None,
         series_id: arkret_sdk::BackupSeriesId::new(
@@ -337,7 +342,8 @@ fn build_recovery_public_key_backup_body_for_items_and_index_in_series(
         series_id: body.series_id.clone(),
         series_sequence: body.series_sequence,
         backup_kind: class,
-        items: plaintext_items,
+        items: plaintext_items.into_iter().map(Into::into).collect(),
+        extra: Default::default(),
     };
     let plaintext_bytes = crate::canonical::canonical_json_bytes(&plaintext)?;
     let aad = arkret_crypto::backup::key_backup_aead_aad(&body)

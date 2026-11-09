@@ -44,7 +44,7 @@ pub struct ActorKey {
 /// Stored `ak.member.identity.update` event record. Carries the parsed
 /// SDK payload + the raw envelope (so we can re-hash it for replacement
 /// edge verification). `decryption_pending` is set when the carrier was
-/// an `encrypted_content` envelope we couldn't decrypt yet (missing MLS epoch).
+/// an `encrypted_payload` envelope whose authorized content root is unavailable.
 #[derive(Clone, Debug)]
 pub struct StoredIdentityEvent {
     pub event_id: String,
@@ -154,7 +154,7 @@ impl MemberIdentityStore {
             };
             // MID-4 hook: the carrier can be plaintext or encrypted. We
             // try to decode as `MemberIdentityUpdatePayload`; if the
-            // `identity_payload` is an `encrypted_content` envelope we still get
+            // `identity_payload` is an `encrypted_payload` envelope we still get
             // a valid typed value back (the `untagged` enum picks the
             // right arm), but the inner `MemberIdentity` is unavailable.
             let Ok(payload) =
@@ -164,7 +164,7 @@ impl MemberIdentityStore {
             };
             let decryption_pending = matches!(
                 payload.identity_payload,
-                IdentityPayloadCarrier::EncryptedContent { .. },
+                IdentityPayloadCarrier::EncryptedPayload { .. },
             );
             self.insert(
                 ActorKey {
@@ -624,16 +624,14 @@ mod tests {
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
         ));
         let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-        let encrypted = arkret_models_crypto::encrypted_envelope::EncryptedEnvelope {
-            version: "1.0".to_owned(),
-            content_type: "application/vnd.arkret.member-identity+json".to_owned(),
-            encryption_context: arkret_models_crypto::encrypted_envelope::EncryptedEnvelopeEncryptionContext::StandardMls {
-                epoch: 7,
-                group_state_ref: arkret_sdk::EventId::new("ak:event:AX9nZ3uX9PVPLzEzy8k3kAa76IhSmQF4MQHNkxYwnI8z").unwrap(),
-                routing_context: None,
-            },
-            ciphertext: "AQID".to_owned(),
-        };
+        // This test covers opaque carrier storage, not native Event admission
+        // or decryption of the independent cryptographic fixture's original.
+        let fixture =
+            arkret_schema_conformance::spec_json_artifact("fixtures/content-history-fixture.json")
+                .unwrap();
+        let encrypted: arkret_sdk::EncryptedEnvelope =
+            serde_json::from_value(fixture["kat"]["envelope"].clone()).unwrap();
+        encrypted.validate().unwrap();
         let event = json!({
             "event_id": "ak:event:ASyFf0qTUQ55a2qZp5fuTXRnIgf3ovKChQZ_XSkxdIPK",
             "kind": "ak.member.identity.update",
@@ -642,13 +640,13 @@ mod tests {
                 "member_id": actor_id,
                 "segment": "member_identity",
                 "identity_payload": {
-                    "encrypted_content": encrypted
+                    "encrypted_payload": encrypted
                 }
             }
         });
         serde_json::from_value::<MemberIdentityUpdatePayload>(event["payload"].clone()).unwrap();
         store.ingest_inline(realm, &actor_id, &[event]);
-        // MID-4: encrypted carrier without a usable MLS group state →
+        // MID-4: encrypted carrier without an authorized content root →
         // decryption_pending. The UI fallback path renders a muted
         // placeholder rather than the raw DID.
         assert!(store.current_identity(realm, &actor_id).is_none());

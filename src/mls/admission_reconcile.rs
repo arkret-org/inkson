@@ -114,11 +114,14 @@ async fn submit_mls_admission_for_invitee(
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let claim_request_id = crate::mls_api_helpers::generate_mls_claim_request_id()?;
     let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
+    let claim_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id.clone())?,
+    };
     let claim_outcome = mls_clients
         .mls()
         .claim_key_package(
             invitee_principal,
-            &realm_id,
+            &claim_scope,
             &actor_id,
             &device_id,
             Some(&claim_route.destination_id),

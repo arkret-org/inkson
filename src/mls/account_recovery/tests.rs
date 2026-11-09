@@ -194,6 +194,41 @@ fn wrap_then_unwrap_round_trips_the_secret() {
 }
 
 #[test]
+fn opened_backup_classes_cannot_be_substituted_even_with_the_same_unlock_material() {
+    let account = wrap();
+    let kek = crate::recovery_crypto::derive_vault_kek(PASSPHRASE).unwrap();
+    let private = build_mls_private_plaintext_backup_body_with_kek(
+        "ak:backup:01964137-0000-7000-8000-00000000c0aa",
+        &authority(),
+        DEVICE,
+        &kek,
+        b"private plaintext fixture",
+        &test_auth(),
+        &test_sign,
+        None,
+    )
+    .unwrap();
+    let private = key_backup_wire(&private);
+    assert_eq!(
+        decrypt_mls_private_plaintext_backup(PASSPHRASE, &private).unwrap(),
+        b"private plaintext fixture"
+    );
+    assert!(decrypt_mls_account_secret_backup(PASSPHRASE, &account).is_ok());
+    assert!(
+        decrypt_mls_account_secret_backup(PASSPHRASE, &private)
+            .unwrap_err()
+            .to_string()
+            .contains("different secret class")
+    );
+    assert!(
+        decrypt_mls_private_plaintext_backup(PASSPHRASE, &account)
+            .unwrap_err()
+            .to_string()
+            .contains("different secret class")
+    );
+}
+
+#[test]
 fn account_secret_without_plaintext_generation_fails_closed() {
     let kek = derive_vault_kek(PASSPHRASE).unwrap();
     let body = crate::key_backup::build_passphrase_kdf_backup_body(
@@ -207,6 +242,8 @@ fn account_secret_without_plaintext_generation_fails_closed() {
         &arkret_models_crypto::SecretStorageContentIndex {
             item_kind: super::backup_body::MLS_ACCOUNT_SECRET_ITEM_KIND,
             secret_id: MLS_ACCOUNT_SECRET_SECRET_ID.to_owned(),
+            root_ref: None,
+            root_context: None,
         },
         None,
         &test_auth(),
@@ -730,6 +767,8 @@ fn complete_account_only_recovery_material_allows_the_first_mls_backup() {
         &arkret_sdk::SecretStorageContentIndex {
             item_kind: arkret_sdk::SecretStorageItemKind::PrivateAccountState,
             secret_id: "account_state".to_owned(),
+            root_ref: None,
+            root_context: None,
         },
         b"private account state",
         None,

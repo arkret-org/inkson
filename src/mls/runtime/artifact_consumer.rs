@@ -1814,8 +1814,15 @@ mod tests {
         let envelope = group
             .self_update_commit_with_governance_binding(&binding)
             .unwrap();
-        let accepted =
-            crate::test_support::accepted_mls_commit_with_binding(actor, &envelope, binding, 53);
+        let accepted = crate::test_support::accepted_mls_commit_with_binding(
+            actor,
+            &envelope,
+            (binding).clone(),
+            53,
+            group
+                .pending_public_group_state_bytes(&envelope, &binding)
+                .unwrap(),
+        );
         let pending = serde_json::to_vec(&group.export_state_record().unwrap()).unwrap();
         let restore = || {
             arkret_sdk::ArkretMlsGroup::restore_from_state_record(
@@ -1933,7 +1940,16 @@ mod tests {
                 .unwrap(),
             ratchet_tree: None,
         };
-        let payload = arkret_sdk::MlsCommitPayload::new(base, 0, &envelope, binding).unwrap();
+        let payload = {
+            let public_material = {
+                let bytes = arkret_sdk::base64url_decode(&envelope.commit).unwrap();
+                (bytes.clone(), bytes)
+            };
+            let (info, tree) =
+                crate::test_support::content::public_refs(&public_material.0, &public_material.1);
+            arkret_sdk::MlsCommitPayload::new(base, 0, &envelope, binding, info, tree)
+        }
+        .unwrap();
         payload.validate().unwrap();
         serde_json::to_value(payload).unwrap()
     }

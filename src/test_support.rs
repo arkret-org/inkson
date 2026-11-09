@@ -10,6 +10,8 @@
 //! a malformed fixture, because a fixture that cannot be built is a broken test
 //! rather than a runtime condition worth propagating.
 
+pub(crate) mod content;
+
 /// Station used by fixtures that do not care which Station issued the account.
 /// Matches the literal the per-module helpers agreed on before unification.
 pub(crate) const STATION_ID: &str = "ak:did_core:web:principal.example";
@@ -86,6 +88,7 @@ pub(crate) fn accepted_mls_commit(
     envelope: &arkret_sdk::MlsCommitEnvelope,
     base_group_state_ref: arkret_sdk::EventId,
     commit_seed: u8,
+    public_material: (Vec<u8>, Vec<u8>),
 ) -> arkret_sdk::CommittedEventFullView {
     let binding = arkret_sdk::MlsGovernanceBindingPayload::new(
         effective_scope.clone(),
@@ -95,7 +98,7 @@ pub(crate) fn accepted_mls_commit(
         0,
     )
     .unwrap();
-    accepted_mls_commit_with_binding(actor_id, envelope, binding, commit_seed)
+    accepted_mls_commit_with_binding(actor_id, envelope, binding, commit_seed, public_material)
 }
 
 pub(crate) fn accepted_mls_commit_with_binding(
@@ -103,14 +106,18 @@ pub(crate) fn accepted_mls_commit_with_binding(
     envelope: &arkret_sdk::MlsCommitEnvelope,
     binding: arkret_sdk::MlsGovernanceBindingPayload,
     commit_seed: u8,
+    public_material: (Vec<u8>, Vec<u8>),
 ) -> arkret_sdk::CommittedEventFullView {
     let effective_scope = binding.effective_scope().clone();
     let base_group_state_ref = binding.base_group_state_ref().unwrap().clone();
+    let (info, tree) = content::public_refs(&public_material.0, &public_material.1);
     let payload = arkret_sdk::MlsCommitPayload::new(
         base_group_state_ref.clone(),
         binding.key_access_revision(),
         envelope,
         binding,
+        info,
+        tree,
     )
     .unwrap();
     let event = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MlsCommit>::new(
@@ -439,7 +446,7 @@ pub(crate) fn key_backup_summary_fixture(body: &serde_json::Value) -> arkret_sdk
         series_sequence: backup.series_sequence,
         supersedes_id: backup.supersedes_id.map(Some),
         supersedes_digest: backup.supersedes_digest,
-        expires_at: backup.expires_at.map(Some),
+        expires_at: backup.expires_at,
         created_at: backup.created_at,
         updated_at: backup.updated_at,
         ciphertext_digest: backup.ciphertext_digest,

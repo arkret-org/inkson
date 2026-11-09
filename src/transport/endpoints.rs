@@ -4,6 +4,9 @@ pub struct EndpointClients {
 }
 
 impl EndpointClients {
+    pub(crate) fn http(&self) -> &arkret_sdk::http_client::Client {
+        self.transport.http()
+    }
     pub fn new(transport: super::TransportClient) -> Self {
         Self { transport }
     }
@@ -311,7 +314,7 @@ impl MlsEndpoints<'_> {
     pub async fn claim_key_package(
         &self,
         target_principal_id: &str,
-        intended_realm_id: &str,
+        effective_scope: &arkret_sdk::ScopeRef,
         requester: &str,
         requester_device_id: &str,
         destination_id: Option<&str>,
@@ -338,7 +341,7 @@ impl MlsEndpoints<'_> {
             .map_err(anyhow::Error::msg)?;
         let body = crate::mls_api_helpers::build_mls_keypackage_claim_request(
             target_principal_id,
-            intended_realm_id,
+            effective_scope,
             requester,
             requester_device_id,
             &requester_device_authorize_event_id,

@@ -12,6 +12,7 @@ pub(crate) use checkpoint_port::{read_durable_checkpoint, read_durable_consumes}
 pub mod account_recovery;
 pub(crate) mod admission;
 pub(crate) mod admission_reconcile;
+pub(crate) mod content_roots;
 /// `epoch_update_required` repair: advance the MLS epoch so the Security Frontier
 /// covers the governance Seals a paused scope is missing.
 pub(crate) mod coverage_liveness;

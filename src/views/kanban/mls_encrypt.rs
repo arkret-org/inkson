@@ -23,6 +23,7 @@ pub(super) struct EncryptedWriteMlsEvents;
 /// established the epoch. Application content never substitutes a draft ref.
 #[derive(Debug)]
 pub(super) struct EncryptedPatchPlan {
+    frozen: Option<arkret_sdk::EventIntent>,
     patch: Value,
     paths: Vec<String>,
     payloads: Vec<Value>,
@@ -35,6 +36,7 @@ impl EncryptedPatchPlan {
     /// A plaintext write: nothing to seal.
     fn plaintext(patch: Value) -> Self {
         Self {
+            frozen: None,
             patch,
             paths: Vec::new(),
             payloads: Vec::new(),
@@ -119,6 +121,7 @@ fn active_scope_matches_write_identity(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn encrypt_private_card_detail_patch_values_for_effective_scope(
+    api: &crate::transport::TransportClient,
     patch: Value,
     realm_id: &str,
     strand_id: &str,
@@ -168,7 +171,49 @@ pub(super) async fn encrypt_private_card_detail_patch_values_for_effective_scope
         }
     }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    state_store.write(|store| {
+    let scope = match sidecar.and_then(|s| s.sidecar_id.as_ref()) {
+        Some(id) => arkret_sdk::ScopeRef::Sidecar {
+            realm_id: arkret_sdk::RealmId::new(realm_id).map_err(|e| e.to_string())?,
+            sidecar_id: id.clone(),
+        },
+        None => arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(realm_id).map_err(|e| e.to_string())?,
+        },
+    };
+    let operation =
+        build_card_detail_update_operation(realm_id, actor_id, strand_id, patch.clone())
+            .map_err(|e| e.to_string())?
+            .with_effective_scope(scope)
+            .map_err(|e| e.to_string())?;
+    let handle = state_store.handle();
+    let frozen = api
+        .event_submitter()
+        .map_err(|e| e.to_string())?
+        .with_authority(account_scope.authority.clone())
+        .with_state_store(handle.clone())
+        .prepare_content_intent(operation.intent())
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut materials = Vec::new();
+    for (path, bytes) in collect_encryptable_private_patch_values(&patch)? {
+        let path = format!(
+            "/payload/patch/{}/value",
+            kanban_encrypted_patch_path(&path)
+        );
+        materials.push(
+            crate::mls::content_roots::prepare_material(
+                api,
+                &handle,
+                &frozen,
+                &path,
+                KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
+                &bytes,
+            )
+            .await
+            .map_err(|e| e.to_string())?,
+        );
+    }
+    let (mut plan, events) = state_store.write(|store| {
         encrypt_private_card_detail_patch_values_with_store_for_effective_scope(
             patch,
             realm_id,
@@ -178,8 +223,11 @@ pub(super) async fn encrypt_private_card_detail_patch_values_for_effective_scope
             store,
             secure_store.as_ref(),
             sidecar,
+            &materials,
         )
-    })
+    })?;
+    plan.frozen = Some(frozen);
+    Ok((plan, events))
 }
 
 #[cfg(test)]
@@ -192,6 +240,29 @@ pub(super) async fn encrypt_private_card_detail_patch_values_with_store(
     state_store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Result<(EncryptedPatchPlan, EncryptedWriteMlsEvents), String> {
+    let scope = crate::test_support::content::scope(realm_id, None, None);
+    let reference = state_store
+        .mls_checkpoint_for_scope(&scope)
+        .and_then(|s| s.group_state_event_id)
+        .unwrap_or_else(|| {
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [1; 32])
+        });
+    let account = crate::test_support::authority(actor_id);
+    let device = crate::test_support::device_id(device_id);
+    let materials = collect_encryptable_private_patch_values(&patch)?
+        .iter()
+        .map(|_| {
+            crate::test_support::content::checkpoint_material(
+                state_store,
+                secure_store,
+                &account,
+                &device,
+                &scope,
+                event_kind_str::STRAND_UPDATE,
+                &reference,
+            )
+        })
+        .collect::<Vec<_>>();
     encrypt_private_card_detail_patch_values_with_store_for_effective_scope(
         patch,
         realm_id,
@@ -201,6 +272,7 @@ pub(super) async fn encrypt_private_card_detail_patch_values_with_store(
         state_store,
         secure_store,
         None,
+        &materials,
     )
 }
 
@@ -214,6 +286,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
     state_store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     sidecar: Option<&SidecarTrackWriteContext>,
+    materials: &[arkret_models_crypto::EventContentMaterial],
 ) -> Result<(EncryptedPatchPlan, EncryptedWriteMlsEvents), String> {
     let account_scope = crate::secure_key_store::active_device_seed_scope()
         .ok_or_else(|| "active account authority is unavailable".to_owned())?;
@@ -271,6 +344,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
             accepted_group_state_ref.clone(),
             None,
             sidecar_id,
+            materials,
         )
         .map_err(|err| err.user_message())?;
     let first_payload = encrypted_values
@@ -308,6 +382,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
     let paths = values.into_iter().map(|(path, _)| path).collect::<Vec<_>>();
     Ok((
         EncryptedPatchPlan {
+            frozen: None,
             patch,
             paths,
             payloads: encrypted_values,
@@ -476,7 +551,17 @@ pub(super) async fn dispatch_card_detail_update(
                 return false;
             }
         }
+        let api = match crate::transport::auth::authed_api_ready(&base_url, api_token.clone()).await
+        {
+            Ok(api) => api,
+            Err(error) => {
+                board_status
+                    .revise(|value| *value = format!("cannot prepare card encryption: {error}"));
+                return false;
+            }
+        };
         match encrypt_private_card_detail_patch_values_for_effective_scope(
+            &api,
             patch,
             &realm_id,
             &current.id,
@@ -512,6 +597,7 @@ pub(super) async fn dispatch_card_detail_update(
 
     // Publish the full overlay before the editor closes, rather than waiting
     // for the detached submit task's first poll to populate its content.
+    let mut frozen_content = patch_plan.frozen.clone();
     let sealed_patch = match patch_plan.seal(None, None) {
         Ok(patch) => patch,
         Err(error) => {
@@ -540,6 +626,17 @@ pub(super) async fn dispatch_card_detail_update(
                 sealed_patch,
             )?
             .with_effective_scope(source_scope.clone())?;
+            let operation = if let Some(frozen) = &frozen_content {
+                crate::operation::LocalOperation::new(
+                    frozen
+                        .clone()
+                        .with_typed_payload::<arkret_wire::event_spec::StrandUpdate>(
+                            operation.typed_payload::<arkret_wire::event_spec::StrandUpdate>()?,
+                        )?,
+                )
+            } else {
+                operation
+            };
             let authority = state_store
                 .read(|store| store.active_authority())
                 .ok_or_else(|| anyhow::anyhow!("active account authority is unavailable"))?;
@@ -560,11 +657,14 @@ pub(super) async fn dispatch_card_detail_update(
                 anyhow::bail!(reason);
             }
             let payload = intent.typed_payload::<arkret_wire::event_spec::StrandUpdate>()?;
-            Ok::<Value, anyhow::Error>(serde_json::to_value(payload.patch)?)
+            Ok::<_, anyhow::Error>((serde_json::to_value(payload.patch)?, intent))
         }
         .await;
         match prepared {
-            Ok(patch) => patch,
+            Ok((patch, intent)) => {
+                frozen_content = Some(intent);
+                patch
+            }
             Err(error) => {
                 board_status.revise(|value| {
                     *value = format!("cannot seal card metadata: {error:#}");
@@ -688,6 +788,28 @@ pub(super) async fn dispatch_card_detail_update(
                 sealed_patch,
             ) {
                 Ok(op) => {
+                    let op = if let Some(frozen) = frozen_content {
+                        frozen
+                            .with_typed_payload::<arkret_wire::event_spec::StrandUpdate>(
+                                match op.typed_payload::<arkret_wire::event_spec::StrandUpdate>() {
+                                    Ok(payload) => payload,
+                                    Err(error) => {
+                                        tracing::warn!(%error,"card payload installation failed");
+                                        return;
+                                    }
+                                },
+                            )
+                            .map(crate::operation::LocalOperation::new)
+                    } else {
+                        Ok(op)
+                    };
+                    let op = match op {
+                        Ok(op) => op,
+                        Err(error) => {
+                            tracing::warn!(%error,"frozen card payload installation failed");
+                            return;
+                        }
+                    };
                     let op = op.with_local_operation_id(local_operation_id);
                     match sidecar_effective_scope.as_ref() {
                         Some(effective_scope) if effective_scope == &source_scope => {

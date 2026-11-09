@@ -194,6 +194,7 @@ impl RecoveryPage {
                     backup_kind: None,
                     cursor,
                     limit: Some(50),
+                    agent_id: None,
                 })
                 .await
             })

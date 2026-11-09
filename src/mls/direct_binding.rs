@@ -153,21 +153,32 @@ pub(crate) fn participant_authoring_intent(
         );
     }
     anyhow::ensure!(
-        intent.executed_by().is_none()
-            && intent.authorization_ref().is_none()
-            && !intent
-                .semantic_refs()
-                .iter()
-                .any(|reference| reference.role == "direct_conversation_binding"
-                    || reference.role == "direct_conversation_founding_unit"),
-        "Direct intent already carries an authority"
+        intent.executed_by().is_none(),
+        "Direct intent cannot delegate its producer"
     );
+    let authorization =
+        arkret_sdk::AuthorizationRef::new(source.as_str()).map_err(anyhow::Error::msg)?;
+    let expected_ref = arkret_sdk::SemanticRef::new(reference.to_string(), role);
+    let mut authority_refs = intent.semantic_refs().iter().filter(|reference| {
+        reference.role == "direct_conversation_binding"
+            || reference.role == "direct_conversation_founding_unit"
+    });
+    let first = authority_refs.next();
+    if intent.authorization_ref().is_some() || first.is_some() {
+        // Revalidation uses the caller's newly resolved native current. A
+        // frozen ciphertext's outer bytes may never be silently rebound.
+        anyhow::ensure!(
+            intent.authorization_ref() == Some(&authorization)
+                && first == Some(&expected_ref)
+                && authority_refs.next().is_none(),
+            "frozen Direct authority differs from its exact current participant source"
+        );
+        return Ok(intent.clone());
+    }
     Ok(intent
         .clone()
-        .with_authorization_ref(
-            arkret_sdk::AuthorizationRef::new(source.as_str()).map_err(anyhow::Error::msg)?,
-        )
-        .with_semantic_ref(arkret_sdk::SemanticRef::new(reference.to_string(), role)))
+        .with_authorization_ref(authorization)
+        .with_semantic_ref(expected_ref))
 }
 static QUERIES: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<String, u64>>> =
     std::sync::OnceLock::new();
@@ -1314,10 +1325,49 @@ mod tests {
                 "direct_conversation_founding_unit",
             ),
         ] {
-            let signed_content = participant_authoring_intent(&message, source, &reference)
-                .unwrap()
+            let prepared = participant_authoring_intent(&message, source, &reference).unwrap();
+            let frozen = prepared.pre_encryption_outer_event().unwrap();
+            let revalidated = participant_authoring_intent(&prepared, source, &reference).unwrap();
+            assert_eq!(revalidated, prepared);
+            assert_eq!(revalidated.pre_encryption_outer_event().unwrap(), frozen);
+            let stale = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [79; 32]);
+            assert!(participant_authoring_intent(&prepared, source, &stale).is_err());
+            let other_source =
+                if source == arkret_wire::AuthoritySourceId::DirectConversationParticipantV1 {
+                    arkret_wire::AuthoritySourceId::DirectConversationBootstrapParticipantV1
+                } else {
+                    arkret_wire::AuthoritySourceId::DirectConversationParticipantV1
+                };
+            assert!(participant_authoring_intent(&prepared, other_source, &reference).is_err());
+            assert!(
+                participant_authoring_intent(
+                    &prepared.clone().with_optional_authorization_ref(None),
+                    source,
+                    &reference,
+                )
+                .is_err()
+            );
+            assert!(
+                participant_authoring_intent(
+                    &prepared
+                        .clone()
+                        .with_semantic_ref(arkret_sdk::SemanticRef::new(
+                            reference.to_string(),
+                            role
+                        )),
+                    source,
+                    &reference,
+                )
+                .is_err()
+            );
+            let signed_content = revalidated
                 .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
                 .unwrap();
+            assert_eq!(
+                arkret_models_crypto::EventContentMaterial::outer_event_for(signed_content.event())
+                    .unwrap(),
+                frozen
+            );
             assert_eq!(
                 signed_content.authorization_ref.as_ref().unwrap().as_str(),
                 source.as_str()

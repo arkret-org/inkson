@@ -5,6 +5,38 @@ use crate::secure_key_store::MemorySecureKeyStore;
 use crate::state::isolated_store_for_tests as temp_state_store;
 use crate::test_support as fixture;
 
+#[allow(clippy::too_many_arguments)]
+fn encrypt_reaction_with_device_snapshot(
+    state: &mut crate::state::LocalStateStore,
+    secure: &dyn crate::secure_key_store::SecureKeyStore,
+    realm: &str,
+    account: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    target: &arkret_sdk::EventId,
+    at: chrono::DateTime<chrono::Utc>,
+    emoji: &str,
+) -> Result<EncryptedReaction, MlsRuntimeError> {
+    let scope = fixture::content::scope(realm, None, None);
+    let reference = state
+        .mls_checkpoint_for_scope(&scope)
+        .and_then(|s| s.group_state_event_id)
+        .unwrap_or_else(|| target.clone());
+    let mut material = fixture::content::checkpoint_material(
+        state,
+        secure,
+        account,
+        device,
+        &scope,
+        arkret_wire::event_kind_str::REACTION_ADD,
+        &reference,
+    );
+    material.outer_event["created_at"] =
+        serde_json::json!(arkret_sdk::canonical::format_timestamp_canonical(at));
+    crate::mls::runtime::encrypt_reaction_with_device_snapshot(
+        state, secure, realm, account, device, target, at, emoji, material,
+    )
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn retired_minimal_metadata_marker_rejects_reaction_before_checkpoint_access() {

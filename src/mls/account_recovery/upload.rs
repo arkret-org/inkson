@@ -44,7 +44,7 @@ fn typed_backup_predecessor(previous: &Value) -> Result<arkret_sdk::KeyBackup> {
         .map_err(|error| anyhow!("typed key backup predecessor: {error}"))
 }
 
-fn active_recovery_backup_recipient(
+pub(super) fn active_recovery_backup_recipient(
     policy: &arkret_sdk::RecoveryPolicySummary,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
@@ -125,7 +125,7 @@ fn active_recovery_backup_recipient(
 // establishes it a few lines earlier. Rewriting them as `?` would add
 // error paths no caller can reach.
 #[allow(clippy::expect_used)]
-async fn ensure_initial_active_series(
+pub(super) async fn ensure_initial_active_series(
     api: &crate::transport::TransportClient,
     control_realm: &arkret_sdk::RealmId,
     authority: &arkret_sdk::AccountId,
@@ -273,7 +273,7 @@ fn ensure_current_tail_signer(
     Ok(())
 }
 
-async fn fetch_active_series_tail(
+pub(super) async fn fetch_active_series_tail(
     api: &crate::transport::TransportClient,
     list_payload: &Value,
     actor_id: &str,
@@ -336,6 +336,7 @@ async fn fetch_active_series_tail(
             &http,
             &source,
             &list.active_series.account_id,
+            &list.active_series.control_realm_id,
             &body,
         )
         .await?;
@@ -480,9 +481,9 @@ pub async fn upload_mls_account_secret_backup_with_recovery_key(
     device_id: &str,
     recovery_key: &str,
 ) -> Result<String> {
-    let (_recovery_private_key, recovery_public_key) =
-        crate::hpke_backup::derive_recovery_keypair_from_recovery_key(recovery_key)
-            .map_err(|err| anyhow!("derive recovery HPKE keypair: {err}"))?;
+    let recovery_public_key =
+        crate::hpke_backup::derive_recovery_public_key_from_recovery_key(recovery_key)
+            .map_err(|err| anyhow!("derive recovery HPKE public key: {err}"))?;
     crate::runtime_helpers::boxed_future(|| {
         upload_mls_account_secret_backup_with_recovery_public_key(
             api,
@@ -889,93 +890,129 @@ mod tests {
     }
 
     #[test]
-    fn upload_envelope_verifies_actual_device_signature_and_exact_accepted_authorization() {
+    fn backup_signature_uses_original_authorization_without_current_device_freshness() {
+        use base64::Engine as _;
+        use ed25519_dalek::Signer as _;
+
         let (bodies, list) = sealed_chain();
-        let now = crate::clock::now_utc();
-        let key = ed25519_dalek::SigningKey::from_bytes(&[42; 32]);
-        let projection = arkret_sdk::VerifiedDeviceProjection {
-            device_signing_key_did: arkret_sdk::DidKey::new(format!(
-                "did:key:{}",
-                arkret_sdk::ed25519_pubkey_to_did_key_multibase(&key.verifying_key().to_bytes())
-            ))
-            .unwrap(),
-            hpke_key: arkret_sdk::NonEmptyString::new("fixture-hpke-key").unwrap(),
-            device_authorize_event_id: bodies[0].signature_proof.device_authorize_event_id.clone(),
-            authorized_generation_ref: 1,
-            device_status: arkret_sdk::DeviceStatus::Active,
-            attested_at: now - chrono::Duration::seconds(1),
-            expires_at: now + chrono::Duration::minutes(1),
-            authorization_window: arkret_sdk::DeviceAuthorizationWindow {
-                not_before: bodies[0].created_at - chrono::Duration::seconds(1),
-                expires_at: None,
-            },
+        let account = &list.active_series.account_id;
+        let reference = bodies[0]
+            .signature_proof
+            .device_authorize_event_id
+            .as_ref()
+            .unwrap();
+        // These are signature/payload binding controls; only the production
+        // bound GET/scan consumer qualifies an actual accepted PCR original.
+        let original = |seed: u8| {
+            let key = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+            let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
+                [seed; 32],
+                "did:web:alice.example",
+                "did:web:alice.example#device",
+            );
+            let mut payload = crate::identity::principal_genesis::build_founding_authorize_payload(
+                arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+                account.station_id.clone(),
+                bodies[0].signature_proof.device_id.clone().unwrap(),
+                format!(
+                    "did:key:{}",
+                    arkret_sdk::ed25519_pubkey_to_did_key_multibase(
+                        &key.verifying_key().to_bytes()
+                    )
+                ),
+                "fixture-hpke-key".into(),
+                bodies[0].created_at - chrono::Duration::hours(1),
+                &signer,
+            )
+            .unwrap();
+            payload.expires_at = Some(Some(bodies[0].created_at + chrono::Duration::seconds(1)));
+            let input = payload.device_possession_signature_input(account).unwrap();
+            payload.device_signature = arkret_sdk::SignatureMaterial::NonEmptyString(
+                arkret_sdk::NonEmptyString::new(
+                    base64::engine::general_purpose::URL_SAFE_NO_PAD
+                        .encode(key.sign(&input).to_bytes()),
+                )
+                .unwrap(),
+            );
+            payload
         };
+        let authorization = original(42);
         let verify = |body: &arkret_sdk::KeyBackup,
-                      projection: &arkret_sdk::VerifiedDeviceProjection| {
-            super::super::current_basis::verify_envelope_projection(
-                body,
-                &list.active_series.account_id,
-                projection,
-                1,
-                now,
+                      payload: &arkret_sdk::DeviceAuthorizePayload| {
+            super::super::current_basis::verify_envelope_authorization(
+                body, account, reference, payload,
             )
         };
         assert!(
             bodies[0].source_commit_ref.is_none(),
             "optional source checkpoint is not invented"
         );
-        verify(&bodies[0], &projection)
-            .expect("genuine device signature under exact accepted authorization");
-        let mut wrong = projection.clone();
-        wrong.device_authorize_event_id =
-            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [9; 32]);
         assert!(
-            verify(&bodies[0], &wrong)
-                .unwrap_err()
-                .to_string()
-                .contains("historical authorization")
+            authorization.expires_at.flatten().unwrap()
+                < bodies[0].created_at + chrono::Duration::days(1)
         );
-        let mut wrong = projection.clone();
-        wrong.device_signing_key_did = arkret_sdk::DidKey::new(format!(
-            "did:key:{}",
-            arkret_sdk::ed25519_pubkey_to_did_key_multibase(
-                &ed25519_dalek::SigningKey::from_bytes(&[43; 32])
-                    .verifying_key()
-                    .to_bytes()
-            )
-        ))
-        .unwrap();
+        verify(&bodies[0], &authorization)
+            .expect("original signature remains valid at a later historical read");
+        let other_ref = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [9; 32]);
         assert!(
-            verify(&bodies[0], &wrong)
+            super::super::current_basis::verify_envelope_authorization(
+                &bodies[0],
+                account,
+                &other_ref,
+                &authorization,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("historical authorization")
+        );
+        assert!(
+            verify(&bodies[0], &original(43))
                 .unwrap_err()
                 .to_string()
                 .contains("signature is invalid")
         );
-        let mut wrong = projection.clone();
-        wrong.authorization_window.not_before = bodies[0].created_at + chrono::Duration::seconds(1);
+
+        let mut wrong = authorization.clone();
+        wrong.not_before = bodies[0].created_at + chrono::Duration::milliseconds(1);
+        let key = ed25519_dalek::SigningKey::from_bytes(&[42; 32]);
+        wrong.device_signature = arkret_sdk::SignatureMaterial::NonEmptyString(
+            arkret_sdk::NonEmptyString::new(
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+                    key.sign(&wrong.device_possession_signature_input(account).unwrap())
+                        .to_bytes(),
+                ),
+            )
+            .unwrap(),
+        );
         assert!(
             verify(&bodies[0], &wrong)
                 .unwrap_err()
                 .to_string()
                 .contains("authorization window")
         );
+        let mut wrong = authorization.clone();
+        wrong.device_public_key_did =
+            arkret_sdk::NonEmptyString::new(original(43).device_public_key_did.to_string())
+                .unwrap();
+        assert!(
+            verify(&bodies[0], &wrong)
+                .unwrap_err()
+                .to_string()
+                .contains("possession")
+        );
+
         let mut wrong = bodies[0].clone();
+        let key_did = authorization.device_public_key_did.as_str();
         wrong.signature_proof.verification_method = arkret_sdk::DidUrl::new(format!(
-            "{}#{}",
-            projection.device_signing_key_did,
-            projection
-                .device_signing_key_did
-                .as_str()
-                .strip_prefix("did:key:")
-                .unwrap()
+            "{key_did}#{}",
+            key_did.strip_prefix("did:key:").unwrap(),
         ))
         .unwrap();
         assert!(
-            verify(&wrong, &projection)
+            verify(&wrong, &authorization)
                 .unwrap_err()
                 .to_string()
-                .contains("complete Account/device"),
-            "key DID does not alias the Account principal"
+                .contains("complete Account/device")
         );
         let mut wrong = bodies[0].clone();
         wrong.source_commit_ref = Some(arkret_sdk::KeyBackupSourceCommitRef {
@@ -983,7 +1020,7 @@ mod tests {
             device_generation_ref: 2,
         });
         assert!(
-            verify(&wrong, &projection)
+            verify(&wrong, &authorization)
                 .unwrap_err()
                 .to_string()
                 .contains("historical generation")

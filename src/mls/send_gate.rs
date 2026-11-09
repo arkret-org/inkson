@@ -781,14 +781,23 @@ mod tests {
         )
         .unwrap();
         let mut group = identity.create_group(&scope()).unwrap();
+        group
+            .install_local_creator_binding(
+                actor(),
+                Some(arkret_sdk::EventId::from_digest(
+                    arkret_sdk::DigestSuite::Sha256,
+                    [0x71; 32],
+                )),
+            )
+            .unwrap();
         let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
             "1.0",
             "application/json",
-            arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+            arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
             scope(),
             kind,
             group.epoch(),
-            event(2),
+            (event(2)).clone(),
             group.local_content_sender_domain().unwrap(),
             if kind == arkret_sdk::EventKind::ReactionAdd.as_str() {
                 arkret_sdk::EventContentRoutingContext::Reaction {
@@ -799,6 +808,7 @@ mod tests {
             } else {
                 arkret_sdk::EventContentRoutingContext::None
             },
+            crate::test_support::content::material(&group, kind, &(event(2))),
         )
         .unwrap();
         let payload = group.encrypt_payload(header, b"{}").unwrap();

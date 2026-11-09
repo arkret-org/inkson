@@ -100,40 +100,20 @@ pub(super) fn test_encrypted_content_envelope(
     realm_id: &str,
     ciphertext: &str,
 ) -> arkret_sdk::EncryptedEnvelope {
-    let scope = arkret_sdk::ScopeRef::Realm {
-        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).expect("fixture realm id"),
+    let fixture =
+        arkret_schema_conformance::spec_json_artifact("fixtures/content-history-fixture.json")
+            .unwrap();
+    let mut envelope: arkret_sdk::EncryptedEnvelope =
+        serde_json::from_value(fixture["kat"]["envelope"].clone()).unwrap();
+    let arkret_models_crypto::EncryptedEnvelopeEncryptionContext::EpochContent { epoch, .. } =
+        &mut envelope.encryption_context;
+    *epoch = 1;
+    let _scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
     };
-    let group_state_ref =
-        arkret_sdk::EventId::new("ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM")
-            .expect("fixture group-state Event id");
-    let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
-        "1.0",
-        KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
-        arkret_wire::EncryptedPayloadScheme::MlsRfc9420,
-        scope.clone(),
-        "ak.strand.update",
-        1,
-        group_state_ref,
-        "ak:device:fixture",
-        arkret_sdk::EventContentRoutingContext::None,
-    )
-    .expect("fixture pre-encryption header");
-    let payload_digest =
-        arkret_sdk::EncryptedPayload::payload_digest_for_header(&header, ciphertext.to_owned())
-            .expect("fixture payload digest");
-    let payload = arkret_sdk::EncryptedPayload {
-        scheme: arkret_wire::EncryptedPayloadScheme::MlsRfc9420,
-        group_id: scope
-            .canonical_mls_group_id()
-            .expect("fixture MLS group id"),
-        epoch: 1,
-        content_type: KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE.to_owned(),
-        ciphertext: ciphertext.to_owned(),
-        pre_encryption_header: header,
-        payload_digest,
-    };
-    arkret_sdk::mls::encrypted_envelope_from_payload(&payload)
-        .expect("canonical encrypted_content envelope")
+    envelope.content_type = KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE.into();
+    envelope.ciphertext = ciphertext.to_owned();
+    envelope
 }
 
 /// Helper for `relocate_card` tests — builds a KanbanCard with the

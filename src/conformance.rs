@@ -518,6 +518,57 @@ async fn observe_call_projection_with_account(
 /// Exercise the ordinary native send ratchet and authored plaintext retention.
 /// The checkpoint must already represent an actually accepted Sidecar transition.
 #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub async fn prepare_private_sidecar_content(
+    host: &crate::sync_engine::NativeAccountHost,
+    original: &arkret_sdk::Event,
+    content: &[u8],
+    metadata: &[u8],
+) -> anyhow::Result<(
+    arkret_models_crypto::EventContentMaterial,
+    arkret_models_crypto::EventContentMaterial,
+)> {
+    anyhow::ensure!(
+        original.kind == arkret_sdk::EventKind::MessageCreate
+            && matches!(original.scope_ref, arkret_sdk::ScopeRef::Sidecar { .. }),
+        "native private content requires a Sidecar MessageCreate"
+    );
+    let state = host.state_store_handle();
+    let api = crate::transport::TransportClient::from_http(
+        host.call_http_client(),
+        crate::transport::RequestContext::new(""),
+    );
+    let intent = arkret_sdk::EventIntent::from_authored(original);
+    let prepared = crate::event_submit::EventSubmitter::new(host.call_http_client())
+        .with_authority(host.active_account_context().authority)
+        .with_state_store(state.clone())
+        .prepare_content_intent(&intent)
+        .await?;
+    anyhow::ensure!(
+        prepared.pre_encryption_outer_event()? == intent.pre_encryption_outer_event()?,
+        "private request authority must be frozen before encryption"
+    );
+    let body = crate::mls::content_roots::prepare_material(
+        &api,
+        &state,
+        &prepared,
+        "/payload/encrypted_content",
+        arkret_sdk::MESSAGE_CONTENT_BLOCK_MLS_CONTENT_TYPE,
+        content,
+    )
+    .await?;
+    let metadata = crate::mls::content_roots::prepare_material(
+        &api,
+        &state,
+        &prepared,
+        "/payload/encrypted_metadata",
+        arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE,
+        metadata,
+    )
+    .await?;
+    Ok((body, metadata))
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
 pub fn encrypt_private_sidecar_request(
     store: &mut crate::LocalStateStore,
     account: &arkret_sdk::AccountId,
@@ -526,6 +577,8 @@ pub fn encrypt_private_sidecar_request(
     group_state_ref: arkret_sdk::EventId,
     content: &[u8],
     metadata: &[u8],
+    content_material: arkret_models_crypto::EventContentMaterial,
+    metadata_material: arkret_models_crypto::EventContentMaterial,
 ) -> anyhow::Result<(arkret_sdk::EncryptedPayload, arkret_sdk::EncryptedPayload)> {
     let arkret_sdk::ScopeRef::Sidecar {
         realm_id,
@@ -550,6 +603,8 @@ pub fn encrypt_private_sidecar_request(
         None,
         None,
         Some(sidecar_id),
+        content_material,
+        Some(metadata_material),
     )
     .map_err(|error| anyhow::anyhow!("native Sidecar encryption: {error:?}"))?;
     Ok((

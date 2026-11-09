@@ -34,6 +34,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 #[cfg(test)]
 use zeroize::Zeroize as _;
+use zeroize::Zeroizing;
 
 /// Output of [`hpke_seal`]: the RFC 9180 DHKEM encapsulated key (`enc`, the
 /// 32-byte ephemeral X25519 public key) and the AEAD ciphertext (`ct+tag`, no
@@ -70,17 +71,32 @@ pub fn generate_recovery_keypair() -> Result<(Vec<u8>, Vec<u8>)> {
 /// Deterministically derive the X25519 recovery keypair from the canonical
 /// 24-word Recovery Key. This binds the HPKE private key to the offline
 /// recovery credential instead of creating a second random secret.
-pub fn derive_recovery_keypair_from_recovery_key(recovery_key: &str) -> Result<(Vec<u8>, Vec<u8>)> {
-    let canonical = crate::recovery_crypto::normalize_recovery_key_input(recovery_key)
-        .ok_or_else(|| anyhow!("recovery key must be a canonical 24-word BIP-39 mnemonic"))?;
-    let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
-        &canonical, "", 0,
-    )
-    .map_err(|err| anyhow!("derive identity recovery key material: {err}"))?;
+fn recovery_material(
+    recovery_key: &str,
+) -> Result<arkret_sdk::identity_root::IdentityRecoveryKeyMaterial> {
+    let canonical = Zeroizing::new(
+        crate::recovery_crypto::normalize_recovery_key_input(recovery_key)
+            .ok_or_else(|| anyhow!("recovery key must be a canonical 24-word BIP-39 mnemonic"))?,
+    );
+    arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(&canonical, "", 0)
+        .map_err(|err| anyhow!("derive identity recovery key material: {err}"))
+}
+
+pub fn derive_recovery_keypair_from_recovery_key(
+    recovery_key: &str,
+) -> Result<(Zeroizing<Vec<u8>>, Vec<u8>)> {
+    let key_material = recovery_material(recovery_key)?;
     Ok((
-        key_material.backup_hpke_serialized_private_key.to_vec(),
+        Zeroizing::new(key_material.backup_hpke_serialized_private_key.to_vec()),
         key_material.backup_hpke_public_key.to_vec(),
     ))
+}
+
+/// A sealing caller never receives a private-key copy to retain across I/O.
+pub fn derive_recovery_public_key_from_recovery_key(recovery_key: &str) -> Result<Vec<u8>> {
+    Ok(recovery_material(recovery_key)?
+        .backup_hpke_public_key
+        .to_vec())
 }
 
 /// RFC 9180 base-mode seal `plaintext` to `recipient_public_key`, delegating to
@@ -212,10 +228,16 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            first.0,
-            identity_material.backup_hpke_serialized_private_key
+            first.0.as_slice(),
+            identity_material
+                .backup_hpke_serialized_private_key
+                .as_slice()
         );
         assert_eq!(first.1, identity_material.backup_hpke_public_key);
+        assert_eq!(
+            first.1,
+            derive_recovery_public_key_from_recovery_key(&mnemonic).unwrap()
+        );
 
         let other = derive_recovery_keypair_from_recovery_key(
             &crate::recovery_crypto::format_recovery_key(&[8u8; 32]),

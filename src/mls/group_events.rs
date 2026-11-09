@@ -174,6 +174,7 @@ pub(crate) struct MlsCommitBasis {
     governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
     commit_envelope: arkret_sdk::MlsCommitEnvelope,
     covers_key_access_revision: u64,
+    public_refs: (arkret_sdk::BlobRef, arkret_sdk::BlobRef),
 }
 
 impl MlsCommitBasis {
@@ -185,6 +186,8 @@ impl MlsCommitBasis {
             self.covers_key_access_revision,
             &self.commit_envelope,
             self.governance_binding,
+            self.public_refs.0,
+            self.public_refs.1,
         )
         .map_err(|err| format!("MLS commit payload failed: {err}"))?;
         crate::operation::ak_ops::mls_commit_with_governance(
@@ -204,7 +207,7 @@ pub(crate) fn mls_commit_basis_from_store(
     realm_id: &str,
     circle_id: Option<&str>,
     actor_id: &str,
-    commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    staged: &crate::mls::runtime::StagedMlsCommit,
     sidecar_id: Option<&arkret_sdk::SidecarId>,
 ) -> Result<MlsCommitBasis, String> {
     // `previous_epoch` MUST be the SDK group's PRE-commit epoch so the
@@ -213,6 +216,7 @@ pub(crate) fn mls_commit_basis_from_store(
     // merges the pending commit before reading it), so the pre-commit epoch is
     // exactly one less. Deriving it from any refreshed view instead drifts
     // whenever the local group has advanced past the last observed epoch.
+    let commit_envelope = &staged.envelope;
     let previous_epoch = commit_envelope.epoch.saturating_sub(1);
     let effective_scope = effective_scope_for(realm_id, circle_id, sidecar_id)?;
     let base_group_state_ref = state_store.mls_group_state_ref_for_scope(
@@ -235,6 +239,7 @@ pub(crate) fn mls_commit_basis_from_store(
         covers_key_access_revision: governance_binding.key_access_revision(),
         governance_binding,
         commit_envelope: commit_envelope.clone(),
+        public_refs: staged.public_refs()?,
     })
 }
 
@@ -242,15 +247,9 @@ pub(crate) fn mls_commit_event_from_store(
     state_store: &LocalStateStore,
     realm_id: &str,
     actor_id: &str,
-    commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    staged: &crate::mls::runtime::StagedMlsCommit,
 ) -> Result<crate::operation::LocalOperation, String> {
-    mls_commit_event_from_store_for_effective_scope(
-        state_store,
-        realm_id,
-        None,
-        actor_id,
-        commit_envelope,
-    )
+    mls_commit_event_from_store_for_effective_scope(state_store, realm_id, None, actor_id, staged)
 }
 
 pub(crate) fn mls_commit_event_from_store_for_effective_scope(
@@ -258,25 +257,18 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope(
     realm_id: &str,
     circle_id: Option<&str>,
     actor_id: &str,
-    commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    staged: &crate::mls::runtime::StagedMlsCommit,
 ) -> Result<crate::operation::LocalOperation, String> {
-    mls_commit_basis_from_store(
-        state_store,
-        realm_id,
-        circle_id,
-        actor_id,
-        commit_envelope,
-        None,
-    )?
-    .build()
+    mls_commit_basis_from_store(state_store, realm_id, circle_id, actor_id, staged, None)?.build()
 }
 
 pub(crate) fn mls_commit_event_with_binding(
     state: &LocalStateStore,
     actor_id: &str,
-    envelope: &arkret_sdk::MlsCommitEnvelope,
+    staged: &crate::mls::runtime::StagedMlsCommit,
     binding: &arkret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<crate::operation::LocalOperation, String> {
+    let envelope = &staged.envelope;
     binding.validate().map_err(|error| error.to_string())?;
     let base = state.mls_group_state_ref_for_scope(
         binding.effective_scope(),
@@ -296,6 +288,7 @@ pub(crate) fn mls_commit_event_with_binding(
         base_group_state_ref: base,
         governance_binding: binding.clone(),
         commit_envelope: envelope.clone(),
+        public_refs: staged.public_refs()?,
         covers_key_access_revision: binding.key_access_revision(),
     }
     .build()

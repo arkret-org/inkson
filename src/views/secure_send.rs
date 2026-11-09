@@ -380,6 +380,8 @@ pub(crate) fn run_local_mls_encrypt(
     expected_sender_domain: Option<&str>,
     circle_id: Option<&str>,
     sidecar_id: Option<&arkret_sdk::SidecarId>,
+    content_material: arkret_models_crypto::EventContentMaterial,
+    metadata_material: Option<arkret_models_crypto::EventContentMaterial>,
 ) -> Result<LocalMlsEncryptResult, crate::mls::runtime::MlsRuntimeError> {
     serde_json::from_slice::<arkret_sdk::ContentBlock>(plaintext_bytes).map_err(|error| {
         crate::mls::runtime::MlsRuntimeError::Serialize(format!(
@@ -406,6 +408,8 @@ pub(crate) fn run_local_mls_encrypt(
         expected_sender_domain,
         circle_id,
         sidecar_id,
+        content_material,
+        metadata_material,
     )
 }
 
@@ -423,6 +427,8 @@ pub(crate) fn run_local_mls_encrypt_for_event(
     expected_sender_domain: Option<&str>,
     circle_id: Option<&str>,
     sidecar_id: Option<&arkret_sdk::SidecarId>,
+    content_material: arkret_models_crypto::EventContentMaterial,
+    metadata_material: Option<arkret_models_crypto::EventContentMaterial>,
 ) -> Result<LocalMlsEncryptResult, crate::mls::runtime::MlsRuntimeError> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let realm_id_typed = arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|error| {
@@ -471,6 +477,8 @@ pub(crate) fn run_local_mls_encrypt_for_event(
             expected_sender_domain,
             circle_id,
             sidecar_id,
+            content_material,
+            metadata_material,
         )
     })
 }
@@ -501,6 +509,7 @@ pub(crate) type SecureControlPlan = Box<
 
 /// One ordinary message, ready to be completed by the account's own Station.
 pub(crate) struct SecureMessageAuthoring {
+    pub created_at: chrono::DateTime<chrono::Utc>,
     pub strand_id: String,
     pub blob_refs: Vec<String>,
     pub reply_to: Option<String>,
@@ -548,7 +557,7 @@ pub(crate) struct SecureSendBuild {
 /// `metadata`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn build_secure_send(
-    _api: &crate::transport::TransportClient,
+    api: &crate::transport::TransportClient,
     state_store: &crate::runtime::input::StateStoreHandle,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
@@ -589,6 +598,54 @@ pub(crate) async fn build_secure_send(
         .map_err(|e| format!("private ContentBlock: {e}"))?
         .referenced_blobs()
         .map_err(|e| format!("private attachment references: {e}"))?;
+    let created_at = crate::clock::now_utc_millis();
+    let plaintext_message = crate::views::chat::model::chat_message_authoring_intent(
+        strand_id,
+        arkret_sdk::MessageAuthoringContent::Plaintext {
+            content: serde_json::from_slice(plaintext_bytes).map_err(|e| e.to_string())?,
+            metadata: metadata_plaintext_bytes
+                .map(serde_json::from_slice)
+                .transpose()
+                .map_err(|e| e.to_string())?,
+        },
+        reply_to,
+    )
+    .map_err(|e| e.to_string())?;
+    let submitter = api
+        .event_submitter()
+        .map_err(|e| e.to_string())?
+        .with_authority(authority.clone())
+        .with_state_store(state_store.clone());
+    let frozen = submitter
+        .prepare_message_encryption_intent(effective_scope.clone(), &plaintext_message, created_at)
+        .await
+        .map_err(|e| e.to_string())?;
+    let material = crate::mls::content_roots::prepare_material(
+        api,
+        state_store,
+        &frozen,
+        "/payload/encrypted_content",
+        arkret_sdk::MESSAGE_CONTENT_BLOCK_MLS_CONTENT_TYPE,
+        plaintext_bytes,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let metadata_material = if let Some(bytes) = metadata_plaintext_bytes {
+        Some(
+            crate::mls::content_roots::prepare_material(
+                api,
+                state_store,
+                &frozen,
+                "/payload/encrypted_metadata",
+                arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE,
+                bytes,
+            )
+            .await
+            .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
     let encryption = run_local_mls_encrypt(
         state_store,
         realm_id,
@@ -599,6 +656,8 @@ pub(crate) async fn build_secure_send(
         None,
         circle_id,
         sidecar_id.as_ref(),
+        material,
+        metadata_material,
     )
     .map_err(|error| error.user_message())?;
 
@@ -638,10 +697,8 @@ pub(crate) async fn build_secure_send(
                 "MLS encrypted payload group-state reference changed after sealing".to_owned(),
             );
         }
-        // The frozen binding the ciphertext was sealed under. It travels with
-        // the request so the Station can only complete an Event that reproduces
-        // it: scheme, effective scope and sender domain are compared verbatim
-        // before this device signs anything.
+        // Keep the exact sealed outer bytes and endpoint for local authoring.
+        // Native producer qualification is independently checked before signing.
         let encryption_context = arkret_sdk::MessageEncryptionContext {
             scheme: encrypted_payload.pre_encryption_header.scheme.clone(),
             effective_scope: plan_scope,
@@ -649,6 +706,19 @@ pub(crate) async fn build_secure_send(
                 .pre_encryption_header
                 .sender_domain
                 .clone(),
+            producer: encrypted_payload
+                .pre_encryption_header
+                .material
+                .content_context
+                .producer
+                .clone(),
+            outer_event_digest: arkret_sdk::Hash::new(
+                arkret_sdk::canonical::canonical_sha256(
+                    &encrypted_payload.pre_encryption_header.material.outer_event,
+                )
+                .map_err(|error| format!("frozen message outer digest: {error}"))?,
+            )
+            .map_err(|error| format!("frozen message outer digest: {error}"))?,
         };
         let encrypted_content =
             arkret_sdk::mls::encrypted_envelope_from_payload(&encrypted_payload)
@@ -672,6 +742,7 @@ pub(crate) async fn build_secure_send(
 
     Ok(SecureSendBuild {
         message_plan: SecureWritePlan::Message(SecureMessageAuthoring {
+            created_at,
             strand_id: strand_id.to_owned(),
             blob_refs: attachment_refs,
             reply_to: reply_to
@@ -692,10 +763,11 @@ pub(crate) async fn build_secure_send(
 /// closed.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn build_sidecar_exchange_control_send(
+    api: &crate::transport::TransportClient,
     state_store: &crate::runtime::input::StateStoreHandle,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
-    actor: &str,
+    _actor: &str,
     device_id: &arkret_sdk::DeviceId,
     source_strand_id: &str,
     sidecar_id: arkret_sdk::SidecarId,
@@ -706,6 +778,45 @@ pub(crate) async fn build_sidecar_exchange_control_send(
         .map_err(|error| format!("Sidecar exchange control validation failed: {error}"))?;
     let plaintext = serde_json::to_vec(control)
         .map_err(|error| format!("Sidecar exchange control encode failed: {error}"))?;
+    let effective_scope = arkret_sdk::ScopeRef::Sidecar {
+        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|e| e.to_string())?,
+        sidecar_id: sidecar_id.clone(),
+    };
+    let draft =
+        arkret_sdk::EventContentDraft::<arkret_sdk::event_spec::AgentSidecarExchangeControl>::new(
+            effective_scope.clone(),
+            arkret_sdk::ActorId::account(authority.clone()),
+            crate::clock::now_utc_millis(),
+        )
+        .map_err(|e| e.to_string())?
+        .with_semantic_refs(
+            control
+                .basis_event_ids
+                .iter()
+                .map(|id| arkret_sdk::SemanticRef::new(id.to_string(), "after"))
+                .collect(),
+        );
+    let prepared = api
+        .event_submitter()
+        .map_err(|e| e.to_string())?
+        .with_authority(authority.clone())
+        .with_state_store(state_store.clone())
+        .prepare_content_intent(draft.intent())
+        .await
+        .map_err(|e| e.to_string())?;
+    let draft = draft
+        .with_prepared_outer(prepared)
+        .map_err(|e| e.to_string())?;
+    let material = crate::mls::content_roots::prepare_material(
+        api,
+        state_store,
+        draft.intent(),
+        "/payload/encrypted_payload",
+        "application/vnd.arkret.agent-sidecar-exchange-control+json",
+        &plaintext,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     let encryption = run_local_mls_encrypt_for_event(
         state_store,
         realm_id,
@@ -719,17 +830,14 @@ pub(crate) async fn build_sidecar_exchange_control_send(
         None,
         None,
         Some(&sidecar_id),
+        material,
+        None,
     )
     .map_err(|error| error.user_message())?;
     let encrypted_payload = encryption.content;
     if encryption.metadata.is_some() || encryption.member_ids.is_empty() {
         return Err("Sidecar close produced an invalid MLS author result".to_owned());
     }
-    let effective_scope = arkret_sdk::ScopeRef::Sidecar {
-        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
-            .map_err(|error| format!("Sidecar close Realm id invalid: {error}"))?,
-        sidecar_id: sidecar_id.clone(),
-    };
     let base_group_state_ref = state_store
         .read(|store| {
             store.mls_group_state_ref_for_scope(
@@ -742,14 +850,6 @@ pub(crate) async fn build_sidecar_exchange_control_send(
     let source_strand_id = arkret_sdk::StrandId::new(source_strand_id.to_owned())
         .map_err(|error| format!("Sidecar close source Strand invalid: {error}"))?;
     let plan_sidecar_id = sidecar_id;
-    let plan_refs: Vec<arkret_sdk::SemanticRef> = control
-        .basis_event_ids
-        .iter()
-        .map(|event_id| arkret_sdk::SemanticRef::new(event_id.to_string(), "after"))
-        .collect();
-    let plan_realm_id = realm_id.to_owned();
-    let plan_actor = actor.to_owned();
-    let plan_scope = effective_scope.clone();
     let message_local_operation_id = crate::operation::LocalOperationId::new();
     let plan_local_operation_id = message_local_operation_id.clone();
     let message_plan: SecureControlPlan = Box::new(move |_accepted_commit| {
@@ -772,14 +872,13 @@ pub(crate) async fn build_sidecar_exchange_control_send(
             },
             encrypted_payload,
         };
-        crate::operation::TypedOperationBuilder::new::<
-            arkret_sdk::event_spec::AgentSidecarExchangeControl,
-        >(&plan_realm_id, &plan_actor, payload)
-        .semantic_refs(plan_refs)
-        .effective_scope(plan_scope)
-        .build_sdk_event("inkson")
-        .map(|operation| operation.with_local_operation_id(plan_local_operation_id))
-        .map_err(|error| format!("Sidecar close SDK Event conversion failed: {error}"))
+        draft
+            .install_payload(payload)
+            .map(|intent| {
+                crate::operation::LocalOperation::new(intent)
+                    .with_local_operation_id(plan_local_operation_id)
+            })
+            .map_err(|error| format!("Sidecar close SDK Event conversion failed: {error}"))
     });
     Ok(SecureSendBuild {
         message_plan: SecureWritePlan::Control(message_plan),
@@ -877,6 +976,7 @@ pub(crate) async fn submit_secure_send(
                 authoring.reply_to.as_deref(),
                 message_local_operation_id.to_string(),
                 authoring.blob_refs,
+                authoring.created_at,
             )
             .await
             {

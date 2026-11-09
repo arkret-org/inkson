@@ -251,10 +251,17 @@ async fn resume_ceremony_inner(
         let verified = evidence.clone();
         let owned = record.clone();
         let check = fence.clone();
-        crate::runtime::boxed_future_from(|| {
+        let history_custody = crate::runtime::boxed_future_from(|| {
             with_authed_api(&base, credential.clone(), move |api| async move {
                 check_holder(&owned, &check)?;
-                crate::recovery_flow::verify_recovery_authority_evidence(&api, &verified).await
+                crate::recovery_flow::verify_recovery_authority_evidence(&api, &verified).await?;
+                let policy = crate::recovery_flow::fetch_active_recovery_policy(&api)
+                    .await?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Agent history custody recovery policy is absent")
+                    })?;
+                check_holder(&owned, &check)?;
+                history_custody_for_policy(&owned.authority, &policy)
             })
         })
         .await
@@ -306,6 +313,7 @@ async fn resume_ceremony_inner(
             arkret_bootstrap::AgentProvisionIntentOptions {
                 controller_station_id: record.authority.station_id.clone(),
                 created_at: crate::clock::now_utc(),
+                history_custody,
             },
         )?;
         let intent = arkret_event_draft::EventIntent::from_authored(&draft);

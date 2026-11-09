@@ -1626,6 +1626,7 @@ async fn drive_sidecar_completion_closes(
             return Ok(());
         }
         let mut build = crate::views::secure_send::build_sidecar_exchange_control_send(
+            &api,
             &state_store.handle(),
             &realm,
             &authority,

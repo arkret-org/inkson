@@ -232,7 +232,7 @@ pub(crate) fn mls_keypackage_claim_required_capabilities()
 
 pub(crate) fn build_mls_keypackage_claim_request(
     target_principal_id: &str,
-    intended_realm_id: &str,
+    effective_scope: &arkret_sdk::ScopeRef,
     requester: &str,
     requester_device_id: &str,
     requester_device_authorize_event_id: &arkret_sdk::EventId,
@@ -254,7 +254,7 @@ pub(crate) fn build_mls_keypackage_claim_request(
     let verification_method = signer.verification_method_for_principal(&requester_did)?;
     build_mls_keypackage_claim_request_with_requester(
         target_principal_id,
-        intended_realm_id,
+        effective_scope,
         requester_core_id,
         ClaimRequester::Device {
             requester_device_id: arkret_sdk::DeviceId::new(requester_device_id.trim().to_owned())?,
@@ -283,7 +283,7 @@ enum ClaimRequester<'a> {
 #[allow(clippy::too_many_arguments)]
 fn build_mls_keypackage_claim_request_with_requester(
     target_principal_id: &str,
-    intended_realm_id: &str,
+    effective_scope: &arkret_sdk::ScopeRef,
     requester: arkret_sdk::DidCoreId,
     requester_authority: ClaimRequester<'_>,
     source_id: &str,
@@ -338,9 +338,11 @@ fn build_mls_keypackage_claim_request_with_requester(
             .map_err(anyhow::Error::msg)?,
         target_account_id,
         requester_account_id,
-        intended_realm_id: arkret_sdk::RealmId::new(crate::operation::trim_realm_id(
-            intended_realm_id,
-        ))?,
+        intended_realm_id: effective_scope
+            .realm_id_opt()
+            .ok_or_else(|| anyhow::anyhow!("KeyPackage claim requires an executable scope"))?
+            .clone(),
+        effective_scope: effective_scope.clone(),
         mls_group_id: arkret_sdk::MlsGroupId::new(mls_group_id.trim())
             .map_err(anyhow::Error::msg)?,
         claim_purpose: arkret_sdk::PeerKeyPackageClaimPurpose::RealmMembership,
@@ -406,6 +408,7 @@ fn build_mls_keypackage_claim_request_with_requester(
         target_account_id: unsigned.target_account_id,
         requester_account_id: unsigned.requester_account_id,
         intended_realm_id: unsigned.intended_realm_id,
+        effective_scope: unsigned.effective_scope,
         mls_group_id: unsigned.mls_group_id,
         claim_purpose: unsigned.claim_purpose,
         required_capabilities: unsigned.required_capabilities,

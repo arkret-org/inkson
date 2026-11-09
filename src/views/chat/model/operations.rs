@@ -249,7 +249,8 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
 /// is encrypted. On any MLS failure in an encrypted channel the reaction is
 /// dropped (returns `None`) rather than leaking the emoji in plaintext.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_chat_reaction_add_operation(
+pub(crate) async fn build_chat_reaction_add_operation(
+    api: &TransportClient,
     state_store: crate::presentation::SharedStateStore,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
@@ -266,6 +267,26 @@ pub(crate) fn build_chat_reaction_add_operation(
     let target_ref = arkret_sdk::EventId::new(event_id.to_owned())
         .map_err(|error| anyhow::anyhow!("invalid reaction target Event id: {error}"))?;
     let created_at = crate::clock::now_utc();
+    let draft = chat_reaction_add_operation(&realm_id, actor, event_id, emoji)?
+        .into_intent()
+        .with_created_at(created_at);
+    let handle = state_store.handle();
+    let frozen = api
+        .event_submitter()?
+        .with_authority(authority.clone())
+        .with_state_store(handle.clone())
+        .prepare_content_intent(&draft)
+        .await?;
+    let plaintext = serde_json::to_vec(&serde_json::json!({"key":emoji}))?;
+    let material = crate::mls::content_roots::prepare_material(
+        api,
+        &handle,
+        &frozen,
+        "/payload/encrypted_payload",
+        crate::mls::runtime::REACTION_ENCRYPTED_CONTENT_TYPE,
+        &plaintext,
+    )
+    .await?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let sealed = match state_store.write(|store| {
         crate::mls::runtime::encrypt_reaction_with_device_snapshot(
@@ -277,6 +298,7 @@ pub(crate) fn build_chat_reaction_add_operation(
             &target_ref,
             created_at,
             emoji,
+            material,
         )
     }) {
         Ok(sealed) => sealed,
@@ -286,15 +308,19 @@ pub(crate) fn build_chat_reaction_add_operation(
         &sealed.encrypted_payload,
     )
     .map_err(|error| anyhow::anyhow!("reaction encrypted envelope build failed: {error}"))?;
-    chat_reaction_add_operation_encrypted(
+    let operation = chat_reaction_add_operation_encrypted(
         &realm_id,
         actor,
         event_id,
         &sealed.routing_tag,
         &encrypted_payload,
         created_at,
-    )
-    .map(Some)
+    )?;
+    Ok(Some(crate::operation::LocalOperation::new(
+        frozen.with_typed_payload::<arkret_sdk::event_spec::ReactionAdd>(
+            operation.typed_payload::<arkret_sdk::event_spec::ReactionAdd>()?,
+        )?,
+    )))
 }
 
 pub(crate) fn is_schema_message_id(value: &str) -> bool {
@@ -567,6 +593,7 @@ pub(crate) async fn send_ordinary_chat_message(
         reply_to,
         local_operation_id,
         Vec::new(),
+        crate::clock::now_utc_millis(),
     )
     .await
 }
@@ -581,6 +608,7 @@ pub(crate) async fn send_ordinary_chat_message_with_blob_refs(
     reply_to: Option<&str>,
     local_operation_id: String,
     blob_refs: Vec<String>,
+    created_at: chrono::DateTime<chrono::Utc>,
 ) -> std::result::Result<EventSubmissionProgress, garth::MessageAuthoringFailure> {
     let refused = |error: anyhow::Error| garth::MessageAuthoringFailure::Refused {
         code: "failed_precondition".to_owned(),
@@ -601,12 +629,7 @@ pub(crate) async fn send_ordinary_chat_message_with_blob_refs(
         }
         intent.blob_refs = blob_refs;
     }
-    let session = submitter.message_authoring_session(
-        realm_id,
-        scope,
-        intent,
-        crate::clock::now_utc_millis(),
-    )?;
+    let session = submitter.message_authoring_session(realm_id, scope, intent, created_at)?;
     crate::event_submit::drive_message_send(
         &submitter,
         crate::event_submit::MessageSendAttempt {

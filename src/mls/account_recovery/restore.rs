@@ -232,6 +232,7 @@ pub async fn fetch_mls_restore_payload(
             backup_kind: None,
             cursor: None,
             limit: Some(1),
+            agent_id: None,
         })
         .await?;
     let current = discovery.active_series;
@@ -250,6 +251,7 @@ pub async fn fetch_mls_restore_payload(
             backup_kind: Some(kind),
             cursor: None,
             limit: Some(200),
+            agent_id: None,
         };
         let mut seen = std::collections::BTreeSet::new();
         loop {

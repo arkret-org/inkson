@@ -20,11 +20,28 @@ use crate::secure_key_store::SecureKeyStore;
 
 /// The staged result of one authored MLS transition.
 pub struct StagedMlsCommit {
+    pub public_material: (Vec<u8>, Vec<u8>),
     /// The wire Commit the `ak.mls.commit` Event carries.
     pub envelope: arkret_sdk::MlsCommitEnvelope,
     /// The encrypted group state holding the pending commit, persisted before
     /// submission so acceptance can always be merged.
     pub staged_checkpoint: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
+}
+
+impl StagedMlsCommit {
+    pub(crate) fn public_refs(&self) -> Result<(arkret_sdk::BlobRef, arkret_sdk::BlobRef), String> {
+        let reference = |bytes: &[u8]| {
+            arkret_sdk::BlobRef::new(format!(
+                "ak:blob:{}",
+                crate::canonical::sha256_digest(bytes)
+            ))
+            .map_err(|e| e.to_string())
+        };
+        Ok((
+            reference(&self.public_material.0)?,
+            reference(&self.public_material.1)?,
+        ))
+    }
 }
 
 fn staged_checkpoint(
@@ -131,6 +148,9 @@ pub(crate) fn build_sidecar_access_commit(
     }
     .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
     Ok(StagedMlsCommit {
+        public_material: group
+            .pending_public_group_state_bytes(&envelope, binding)
+            .map_err(|e| MlsRuntimeError::Commit(e.to_string()))?,
         envelope,
         staged_checkpoint: staged_checkpoint(&group, scope.realm_id().as_str(), &secret)?,
     })
@@ -213,6 +233,9 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
     let staged_checkpoint = staged_checkpoint(&group, realm_id, &secret)?;
     Ok(StagedMlsCommit {
+        public_material: group
+            .pending_public_group_state_bytes(&envelope, &binding)
+            .map_err(|e| MlsRuntimeError::Commit(e.to_string()))?,
         envelope,
         staged_checkpoint,
     })
@@ -249,6 +272,9 @@ pub(crate) fn force_epoch_rotation_commit_with_binding(
         .self_update_commit_with_governance_binding(binding)
         .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
     Ok(StagedMlsCommit {
+        public_material: group
+            .pending_public_group_state_bytes(&envelope, binding)
+            .map_err(|e| MlsRuntimeError::Commit(e.to_string()))?,
         envelope,
         staged_checkpoint: staged_checkpoint(&group, realm_id, &secret)?,
     })
@@ -309,6 +335,9 @@ pub(crate) fn build_mls_remove_actors_commit_for_scope(
     Ok((
         remove,
         StagedMlsCommit {
+            public_material: group
+                .pending_public_group_state_bytes(&envelope, &governance_binding)
+                .map_err(|e| MlsRuntimeError::Commit(e.to_string()))?,
             envelope,
             staged_checkpoint,
         },
@@ -407,6 +436,9 @@ pub(crate) fn build_add_member_commit_with_binding(
     Ok((
         add,
         StagedMlsCommit {
+            public_material: group
+                .pending_public_group_state_bytes(&envelope, &governance_binding)
+                .map_err(|e| MlsRuntimeError::Commit(e.to_string()))?,
             envelope,
             staged_checkpoint,
         },
@@ -484,6 +516,9 @@ pub fn build_idle_self_update_commit(
     let staged_checkpoint =
         staged_checkpoint(&group, realm_id, &secret)?.with_app_messages_observed(0);
     Ok(Some(StagedMlsCommit {
+        public_material: group
+            .pending_public_group_state_bytes(&envelope, &binding)
+            .map_err(|e| MlsRuntimeError::Commit(e.to_string()))?,
         envelope,
         staged_checkpoint,
     }))
@@ -560,6 +595,9 @@ pub(crate) fn build_sidecar_reconciliation_commit_with_binding(
     }
     .map_err(|e| MlsRuntimeError::Commit(e.to_string()))?;
     Ok(StagedMlsCommit {
+        public_material: group
+            .pending_public_group_state_bytes(&envelope, binding)
+            .map_err(|e| MlsRuntimeError::Commit(e.to_string()))?,
         envelope,
         staged_checkpoint: staged_checkpoint(&group, realm, &secret)?,
     })

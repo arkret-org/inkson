@@ -230,7 +230,7 @@ pub(crate) fn build_admission_events_with_binding(
         Some(binding) => crate::mls::group_events::mls_commit_event_with_binding(
             state_store,
             &actor_id,
-            &staged.envelope,
+            &staged,
             binding,
         )?,
         None => crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
@@ -238,7 +238,7 @@ pub(crate) fn build_admission_events_with_binding(
             realm_id.as_str(),
             circle_id.as_deref(),
             &actor_id,
-            &staged.envelope,
+            &staged,
         )?,
     };
     let welcome_scope = effective_scope.clone();
@@ -594,6 +594,9 @@ mod tests {
             claim_request_id: arkret_sdk::Base64UrlString::new(claim_request_id.to_owned())
                 .unwrap(),
             target_account_id: Some(claim.actor_id.as_account_id().unwrap().clone()),
+            effective_scope: arkret_sdk::ScopeRef::Realm {
+                realm_id: intended_realm_id.clone(),
+            },
             intended_realm_id,
             requester_account_id: Some(arkret_sdk::AccountId::new(
                 crate::mls_api_helpers::principal_core_id(requester).unwrap(),

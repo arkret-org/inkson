@@ -64,14 +64,13 @@ fn keypackage_claim_request_carries_required_capabilities() {
         arkret_sdk::EventId::new("ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc").unwrap();
     let realm_id =
         arkret_sdk::RealmId::new("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk").unwrap();
-    let group_id = arkret_sdk::ScopeRef::Realm {
+    let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: realm_id.clone(),
-    }
-    .canonical_mls_group_id()
-    .unwrap();
+    };
+    let group_id = scope.canonical_mls_group_id().unwrap();
     let body = mls_api_helpers::build_mls_keypackage_claim_request(
         "did:web:alice.example",
-        realm_id.as_str(),
+        &scope,
         "ak:did_core:web:bob.example",
         requester_device_id,
         &requester_device_authorize_event_id,
@@ -85,6 +84,8 @@ fn keypackage_claim_request_carries_required_capabilities() {
     .expect("claim request builds");
 
     let expected = mls_api_helpers::mls_keypackage_claim_required_capabilities().unwrap();
+    assert_eq!(body.effective_scope, scope);
+    assert_eq!(body.unsigned_request().effective_scope, scope);
     assert_eq!(body.required_capabilities, expected);
     assert_eq!(
         body.requester_account_id
@@ -132,7 +133,7 @@ fn keypackage_claim_request_carries_required_capabilities() {
     .unwrap();
     let agent_body = mls_api_helpers::build_mls_keypackage_claim_request(
         "ak:did_core:web:agent.example",
-        realm_id.as_str(),
+        &scope,
         "ak:did_core:web:bob.example",
         requester_device_id,
         &requester_device_authorize_event_id,
@@ -179,7 +180,12 @@ fn keypackage_claim_request_rejects_cross_principal_signer() {
 
     let error = mls_api_helpers::build_mls_keypackage_claim_request(
         "ak:did_core:web:alice.example",
-        "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
+        &arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
+            )
+            .unwrap(),
+        },
         "ak:did_core:web:mallory.example",
         "ak:device:0196419b-0000-7000-8000-000000000002",
         &requester_device_authorize_event_id,
@@ -198,4 +204,91 @@ fn keypackage_claim_request_rejects_cross_principal_signer() {
             .contains("does not project to the KeyPackage claim requester"),
         "unexpected error: {error}"
     );
+}
+
+#[test]
+fn keypackage_claim_preserves_subscope_and_rejects_mismatched_group() {
+    use base64::Engine as _;
+    use ed25519_dalek::Verifier as _;
+
+    let seed = [46u8; 32];
+    let signer = std::sync::Arc::new(
+        crate::event_signer::build_ed25519_signer_with_verification_method(
+            seed,
+            "did:web:bob.example",
+            "did:web:bob.example#device",
+        ),
+    );
+    let _guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
+    let authorize =
+        arkret_sdk::EventId::new("ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc").unwrap();
+    let realm_id =
+        arkret_sdk::RealmId::new("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk").unwrap();
+    let realm_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: realm_id.clone(),
+    };
+    let scopes = [
+        arkret_sdk::ScopeRef::Circle {
+            realm_id: realm_id.clone(),
+            circle_id: arkret_sdk::CircleId::from_event_id(&authorize),
+        },
+        arkret_sdk::ScopeRef::Sidecar {
+            realm_id,
+            sidecar_id: arkret_sdk::SidecarId::from_event_id(&authorize),
+        },
+    ];
+    let build = |scope: &arkret_sdk::ScopeRef, group: &str| {
+        mls_api_helpers::build_mls_keypackage_claim_request(
+            "ak:did_core:web:alice.example",
+            scope,
+            "ak:did_core:web:bob.example",
+            "ak:device:0196419b-0000-7000-8000-000000000002",
+            &authorize,
+            "ak:did_core:web:source.example",
+            "ak:did_core:web:destination.example",
+            "AAAAAAAAAAAAAAAAAAAAAA",
+            Some("ak:device:0196419b-0000-7000-8000-000000000001"),
+            group,
+            None,
+        )
+    };
+    let key = ed25519_dalek::SigningKey::from_bytes(&seed).verifying_key();
+    let realm_group = realm_scope.canonical_mls_group_id().unwrap();
+    for scope in scopes {
+        let group = scope.canonical_mls_group_id().unwrap();
+        let body = build(&scope, group.as_str()).unwrap();
+        assert_eq!(body.effective_scope, scope);
+        assert_eq!(body.unsigned_request().effective_scope, scope);
+        let unsigned = body.unsigned_request();
+        let input = arkret_sdk::keypackage_claim_authorization_signing_bytes(
+            &unsigned,
+            &body.service_binding,
+            &body.requester_authorization,
+        )
+        .unwrap();
+        let arkret_sdk::PeerKeyPackageRequesterAuthorization::Device { signature, .. } =
+            &body.requester_authorization
+        else {
+            unreachable!()
+        };
+        let proof = ed25519_dalek::Signature::from_slice(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(signature.signature.as_str())
+                .unwrap(),
+        )
+        .unwrap();
+        key.verify(&input, &proof).unwrap();
+        let mut redirected = unsigned;
+        redirected.effective_scope = realm_scope.clone();
+        redirected.mls_group_id = realm_group.clone();
+        let altered = arkret_sdk::keypackage_claim_authorization_signing_bytes(
+            &redirected,
+            &body.service_binding,
+            &body.requester_authorization,
+        )
+        .unwrap();
+        assert!(key.verify(&altered, &proof).is_err());
+        assert!(build(&scope, realm_group.as_str()).is_err());
+    }
+    assert!(build(&arkret_sdk::ScopeRef::RealmGenesis, realm_group.as_str()).is_err());
 }

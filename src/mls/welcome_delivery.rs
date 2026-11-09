@@ -293,12 +293,22 @@ mod tests {
             commit_digest: Hash::new(arkret_sdk::canonical::sha256_digest(commit_bytes)).unwrap(),
             ratchet_tree: None,
         };
-        let payload = arkret_sdk::MlsCommitPayload::new(
-            EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [9; 32]),
-            0,
-            &envelope,
-            binding,
-        )
+        let payload = {
+            let public_material = {
+                let bytes = arkret_sdk::base64url_decode(&envelope.commit).unwrap();
+                (bytes.clone(), bytes)
+            };
+            let (info, tree) =
+                crate::test_support::content::public_refs(&public_material.0, &public_material.1);
+            arkret_sdk::MlsCommitPayload::new(
+                EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [9; 32]),
+                0,
+                &envelope,
+                binding,
+                info,
+                tree,
+            )
+        }
         .unwrap();
         arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MlsCommit>::new(
             scope(),

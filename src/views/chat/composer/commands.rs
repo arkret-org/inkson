@@ -216,6 +216,10 @@ pub(super) fn upload_dropped_attachments(
                                 encryption_algorithm: arkret_crypto::blob_aead::ALG_STREAM_XCHACHA
                                     .into(),
                                 content_key_salt: salt.clone(),
+                                producer: store.read(|s| crate::mls::runtime::current_local_content_endpoint(
+                                    s,crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
+                                    &account.authority,&account.device_id,&scope,
+                                )).map_err(|e| anyhow::anyhow!(e.user_message()))?,
                             }),
                             Some(checkpoint),
                             Some(current.public_tree_ref),
@@ -274,7 +278,7 @@ pub(super) fn upload_dropped_attachments(
                         content: object.prepared.as_ref().map(|p|p.content.clone()).unwrap_or_else(||arkret_sdk::ContentBlock::new(arkret_sdk::ContentBlockKind::File, object.filename.clone())), pending: !object.uploaded}));
                 }
                 if object.prepared.is_none() {
-                    let prepared = object.prepare(&chunks).await?;
+                    let prepared = object.prepare(&chunks,Some(clients.http())).await?;
                     object = vault
                         .freeze_prepared_attachment(&object.id, prepared)
                         .await?;

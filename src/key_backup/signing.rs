@@ -37,7 +37,7 @@ pub(crate) fn backup_matches_summary(
         && backup.supersedes_digest == summary.supersedes_digest
         && backup.created_at == summary.created_at
         && backup.updated_at == summary.updated_at
-        && backup.expires_at == summary.expires_at.flatten()
+        && backup.expires_at == summary.expires_at
         && backup.encryption.recipient_method == summary.encryption.recipient_method
         && backup.encryption.recipient_key_ref == summary.encryption.recipient_key_ref
 }
@@ -162,6 +162,9 @@ pub fn build_key_backup_unlock_proof(
                 && challenge.ciphertext_digest == backup.ciphertext_digest
                 && challenge.audience.as_str() == audience
                 && challenge.service_id == account.station_id
+                && challenge.subject_actor_id.is_none()
+                && challenge.custody_authorization_ref.is_none()
+                && challenge.content_history.is_none()
                 && challenge.operation
                     == arkret_wire::ServiceOperationId::SELF_KEYS_BACKUPS_COMMAND_UNLOCK_V1
                 && challenge.issued_at <= issued_at
@@ -182,6 +185,9 @@ pub fn build_key_backup_unlock_proof(
         schema: arkret_sdk::KeyBackupUnlockProof::SCHEMA.to_owned(),
         authority,
         account_id: account.clone(),
+        subject_actor_id: None,
+        custody_authorization_ref: None,
+        content_history: None,
         requesting_device_id: device_id,
         backup_id: backup.backup_id.clone(),
         backup_kind: backup.backup_kind,
@@ -355,6 +361,9 @@ async fn fetch_key_backup_with_unlock_proof(
     } else {
         let issued = if recovery_session.is_none() {
             let request = arkret_sdk::KeysBackupsIssueUnlockChallengeRequestBody {
+                subject_actor_id: None,
+                custody_authorization_ref: None,
+                content_history: None,
                 request_id: arkret_sdk::Base64UrlString::new(
                     B64.encode(crate::operation::uuid_v7().as_bytes()),
                 )
@@ -611,6 +620,9 @@ mod tests {
         let account = backup.actor_id.as_account_id().unwrap().clone();
         let now = crate::clock::now_utc_canonical();
         let challenge = arkret_sdk::KeysBackupsUnlockChallenge {
+            subject_actor_id: None,
+            custody_authorization_ref: None,
+            content_history: None,
             challenge_id: arkret_sdk::Base64UrlString::new("A".repeat(22)).unwrap(),
             challenge: arkret_sdk::Base64UrlString::new("A".repeat(43)).unwrap(),
             nonce: arkret_sdk::Base64UrlString::new(B64.encode([1u8; 16])).unwrap(),

@@ -990,7 +990,7 @@ pub(super) fn dispatch_calendar_rsvp(
     {
         let task_context = app.clone();
         spawn_write(task_context, async move {
-            let built = (|| {
+            let built = async {
                 let [schedule_basis_event] = schedule_basis_refs.as_slice() else {
                     anyhow::bail!(
                         "calendar_schedule_unavailable - expected exactly one schedule Event"
@@ -1002,23 +1002,26 @@ pub(super) fn dispatch_calendar_rsvp(
                 let active = crate::secure_key_store::active_device_seed_scope()
                     .ok_or_else(|| anyhow::anyhow!("active RSVP device is unavailable"))?;
                 let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                state_store.write(|store| {
-                    crate::calendar::build_encrypted_calendar_rsvp_event(
-                        store,
-                        secure_store.as_ref(),
-                        &build_realm_id,
-                        &actor,
-                        &active.device_id,
-                        &strand_id,
-                        status,
-                        (!occurrence.trim().is_empty()
-                            && !calendar.recurrence_frequency.trim().is_empty())
-                        .then_some(occurrence.trim()),
-                        &fields,
-                        schedule_basis_event.clone(),
-                    )
-                })
-            })();
+                let api = crate::transport::auth::authed_api_ready(&base_url, submit_token.clone())
+                    .await?;
+                crate::calendar::build_encrypted_calendar_rsvp_event(
+                    &api,
+                    &state_store.handle(),
+                    secure_store.as_ref(),
+                    &build_realm_id,
+                    &actor,
+                    &active.device_id,
+                    &strand_id,
+                    status,
+                    (!occurrence.trim().is_empty()
+                        && !calendar.recurrence_frequency.trim().is_empty())
+                    .then_some(occurrence.trim()),
+                    &fields,
+                    schedule_basis_event.clone(),
+                )
+                .await
+            }
+            .await;
             match built {
                 Ok(event) => {
                     let operation_id = event.local_operation_id().to_string();

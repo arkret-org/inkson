@@ -8,6 +8,83 @@ use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore, SecureKeySto
 use crate::state::isolated_store_for_tests as temp_state_store;
 use crate::test_support as fixture;
 
+// The legacy test call shape prepares genuine epoch material locally; native
+// qualification and durable server backup acceptance have separate live tests.
+#[allow(clippy::too_many_arguments)]
+fn encrypt_values_with_device_snapshot_for_effective_scope(
+    state: &mut crate::state::LocalStateStore,
+    secure: &dyn SecureKeyStore,
+    realm: &str,
+    account: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    mime: &str,
+    values: &[Vec<u8>],
+    kind: &str,
+    reference: arkret_sdk::EventId,
+    circle: Option<&str>,
+    sidecar: Option<&arkret_sdk::SidecarId>,
+) -> Result<(Vec<arkret_sdk::DidCoreId>, Vec<serde_json::Value>), MlsRuntimeError> {
+    let scope = fixture::content::scope(realm, circle, sidecar);
+    let materials = values
+        .iter()
+        .map(|_| {
+            fixture::content::checkpoint_material(
+                state, secure, account, device, &scope, kind, &reference,
+            )
+        })
+        .collect::<Vec<_>>();
+    crate::mls::runtime::encrypt_values_with_device_snapshot_for_effective_scope(
+        state, secure, realm, account, device, mime, values, kind, reference, circle, sidecar,
+        &materials,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encrypt_message_with_device_snapshot(
+    state: &mut crate::state::LocalStateStore,
+    secure: &dyn SecureKeyStore,
+    realm: &str,
+    account: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    mime: &str,
+    kind: &str,
+    reference: arkret_sdk::EventId,
+    bytes: &[u8],
+    metadata_mime: Option<&str>,
+    metadata: Option<&[u8]>,
+    sender: Option<&str>,
+    circle: Option<&str>,
+    sidecar: Option<&arkret_sdk::SidecarId>,
+) -> Result<crate::mls::runtime::DeviceSnapshotEncryption, MlsRuntimeError> {
+    let scope = fixture::content::scope(realm, circle, sidecar);
+    let material = fixture::content::checkpoint_material(
+        state, secure, account, device, &scope, kind, &reference,
+    );
+    let metadata_material = metadata.map(|_| {
+        fixture::content::checkpoint_material(
+            state, secure, account, device, &scope, kind, &reference,
+        )
+    });
+    crate::mls::runtime::encrypt_message_with_device_snapshot(
+        state,
+        secure,
+        realm,
+        account,
+        device,
+        mime,
+        kind,
+        reference,
+        bytes,
+        metadata_mime,
+        metadata,
+        sender,
+        circle,
+        sidecar,
+        material,
+        metadata_material,
+    )
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn accepted_mls_base_current(
     effective_scope: &arkret_sdk::ScopeRef,
@@ -74,13 +151,9 @@ fn coverage_commit_pins_durable_revision_when_product_view_lags() {
     let staged =
         force_epoch_rotation_commit_with_binding(&state, &secure, &binding, &authority, &device)
             .unwrap();
-    let operation = crate::mls::group_events::mls_commit_event_with_binding(
-        &state,
-        actor,
-        &staged.envelope,
-        &binding,
-    )
-    .unwrap();
+    let operation =
+        crate::mls::group_events::mls_commit_event_with_binding(&state, actor, &staged, &binding)
+            .unwrap();
     assert_eq!(
         operation.payload()["governance_binding"],
         serde_json::to_value(&binding).unwrap()
@@ -252,18 +325,27 @@ fn test_message_header(
     arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
         "1.0",
         "application/json",
-        arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+        arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
         arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
         },
         arkret_wire::event_kind_str::MESSAGE_CREATE,
         group.epoch(),
-        arkret_sdk::EventId::new(
+        (arkret_sdk::EventId::new(
             "ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM".to_owned(),
         )
-        .unwrap(),
+        .unwrap())
+        .clone(),
         group.local_content_sender_domain().unwrap(),
         arkret_sdk::EventContentRoutingContext::None,
+        crate::test_support::content::material(
+            &group,
+            arkret_wire::event_kind_str::MESSAGE_CREATE,
+            &(arkret_sdk::EventId::new(
+                "ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM".to_owned(),
+            )
+            .unwrap()),
+        ),
     )
     .unwrap()
 }
@@ -876,6 +958,9 @@ fn two_member_group_with_bob_snapshot(
         &add.commit,
         base_event_ref.clone(),
         0x52,
+        alice_group
+            .pending_public_group_state_bytes(&add.commit, &transition_binding)
+            .unwrap(),
     );
     let delivery = crate::test_support::accepted_mls_welcome(
         &add.welcome,
@@ -984,8 +1069,11 @@ async fn replaced_device_incarnation_still_needs_its_welcome_at_the_installed_ep
     let accepted = fixture::accepted_mls_commit_with_binding(
         alice.identity().actor_id.clone(),
         &artifacts.commit,
-        binding,
+        (binding).clone(),
         0x61,
+        alice
+            .pending_public_group_state_bytes(&artifacts.commit, &binding)
+            .unwrap(),
     );
     let current = accepted_mls_base_current(&scope, base.clone(), base, 1);
     alice.install_accepted_commit(&accepted, &current).unwrap();
@@ -1118,11 +1206,12 @@ fn committed_sender_credential_reconstructs_real_standard_mls_content_aad() {
     .unwrap();
     let rebuilt = envelope
         .reconstruct_pre_encryption_header(
-            arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+            arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
             header.effective_scope.clone(),
             event.kind.as_str(),
             std::str::from_utf8(&sender).unwrap(),
             None,
+            header.material.clone(),
         )
         .unwrap();
     assert_eq!(
@@ -1219,6 +1308,9 @@ fn historical_author_view_survives_epoch_rotation() {
         &add.commit,
         epoch_one_ref.clone(),
         0x53,
+        alice_group
+            .pending_public_group_state_bytes(&add.commit, &transition_binding)
+            .unwrap(),
     );
     let base_current = accepted_mls_base_current(
         &effective_scope,
@@ -1398,7 +1490,15 @@ fn sidecar_author_leaf_view_preserves_exact_scope_and_historical_epoch() {
     let update = group
         .self_update_commit_with_governance_binding(&binding)
         .unwrap();
-    let accepted = fixture::accepted_mls_commit_with_binding(actor, &update, binding, 0x64);
+    let accepted = fixture::accepted_mls_commit_with_binding(
+        actor,
+        &update,
+        (binding).clone(),
+        0x64,
+        group
+            .pending_public_group_state_bytes(&update, &binding)
+            .unwrap(),
+    );
     let base = accepted_mls_base_current(&scope, genesis.clone(), genesis.clone(), 0);
     group.install_accepted_commit(&accepted, &base).unwrap();
     group.install_test_leaf_bindings(vec![endpoint]).unwrap();
@@ -1957,31 +2057,41 @@ async fn frozen_message_real_mls_retry_and_durable_reopen_preserve_sender_state(
     alice.install_test_leaf_bindings(endpoints).unwrap();
     assert_eq!(alice.verified_leaf_bindings().unwrap().len(), 2);
     let before_encryption = alice.export_state_record().unwrap().serialized_state;
-    let header = test_message_header(&alice, realm);
-    let encrypted = alice
-        .encrypt_payload(header.clone(), b"once encrypted retry")
-        .unwrap();
-    let after_encryption = alice.export_state_record().unwrap().serialized_state;
-    assert_ne!(
-        before_encryption, after_encryption,
-        "real encryption must advance sender state"
-    );
-    let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(&encrypted).unwrap();
     let strand_id = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
         arkret_sdk::DigestSuite::Sha256,
         [0x31; 32],
     ));
-    let unsigned = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+    let mut unsigned = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
         arkret_sdk::EventKind::MessageCreate.as_str(),
-        header.effective_scope.clone(),
+        alice.scope().clone(),
         fixture::account_actor("did:web:alice.example"),
-        json!({
-            "strand_id": strand_id,
-            "track_name": "discussion", "encrypted_content": envelope,
-        }),
+        json!({"strand_id":strand_id,"track_name":"discussion", "content":
+            {"kind":"ak.content.text","body":"once encrypted retry","format":"plain"}}),
     )
     .build_unsigned()
     .unwrap();
+    let mut header = test_message_header(&alice, realm);
+    header.material.outer_event =
+        arkret_models_crypto::EventContentMaterial::outer_event_for(&unsigned).unwrap();
+    let encrypted = alice
+        .encrypt_payload(header.clone(), b"once encrypted retry")
+        .unwrap();
+    let after_encryption = alice.export_state_record().unwrap().serialized_state;
+    let rfc_state_digest = |snapshot: &[u8]| {
+        let mut value: serde_json::Value = serde_json::from_slice(snapshot).unwrap();
+        value.as_object_mut().unwrap().remove("content_roots");
+        arkret_sdk::canonical::canonical_sha256(&value).unwrap()
+    };
+    assert_eq!(
+        rfc_state_digest(&before_encryption),
+        rfc_state_digest(&after_encryption),
+        "epoch-root content AEAD does not advance RFC PrivateMessage state"
+    );
+    unsigned.payload.remove("content");
+    unsigned.payload.insert(
+        "encrypted_content".to_owned(),
+        serde_json::to_value(encrypted.to_envelope().unwrap()).unwrap(),
+    );
     let authored = arkret_sdk::AuthoredEvent::finalize_with_digest_suite(
         unsigned,
         arkret_sdk::DigestSuite::Sha256,
@@ -2010,6 +2120,12 @@ async fn frozen_message_real_mls_retry_and_durable_reopen_preserve_sender_state(
         after_encryption
     );
     let frozen_event = reopened.request().submission.event.clone();
+    assert_eq!(
+        arkret_models_crypto::EventContentMaterial::outer_event_for(&frozen_event).unwrap(),
+        header.material.outer_event,
+        "retry preserves the complete originally authenticated Event"
+    );
+
     let mut attempts = 0;
     let result =
         crate::event_submit::retry_frozen_message(reopened.into_queued_submission(), |queued| {
@@ -2095,13 +2211,14 @@ fn accepted_metadata_survives_later_messages_without_opening_its_view() {
     let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
         "1.0",
         "application/json",
-        arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+        arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
         scope.clone(),
         "ak.space.update",
         alice.epoch(),
-        group_ref,
+        (group_ref).clone(),
         alice.local_content_sender_domain().unwrap(),
         arkret_sdk::EventContentRoutingContext::None,
+        crate::test_support::content::material(&alice, "ak.space.update", &(group_ref)),
     )
     .unwrap();
     let plaintext = json!({"title":"Community deliverables"});
@@ -2223,13 +2340,14 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
     let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
         "1.0",
         "application/vnd.arkret.strand-metadata+json",
-        arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+        arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
         scope.clone(),
         "ak.strand.update",
         alice.epoch(),
-        group_ref.clone(),
+        (group_ref.clone()).clone(),
         alice.local_content_sender_domain().unwrap(),
         arkret_sdk::EventContentRoutingContext::None,
+        crate::test_support::content::material(&alice, "ak.strand.update", &(group_ref.clone())),
     )
     .unwrap();
     let plaintext = json!({"title":"Cold calendar","fields":{"calendar":{"start":"2026-10-07","end":"2026-10-08","timezone":"UTC","tzdb_version":"2025b","all_day":true,"status":"confirmed","location":{"title":"Community entrance desk"}}}});
@@ -2414,6 +2532,9 @@ fn ordinary_recovery_refreezes_received_private_base_after_proof() {
         &commit,
         reference.clone(),
         0x64,
+        alice
+            .pending_public_group_state_bytes(&commit, &binding)
+            .unwrap(),
     );
     // Consume the actual accepted RFC Commit from the refrozen provider, rather
     // than authoring a new rotation to compensate for the public current.

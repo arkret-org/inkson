@@ -394,9 +394,23 @@ fn mls_commit_builder_matches_registered_payload_schema() {
             .unwrap(),
         ratchet_tree: None,
     };
-    let payload =
-        arkret_sdk::MlsCommitPayload::new(base_group_state_ref, 0, &commit, governance_binding)
-            .unwrap();
+    let payload = {
+        let public_material = {
+            let bytes = arkret_sdk::base64url_decode(&commit.commit).unwrap();
+            (bytes.clone(), bytes)
+        };
+        let (info, tree) =
+            crate::test_support::content::public_refs(&public_material.0, &public_material.1);
+        arkret_sdk::MlsCommitPayload::new(
+            base_group_state_ref,
+            0,
+            &commit,
+            governance_binding,
+            info,
+            tree,
+        )
+    }
+    .unwrap();
     let op = ak_ops::mls_commit_with_governance(realm_id, "did:web:alice.example", &payload)
         .unwrap()
         .build("node");

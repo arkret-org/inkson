@@ -19,6 +19,34 @@ pub async fn send_native_ordinary_mls_message(
     let store = host.state_store_handle();
     let secure = crate::secure_key_store::default_secure_key_store("inkson");
     let plain = arkret_sdk::canonical::canonical_json_bytes(&arkret_sdk::ContentBlock::text(body))?;
+    let api = crate::transport::TransportClient::from_http(
+        host.call_http_client(),
+        crate::transport::RequestContext::new(""),
+    );
+    let created_at = crate::clock::now_utc_millis();
+    let message = crate::views::chat::model::chat_message_authoring_intent(
+        strand.as_str(),
+        arkret_sdk::MessageAuthoringContent::Plaintext {
+            content: arkret_sdk::ContentBlock::text(body),
+            metadata: None,
+        },
+        None,
+    )?;
+    let frozen = api
+        .event_submitter()?
+        .with_authority(account.authority.clone())
+        .with_state_store(store.clone())
+        .prepare_message_encryption_intent(scope.clone(), &message, created_at)
+        .await?;
+    let material = crate::mls::content_roots::prepare_material(
+        &api,
+        &store,
+        &frozen,
+        "/payload/encrypted_content",
+        arkret_sdk::MESSAGE_CONTENT_BLOCK_MLS_CONTENT_TYPE,
+        &plain,
+    )
+    .await?;
     let (encrypted, barrier) = store.write(|state| -> anyhow::Result<_> {
         let checkpoint = state.mls_checkpoint_for_scope(&scope).ok_or_else(|| {
             anyhow::anyhow!("ordinary message lacks its accepted private checkpoint")
@@ -41,6 +69,8 @@ pub async fn send_native_ordinary_mls_message(
             None,
             None,
             None,
+            material,
+            None,
         )
         .map_err(|error| anyhow::anyhow!("ordinary native MLS encryption: {error:?}"))?;
         Ok((encrypted.content, state.begin_durable_flush()?))
@@ -51,13 +81,22 @@ pub async fn send_native_ordinary_mls_message(
         scheme: encrypted.pre_encryption_header.scheme.clone(),
         effective_scope: encrypted.pre_encryption_header.effective_scope.clone(),
         sender_domain: encrypted.pre_encryption_header.sender_domain.clone(),
+        producer: encrypted
+            .pre_encryption_header
+            .material
+            .content_context
+            .producer
+            .clone(),
+        outer_event_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(
+            &encrypted.pre_encryption_header.material.outer_event,
+        )?)?,
     };
     let api = crate::transport::TransportClient::from_http(
         host.call_http_client(),
         crate::transport::RequestContext::new(""),
     );
     // The ordinary product author takes the real host store explicitly.
-    let send = crate::views::chat::model::send_ordinary_chat_message(
+    let send = crate::views::chat::model::send_ordinary_chat_message_with_blob_refs(
         &api,
         store,
         realm.as_str(),
@@ -70,6 +109,8 @@ pub async fn send_native_ordinary_mls_message(
         },
         None,
         format!("native-message:{}", crate::operation::uuid_v7()),
+        Vec::new(),
+        created_at,
     );
     send.await.map_err(anyhow::Error::msg)
 }

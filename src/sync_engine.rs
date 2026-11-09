@@ -3053,7 +3053,7 @@ async fn run_idle_self_update_pass(
                     &local_state,
                     &realm_id,
                     &actor_id,
-                    &staged.envelope,
+                    &staged,
                 )
                 .map(|event| Some((event, staged.envelope.epoch, staged.staged_checkpoint)))
             }

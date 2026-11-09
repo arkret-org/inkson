@@ -119,6 +119,7 @@ impl crate::transport::TransportClient {
             backup_kind: None,
             cursor: None,
             limit: None,
+            agent_id: None,
         })
         .await
     }

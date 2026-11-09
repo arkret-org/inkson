@@ -251,6 +251,23 @@ fn load_signing_seed_rejects_short_entries() {
 }
 
 #[test]
+fn root_vault_keys_require_strong_storage_and_never_enter_the_test_downgrade() {
+    for prefix in [
+        "content-root/v1/",
+        "content-root-backup/v1/",
+        "content-salt/v1/",
+    ] {
+        for key in [
+            format!("{prefix}digest"),
+            format!("account.device.{prefix}digest"),
+        ] {
+            assert!(is_wasm_indexeddb_required_secret_key(&key), "{key}");
+            assert!(!is_wasm_test_downgrade_fixture_key(&key), "{key}");
+        }
+    }
+}
+
+#[test]
 fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
     assert!(is_wasm_indexeddb_required_secret_key(
         "agent.did.keys.fixture"

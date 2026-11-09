@@ -206,7 +206,7 @@ fn sidecar_add_keeps_exact_binding_and_stages_private_state_until_acceptance() {
     let operation = crate::mls::group_events::mls_commit_event_with_binding(
         &state,
         authority.principal_id.as_str(),
-        &staged.envelope,
+        &staged,
         &binding,
     )
     .unwrap();
@@ -447,8 +447,11 @@ fn sidecar_withdrawal_keeps_the_other_agent_and_recovers_the_pending_commit() {
         let accepted = fixture::accepted_mls_commit_with_binding(
             arkret_sdk::ActorId::account(authority.clone()),
             &add.commit,
-            transition,
+            (transition).clone(),
             76 + index as u8,
+            group
+                .pending_public_group_state_bytes(&add.commit, &transition)
+                .unwrap(),
         );
         group
             .install_recovered_own_commit(&accepted, &base)
@@ -524,8 +527,9 @@ fn sidecar_withdrawal_keeps_the_other_agent_and_recovers_the_pending_commit() {
     let accepted = fixture::accepted_mls_commit_with_binding(
         arkret_sdk::ActorId::account(authority.clone()),
         &staged.envelope,
-        transition,
+        (transition).clone(),
         80,
+        staged.public_material.clone(),
     );
     assert!(
         restarted
@@ -587,8 +591,9 @@ fn sidecar_withdrawal_keeps_the_other_agent_and_recovers_the_pending_commit() {
     let rotated_commit = fixture::accepted_mls_commit_with_binding(
         arkret_sdk::ActorId::account(authority),
         &staged.envelope,
-        rotation.clone(),
+        (rotation.clone()).clone(),
         83,
+        staged.public_material.clone(),
     );
     rotated
         .install_recovered_own_commit(&rotated_commit, &accepted.event.event_id)

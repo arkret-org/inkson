@@ -363,6 +363,7 @@ impl AttachmentObject {
     pub(crate) async fn prepare(
         &self,
         chunks: &crate::state::current_index::AttachmentChunkStore,
+        http: Option<&arkret_sdk::http_client::Client>,
     ) -> anyhow::Result<PreparedAttachment> {
         self.validate()?;
         if let Some(prepared) = &self.prepared {
@@ -417,13 +418,24 @@ impl AttachmentObject {
                     ),
                 "attachment checkpoint is not the winning tree"
             );
-            let key = arkret_sdk::mls::derive_attachment_content_key(&group, context)?;
+            let root = crate::mls::content_roots::resolve_root_context(
+                http.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "encrypted attachment requires its authenticated original source"
+                    )
+                })?,
+                &group,
+                &context.genesis_event_ref,
+                &reference,
+            )
+            .await?;
+            let key = arkret_sdk::mls::derive_attachment_content_key(&group, &root, context)?;
             let parameters = arkret_crypto::blob_aead::StreamEncryptParams {
                 key_ref: EncryptedAttachmentKeyRef {
                     algorithm: EncryptedAttachmentKeyAlgorithm::Mls,
                     group_state_ref: EncryptedAttachmentGroupStateRef::Event(reference.clone()),
                 },
-                content_key_salt: self.salt.clone(),
+                content_context: context.clone(),
                 digest_suite: self.digest_suite,
                 media_type: self.media_type.clone(),
                 segment_bytes: SEGMENT_BYTES,
@@ -437,10 +449,13 @@ impl AttachmentObject {
             .try_into()
             .map_err(|_| anyhow::anyhow!("invalid prefix"))?;
             let resolver = |r: &EncryptedAttachmentGroupStateRef| {
-                r.event_id()
-                    .ok()
-                    .filter(|id| id == &reference)
-                    .map(|_| context.epoch)
+                r.event_id().ok().filter(|id| id == &reference).map(|_| {
+                    arkret_crypto::blob_aead::ResolvedAttachmentGroupState {
+                        effective_scope: context.effective_scope.clone(),
+                        genesis_event_ref: context.genesis_event_ref.clone(),
+                        epoch: context.epoch,
+                    }
+                })
             };
             let mut encoder = arkret_crypto::blob_aead::StreamEncryptor::new(
                 self.input_size,
@@ -575,6 +590,17 @@ pub(crate) async fn private_message_body(
                 scheme: arkret_crypto::blob_aead::SCHEME_STREAM.into(),
                 encryption_algorithm: arkret_crypto::blob_aead::ALG_STREAM_XCHACHA.into(),
                 content_key_salt: salt.clone(),
+                producer: store
+                    .read(|s| {
+                        crate::mls::runtime::current_local_content_endpoint(
+                            s,
+                            crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
+                            authority,
+                            device,
+                            scope,
+                        )
+                    })
+                    .map_err(|e| anyhow::anyhow!(e.user_message()))?,
             };
             fence.check_session_identity()?;
             vault
@@ -623,7 +649,9 @@ pub(crate) async fn private_message_body(
         object = vault.freeze_attachment_input(&object.id, digest).await?;
     }
     if object.prepared.is_none() {
-        let prepared = object.prepare(&chunks).await?;
+        let prepared = object
+            .prepare(&chunks, Some(&api.sdk_http_client()?))
+            .await?;
         object = vault
             .freeze_prepared_attachment(&object.id, prepared)
             .await?;

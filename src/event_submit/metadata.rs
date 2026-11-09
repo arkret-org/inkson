@@ -169,6 +169,8 @@ impl EventSubmitter {
         if matches!(gate, crate::mls::send_gate::MlsSendGate::Plaintext) {
             return Ok(intent);
         }
+        let intent = self.prepare_content_intent(&intent).await?;
+        let frozen_outer = intent.pre_encryption_outer_event()?;
         let store = self
             .state_store
             .as_ref()
@@ -251,8 +253,29 @@ impl EventSubmitter {
                 }
             })
         };
-        let seal = |metadata: &Value| -> anyhow::Result<arkret_sdk::EncryptedEnvelope> {
+        let seal = async |metadata: &Value| -> anyhow::Result<arkret_sdk::EncryptedEnvelope> {
             let bytes = serde_json::to_vec(metadata)?;
+            let path = if matches!(
+                intent.kind(),
+                arkret_sdk::EventKind::SpaceCreate | arkret_sdk::EventKind::StrandCreate
+            ) {
+                "/payload/object/encrypted_metadata"
+            } else {
+                "/payload/patch/encrypted_metadata/value"
+            };
+            let api = crate::transport::TransportClient::from_http(
+                self.http.clone(),
+                crate::transport::RequestContext::new(""),
+            );
+            let material = crate::mls::content_roots::prepare_material(
+                &api,
+                store,
+                &intent,
+                path,
+                "application/json",
+                &bytes,
+            )
+            .await?;
             let secure = crate::secure_key_store::default_secure_key_store("inkson");
             let scope = intent.scope_ref();
             let encryption = store.write(|state| {
@@ -284,6 +307,8 @@ impl EventSubmitter {
                     None,
                     circle,
                     sidecar,
+                    material,
+                    None,
                 )
                 .map_err(|error| anyhow::anyhow!(error.user_message()))
             })?;
@@ -311,7 +336,11 @@ impl EventSubmitter {
                 &payload.patch,
             )?;
         }
-        let prepared = seal_metadata(&intent, open, seal)?;
+        let prepared = seal_metadata(&intent, open, seal).await?;
+        anyhow::ensure!(
+            prepared.pre_encryption_outer_event()? == frozen_outer,
+            "Metadata sealing changed its frozen outer Event"
+        );
         let barrier = store.read(|state| state.begin_durable_flush())?;
         barrier.wait().await?;
         anyhow::ensure!(
@@ -435,10 +464,10 @@ fn validate_strand_metadata_patch(
     validate_plaintext_strand_profile(&post)
 }
 
-fn seal_metadata(
+async fn seal_metadata(
     intent: &EventIntent,
     mut open: impl FnMut(&str, bool) -> anyhow::Result<Value>,
-    mut seal: impl FnMut(&Value) -> anyhow::Result<arkret_sdk::EncryptedEnvelope>,
+    mut seal: impl AsyncFnMut(&Value) -> anyhow::Result<arkret_sdk::EncryptedEnvelope>,
 ) -> anyhow::Result<EventIntent> {
     match intent.kind() {
         arkret_sdk::EventKind::SpaceCreate => {
@@ -464,7 +493,7 @@ fn seal_metadata(
             };
             metadata.validate()?;
             object.fields.retain(|key, _| machine_field(key));
-            object.encrypted_metadata = Some(seal(&serde_json::to_value(metadata)?)?);
+            object.encrypted_metadata = Some(seal(&serde_json::to_value(metadata)?).await?);
             replace_payload::<event_spec::SpaceCreate>(intent, payload)
         }
         arkret_sdk::EventKind::StrandCreate => {
@@ -474,20 +503,24 @@ fn seal_metadata(
             }
             validate_plaintext_strand_profile(&payload.object)?;
             if let Some(metadata) = payload.object.metadata.take() {
-                payload.object.encrypted_metadata = Some(seal(&serde_json::to_value(metadata)?)?);
+                payload.object.encrypted_metadata =
+                    Some(seal(&serde_json::to_value(metadata)?).await?);
             }
             replace_payload::<event_spec::StrandCreate>(intent, payload)
         }
         arkret_sdk::EventKind::SpaceUpdate => {
             let mut payload = intent.typed_payload::<event_spec::SpaceUpdate>()?;
             if let Some(patch) = payload.patch.take() {
-                payload.patch = Some(seal_patch(
-                    patch,
-                    payload.space_id.as_str(),
-                    false,
-                    &mut open,
-                    &mut seal,
-                )?);
+                payload.patch = Some(
+                    seal_patch(
+                        patch,
+                        payload.space_id.as_str(),
+                        false,
+                        &mut open,
+                        &mut seal,
+                    )
+                    .await?,
+                );
             }
             replace_payload::<event_spec::SpaceUpdate>(intent, payload)
         }
@@ -499,19 +532,20 @@ fn seal_metadata(
                 true,
                 &mut open,
                 &mut seal,
-            )?;
+            )
+            .await?;
             replace_payload::<event_spec::StrandUpdate>(intent, payload)
         }
         _ => Ok(intent.clone()),
     }
 }
 
-fn seal_patch(
+async fn seal_patch(
     patch: arkret_sdk::Patch,
     id: &str,
     strand: bool,
     open: &mut impl FnMut(&str, bool) -> anyhow::Result<Value>,
-    seal: &mut impl FnMut(&Value) -> anyhow::Result<arkret_sdk::EncryptedEnvelope>,
+    seal: &mut impl AsyncFnMut(&Value) -> anyhow::Result<arkret_sdk::EncryptedEnvelope>,
 ) -> anyhow::Result<arkret_sdk::Patch> {
     let (private, mut structural): (BTreeMap<_, _>, BTreeMap<_, _>) = patch
         .iter()
@@ -553,7 +587,7 @@ fn seal_patch(
     }
     structural.insert(
         "encrypted_metadata".to_owned(),
-        arkret_sdk::PatchOp::set(serde_json::to_value(seal(&post)?)?),
+        arkret_sdk::PatchOp::set(serde_json::to_value(seal(&post).await?)?),
     );
     patch_from_entries(structural)
 }
@@ -770,17 +804,35 @@ mod tests {
         let identity =
             arkret_sdk::ArkretMlsIdentity::new_test_human_device(actor(), device).unwrap();
         let mut group = identity.create_group(&scope()).unwrap();
+        group
+            .install_local_creator_binding(
+                actor(),
+                Some(arkret_sdk::EventId::from_digest(
+                    arkret_sdk::DigestSuite::Sha256,
+                    [0x71; 32],
+                )),
+            )
+            .unwrap();
         let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
             "1.0",
             "application/json",
-            arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+            arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
             scope(),
             kind,
             group.epoch(),
-            arkret_sdk::EventId::new("ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM")
-                .unwrap(),
+            (arkret_sdk::EventId::new("ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM")
+                .unwrap())
+            .clone(),
             group.local_content_sender_domain().unwrap(),
             arkret_sdk::EventContentRoutingContext::None,
+            crate::test_support::content::material(
+                &group,
+                kind,
+                &(arkret_sdk::EventId::new(
+                    "ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM",
+                )
+                .unwrap()),
+            ),
         )
         .unwrap();
         let payload = group
@@ -789,8 +841,8 @@ mod tests {
         arkret_sdk::mls::encrypted_envelope_from_payload(&payload).unwrap()
     }
 
-    #[test]
-    fn metadata_create_seals_complete_user_fields_and_keeps_structure() {
+    #[tokio::test]
+    async fn metadata_create_seals_complete_user_fields_and_keeps_structure() {
         let mut object = arkret_sdk::Space::create_object(
             arkret_sdk::RealmId::new(REALM).unwrap(),
             "list",
@@ -818,7 +870,7 @@ mod tests {
         let prepared = seal_metadata(
             &intent,
             |_, _| panic!("create cannot read another object"),
-            |value| {
+            async |value: &Value| {
                 let metadata: SpaceMetadata = serde_json::from_value(value.clone())?;
                 metadata.validate()?;
                 assert_eq!(metadata.title, "Private title");
@@ -829,6 +881,7 @@ mod tests {
                 Ok(encrypt(intent.kind().as_str(), value))
             },
         )
+        .await
         .unwrap();
         let object = prepared
             .typed_payload::<event_spec::SpaceCreate>()
@@ -845,8 +898,8 @@ mod tests {
         assert_eq!(prepared.created_at(), intent.created_at());
     }
 
-    #[test]
-    fn metadata_card_create_seals_title_and_profile_without_encrypting_tracks() {
+    #[tokio::test]
+    async fn metadata_card_create_seals_title_and_profile_without_encrypting_tracks() {
         let mut object = arkret_sdk::Strand::new_create(
             arkret_sdk::RealmId::new(REALM).unwrap(),
             "Private card",
@@ -870,13 +923,14 @@ mod tests {
         let prepared = seal_metadata(
             &intent,
             |_, _| panic!("create cannot read another object"),
-            |value| {
+            async |value: &Value| {
                 let metadata: StrandMetadata = serde_json::from_value(value.clone())?;
                 assert_eq!(metadata.title.as_deref(), Some("Private card"));
                 assert_eq!(metadata.fields["strand_kind"], "card");
                 Ok(encrypt(intent.kind().as_str(), value))
             },
         )
+        .await
         .unwrap();
         let object = prepared
             .typed_payload::<event_spec::StrandCreate>()
@@ -889,8 +943,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn metadata_rename_preserves_unedited_user_fields_and_structural_patch() {
+    #[tokio::test]
+    async fn metadata_rename_preserves_unedited_user_fields_and_structural_patch() {
         let mut patch = arkret_sdk::Patch::new();
         patch.insert("title", "New title").unwrap();
         patch.insert("rank", "V").unwrap();
@@ -898,21 +952,21 @@ mod tests {
             assert_eq!(id, SPACE);
             assert!(!strand);
             Ok(serde_json::json!({"title":"Old title", "summary":"Keep summary", "labels":["Keep label"], "fields":{"custom":"Keep extension"}}))
-        }, &mut |value| {
+        }, &mut async |value: &Value| {
             assert_eq!(value["title"], "New title");
             assert_eq!(value["summary"], "Keep summary");
             assert_eq!(value["labels"][0], "Keep label");
             assert_eq!(value["fields"]["custom"], "Keep extension");
             Ok(encrypt("ak.space.update", value))
-        }).unwrap();
+        }).await.unwrap();
         let value = serde_json::to_value(result).unwrap();
         assert!(value.get("title").is_none());
         assert_eq!(value["rank"], "V");
         assert!(value.get("encrypted_metadata").is_some());
     }
 
-    #[test]
-    fn calendar_location_is_inside_the_single_metadata_envelope() {
+    #[tokio::test]
+    async fn calendar_location_is_inside_the_single_metadata_envelope() {
         let event_id =
             arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x55; 32]);
         let strand_id = arkret_sdk::StrandId::from_event_id(&event_id);
@@ -942,7 +996,7 @@ mod tests {
                 assert_eq!(id, strand_id.as_str());
                 Ok(serde_json::json!({"title":"Existing task","fields":{}}))
             },
-            |metadata| {
+            async |metadata: &Value| {
                 sealed_values += 1;
                 let location: arkret_sdk::CalendarLocation =
                     serde_json::from_value(metadata["fields"]["calendar"]["location"].clone())
@@ -952,6 +1006,7 @@ mod tests {
                 Ok(encrypt("ak.strand.update", metadata))
             },
         )
+        .await
         .unwrap();
         assert_eq!(sealed_values, 1);
         let wire = serde_json::to_value(prepared.payload()).unwrap();
@@ -1003,8 +1058,8 @@ mod tests {
         assert!(current.metadata.is_none());
     }
 
-    #[test]
-    fn authored_metadata_backup_restores_final_object_and_exact_ciphertext_revision() {
+    #[tokio::test]
+    async fn authored_metadata_backup_restores_final_object_and_exact_ciphertext_revision() {
         let directory = tempfile::tempdir().unwrap();
         let mut source =
             crate::state::LocalStateStore::with_path(directory.path().join("source.json"));
@@ -1028,12 +1083,13 @@ mod tests {
         let prepared = seal_metadata(
             &intent,
             |_, _| panic!("create has no current"),
-            |value| {
+            async |value: &Value| {
                 let envelope = encrypt(intent.kind().as_str(), value);
                 authored_plaintext = Some((envelope.payload_digest()?, serde_json::to_vec(value)?));
                 Ok(envelope)
             },
         )
+        .await
         .unwrap();
         let authored = prepared
             .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)

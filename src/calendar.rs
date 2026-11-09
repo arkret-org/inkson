@@ -44,8 +44,9 @@ pub fn build_calendar_rsvp_event(
 /// Author an RSVP only after the installed, verified Strand current and MLS
 /// current identify the same effective Realm scope.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_encrypted_calendar_rsvp_event(
-    state_store: &mut crate::state::LocalStateStore,
+pub(crate) async fn build_encrypted_calendar_rsvp_event(
+    api: &crate::transport::TransportClient,
+    store: &crate::runtime::input::StateStoreHandle,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     realm_id: &str,
     actor_id: &arkret_sdk::ActorId,
@@ -56,6 +57,7 @@ pub(crate) fn build_encrypted_calendar_rsvp_event(
     calendar_fields: &arkret_sdk::CalendarEventFields,
     schedule_basis_event: arkret_sdk::EventId,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
+    let state_store = store.read(Clone::clone);
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
     let strand = arkret_sdk::StrandId::new(strand_id.to_owned())?;
     let current = state_store.current_product_view().ok_or_else(|| {
@@ -131,20 +133,44 @@ pub(crate) fn build_encrypted_calendar_rsvp_event(
         anyhow::bail!("RSVP status did not produce a response");
     };
     let response_bytes = arkret_sdk::canonical::canonical_json_bytes(response)?;
-    let (_, encrypted) =
-        crate::mls::runtime::encrypt_values_with_device_snapshot_for_effective_scope(
-            state_store,
-            secure_store,
-            realm_id,
-            authority,
-            device_id,
-            arkret_models_collaboration::objects::productivity::RSVP_RESPONSE_CONTENT_TYPE,
-            &[response_bytes],
-            arkret_wire::event_kind_str::RSVP_SET,
-            accepted_group_state_ref,
-            None,
-            None,
-        )
+    let draft = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::RsvpSet>::new(
+        scope.clone(),
+        actor_id.clone(),
+        payload.clone(),
+    )?
+    .into_intent(crate::clock::now_utc_millis())?;
+    let frozen = api
+        .event_submitter()?
+        .with_authority(authority.clone())
+        .with_state_store(store.clone())
+        .prepare_content_intent(&draft)
+        .await?;
+    let material = crate::mls::content_roots::prepare_material(
+        api,
+        store,
+        &frozen,
+        "/payload/entry/encrypted_response",
+        arkret_models_collaboration::objects::productivity::RSVP_RESPONSE_CONTENT_TYPE,
+        &response_bytes,
+    )
+    .await?;
+    let (_, encrypted) = store
+        .write(|state| {
+            crate::mls::runtime::encrypt_values_with_device_snapshot_for_effective_scope(
+                state,
+                secure_store,
+                realm_id,
+                authority,
+                device_id,
+                arkret_models_collaboration::objects::productivity::RSVP_RESPONSE_CONTENT_TYPE,
+                &[response_bytes],
+                arkret_wire::event_kind_str::RSVP_SET,
+                accepted_group_state_ref,
+                None,
+                None,
+                &[material],
+            )
+        })
         .map_err(|error| {
             anyhow::anyhow!("cannot encrypt RSVP response: {}", error.user_message())
         })?;
@@ -155,12 +181,7 @@ pub(crate) fn build_encrypted_calendar_rsvp_event(
     payload.entry.response = None;
     payload.entry.encrypted_response = Some(Box::new(envelope));
     payload.validate()?;
-    let intent = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::RsvpSet>::new(
-        scope,
-        actor_id.clone(),
-        payload,
-    )?
-    .into_intent(crate::clock::now_utc_millis())?;
+    let intent = frozen.with_typed_payload::<arkret_sdk::event_spec::RsvpSet>(payload)?;
     Ok(crate::operation::LocalOperation::new(intent))
 }
 

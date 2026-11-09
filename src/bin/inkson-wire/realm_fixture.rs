@@ -613,6 +613,15 @@ impl Builder {
             arkret_bootstrap::AgentProvisionIntentOptions {
                 controller_station_id: controller.station_id.clone(),
                 created_at: time(3),
+                history_custody: arkret_models_crypto::AgentHistoryCustody {
+                    custodian_actor_id: ActorId::account(controller.clone()),
+                    recovery_policy_ref: arkret_models_crypto::RecoveryPolicyRef {
+                        policy_id: PolicyId::new("ak:policy:019a0000-0000-7000-8000-000000000001")?,
+                        policy_version: 1,
+                    },
+                    recipient_key_ref: DidUrl::new(format!("{}#backup-hpke", self.identity.did))
+                        .map_err(anyhow::Error::msg)?,
+                },
             },
         )?)?;
         let source_genesis = match &self.source_authorization.commit.authority_ref {

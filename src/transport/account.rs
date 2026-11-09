@@ -240,6 +240,7 @@ pub async fn update_profile(
             avatar_blob_ref,
             accountable_principal_ids: None,
             profile_fields,
+            encrypted_private_fields: None,
         };
         crate::operation::ak_ops::account_profile_create(
             &principal_control_realm_id,

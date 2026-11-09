@@ -1556,6 +1556,9 @@ mod tests {
             &add.commit,
             base_event_ref.clone(),
             0x42,
+            alice_group
+                .pending_public_group_state_bytes(&add.commit, &transition_binding)
+                .unwrap(),
         );
         let delivery = crate::test_support::accepted_mls_welcome(
             &add.welcome,

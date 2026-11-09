@@ -12,6 +12,63 @@ use super::{AgentDidKeys, PreparedPrincipalInception};
 mod resume;
 pub(crate) use resume::resume_ceremony;
 
+fn history_custody_for_policy(
+    authority: &AccountId,
+    summary: &arkret_sdk::RecoveryPolicySummary,
+) -> anyhow::Result<arkret_models_crypto::AgentHistoryCustody> {
+    summary.validate_shape()?;
+    let policy = summary.policy.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("Agent history custody requires the accepted recovery policy")
+    })?;
+    policy.validate_shape()?;
+    let now = crate::clock::now_utc();
+    anyhow::ensure!(
+        summary.account_id == *authority
+            && policy.account_id == *authority
+            && policy.policy_id == summary.policy_id
+            && policy.version == summary.version
+            && policy.not_before.is_none_or(|start| start <= now)
+            && policy.expires_at.is_none_or(|end| now < end),
+        "Agent history custody policy differs from the current controller Account"
+    );
+    let mut recipients = policy
+        .methods
+        .iter()
+        .filter_map(|method| match method {
+            arkret_sdk::RecoveryMethod::RecoveryUnlock { keys } => Some(keys),
+            _ => None,
+        })
+        .flatten()
+        .filter(|key| {
+            key.signature_algorithm == arkret_sdk::RecoverySignatureAlgorithm::Ed25519
+                && key.not_before <= now
+                && now < key.expires_at
+                && key.revoked_at.is_none_or(|end| now < end)
+                && key.backup_hpke.not_before <= now
+                && now < key.backup_hpke.expires_at
+                && key.backup_hpke.revoked_at.is_none_or(|end| now < end)
+                && key
+                    .backup_hpke
+                    .hpke_suites
+                    .contains(&arkret_sdk::RecoveryBackupHpkeSuite::X25519AeadChacha20Poly1305V1)
+        });
+    let recipient = recipients.next().ok_or_else(|| {
+        anyhow::anyhow!("Agent history custody requires an active controller backup-HPKE recipient")
+    })?;
+    anyhow::ensure!(
+        recipients.next().is_none(),
+        "Agent history custody requires an unambiguous controller backup-HPKE recipient"
+    );
+    Ok(arkret_models_crypto::AgentHistoryCustody {
+        custodian_actor_id: arkret_sdk::ActorId::account(authority.clone()),
+        recovery_policy_ref: arkret_sdk::RecoveryPolicyRef {
+            policy_id: summary.policy_id.clone(),
+            policy_version: summary.version,
+        },
+        recipient_key_ref: recipient.backup_hpke.key_agreement_ref.clone(),
+    })
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AuthoredProvision {
@@ -75,6 +132,7 @@ impl ProvisionCeremony {
                         avatar_blob_ref: Some(avatar),
                         accountable_principal_ids: Some(vec![self.authority.principal_id.clone()]),
                         profile_fields: Default::default(),
+                        encrypted_private_fields: None,
                     },
                 },
             )?
@@ -270,5 +328,116 @@ impl ProvisionCeremony {
         preserve!(profile_event);
         preserve!(profile_commit);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod custody_tests {
+    use super::*;
+
+    #[test]
+    fn custody_selects_exact_controller_policy_and_refuses_foreign_revoked_or_ambiguous_keys() {
+        let did = arkret_sdk::Did::new("did:web:controller.example").unwrap();
+        let account = crate::test_support::authority(did.as_str());
+        let device = DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001").unwrap();
+        let signer = std::sync::Arc::new(
+            crate::event_signer::build_ed25519_signer_with_verification_method(
+                [47; 32],
+                did.as_str(),
+                format!("{did}#{device}"),
+            ),
+        );
+        let _guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
+        let material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+            &crate::recovery_crypto::format_recovery_key(&[7; 32]),
+            "",
+            0,
+        )
+        .unwrap();
+        let policy: arkret_sdk::RecoveryPolicy = serde_json::from_value(
+            crate::recovery_flow::build_signed_genesis_recovery_policy_for_session_device(
+                &did,
+                &account,
+                "ak:trust_domain:controller.example",
+                &device,
+                &material,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        // This exercises recipient selection. The production authenticated
+        // resource supplies native policy acceptance; this summary is a fixture.
+        let summary = arkret_sdk::RecoveryPolicySummary {
+            policy_id: policy.policy_id.clone(),
+            account_id: account.clone(),
+            version: policy.version,
+            acceptance_basis_ref: arkret_sdk::RealmCommitId::from_digest([48; 32]),
+            recovery_policy_ref: Some(arkret_sdk::RecoveryPolicyRef {
+                policy_id: policy.policy_id.clone(),
+                policy_version: policy.version,
+            }),
+            trust_domain: policy.trust_domain.clone(),
+            supersedes_id: None,
+            issued_at: policy.issued_at,
+            expires_at: None,
+            accepted_at: Some(policy.issued_at),
+            methods: policy.methods.clone(),
+            policy: Some(policy),
+        };
+        let custody = history_custody_for_policy(&account, &summary).unwrap();
+        assert_eq!(
+            custody.custodian_actor_id,
+            arkret_sdk::ActorId::account(account.clone())
+        );
+        assert_eq!(
+            custody.recovery_policy_ref,
+            summary.recovery_policy_ref.clone().unwrap()
+        );
+        let arkret_sdk::RecoveryMethod::RecoveryUnlock { keys } = &summary.methods[0] else {
+            unreachable!()
+        };
+        assert_eq!(
+            custody.recipient_key_ref,
+            keys[0].backup_hpke.key_agreement_ref
+        );
+
+        let mut foreign = account.clone();
+        foreign.station_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:another-station.example").unwrap();
+        assert!(history_custody_for_policy(&foreign, &summary).is_err());
+        let mut missing = summary.clone();
+        missing.policy = None;
+        assert!(history_custody_for_policy(&account, &missing).is_err());
+        let mut revoked = summary.clone();
+        let body = revoked.policy.as_mut().unwrap();
+        let arkret_sdk::RecoveryMethod::RecoveryUnlock { keys } = &mut body.methods[0] else {
+            unreachable!()
+        };
+        keys[0].backup_hpke.revoked_at = Some(body.issued_at);
+        revoked.methods = body.methods.clone();
+        assert!(
+            history_custody_for_policy(&account, &revoked)
+                .unwrap_err()
+                .to_string()
+                .contains("active controller")
+        );
+        let mut ambiguous = summary.clone();
+        let body = ambiguous.policy.as_mut().unwrap();
+        let arkret_sdk::RecoveryMethod::RecoveryUnlock { keys } = &mut body.methods[0] else {
+            unreachable!()
+        };
+        let mut other = keys[0].clone();
+        other.verification_method =
+            arkret_sdk::DidUrl::new(format!("{did}#another-recovery-proof")).unwrap();
+        other.backup_hpke.key_agreement_ref =
+            arkret_sdk::DidUrl::new(format!("{did}#another-backup-hpke")).unwrap();
+        keys.push(other);
+        ambiguous.methods = body.methods.clone();
+        assert!(
+            history_custody_for_policy(&account, &ambiguous)
+                .unwrap_err()
+                .to_string()
+                .contains("unambiguous")
+        );
     }
 }

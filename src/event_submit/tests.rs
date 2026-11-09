@@ -1677,7 +1677,16 @@ fn mls_commit_event(signer: &crate::event_signer::InksonEventSigner) -> arkret_s
         commit_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(bytes)).unwrap(),
         ratchet_tree: None,
     };
-    let payload = arkret_sdk::MlsCommitPayload::new(base, 0, &envelope, binding).unwrap();
+    let payload = {
+        let public_material = {
+            let bytes = arkret_sdk::base64url_decode(&envelope.commit).unwrap();
+            (bytes.clone(), bytes)
+        };
+        let (info, tree) =
+            crate::test_support::content::public_refs(&public_material.0, &public_material.1);
+        arkret_sdk::MlsCommitPayload::new(base, 0, &envelope, binding, info, tree)
+    }
+    .unwrap();
     let intent: EventIntent = serde_json::from_value(json!({
         "kind": "ak.mls.commit",
         "scope_ref": {"kind": "realm", "realm_id": REALM},
@@ -1703,6 +1712,7 @@ async fn one_mls_commit_and_its_welcomes_are_a_single_atomic_submission() {
     let submission = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequestBody::MlsCommit(
         arkret_wire::MlsCommitSubmission {
             commit_event: commit_event.event().clone(),
+            recovery_source: None,
             welcomes: sorted.clone(),
             idempotency_key: arkret_wire::UuidV7::new(arkret_sdk::identifiers::uuid_v7_at(
                 1_760_000_000_000,
@@ -1760,6 +1770,7 @@ fn unsorted_welcome_deliveries_are_refused_before_anything_is_queued() {
     let error = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequestBody::MlsCommit(
         arkret_wire::MlsCommitSubmission {
             commit_event: commit_event.event().clone(),
+            recovery_source: None,
             welcomes,
             idempotency_key: arkret_wire::UuidV7::new(arkret_sdk::identifiers::uuid_v7_at(
                 1_760_000_000_000,

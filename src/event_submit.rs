@@ -1484,12 +1484,7 @@ impl EventSubmitter {
         &self,
         intent: &EventIntent,
     ) -> anyhow::Result<arkret_sdk::AuthoredEvent> {
-        if let Some(realm_id) = intent.realm_id_opt() {
-            self.ensure_realm_detail_current(realm_id.as_str()).await?;
-        }
-        self.verify_actor_authority(intent).await?;
-        validate_capability_grant_payload(intent)?;
-        let intent = self.direct_participant_authoring_intent(intent).await?;
+        let intent = self.prepare_authoring_intent(intent).await?;
         let digest_suite = self.digest_suite_for_intent(&intent)?;
         let proof_context = self.event_proof_context(digest_suite).await?;
         let mut event = intent
@@ -1498,6 +1493,27 @@ impl EventSubmitter {
             .map_err(|error| anyhow::anyhow!("author Event: {error}"))?;
         self.sign_authored_event(&intent, &mut event, proof_context)?;
         Ok(event)
+    }
+
+    async fn prepare_authoring_intent(&self, intent: &EventIntent) -> anyhow::Result<EventIntent> {
+        if let Some(realm_id) = intent.realm_id_opt() {
+            self.ensure_realm_detail_current(realm_id.as_str()).await?;
+        }
+        self.verify_actor_authority(intent).await?;
+        validate_capability_grant_payload(intent)?;
+        self.direct_participant_authoring_intent(intent).await
+    }
+
+    /// Resolve producer-selected authority before content encryption. Final
+    /// authoring revalidates the same reference instead of rebinding ciphertext.
+    /// The caller separately pins the actual endpoint and session across I/O.
+    pub(crate) async fn prepare_content_intent(
+        &self,
+        intent: &EventIntent,
+    ) -> anyhow::Result<EventIntent> {
+        let prepared = self.prepare_authoring_intent(intent).await?;
+        prepared.pre_encryption_outer_event()?;
+        Ok(prepared)
     }
 
     async fn direct_participant_authoring_intent(
@@ -2317,6 +2333,7 @@ impl EventSubmitter {
         let submission = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequestBody::MlsCommit(
             arkret_wire::MlsCommitSubmission {
                 commit_event: commit.event().clone(),
+                recovery_source: None,
                 welcomes,
                 idempotency_key: arkret_wire::UuidV7::new(arkret_sdk::identifiers::uuid_v7_at(
                     crate::clock::now_unix_ms(),
@@ -2402,6 +2419,35 @@ impl EventSubmitter {
         )?;
         let resumed =
             group.resume_frozen_pending_commit(&frozen, &payload.commit_envelope()?, binding)?;
+        let (info, tree) =
+            resumed.pending_public_group_state_bytes(&payload.commit_envelope()?, binding)?;
+        let material_fence = crate::transport::auth::AuthoringSessionFence::capture()?;
+        for (reference, bytes) in [
+            (payload.group_info_ref(), info),
+            (payload.ratchet_tree_ref(), tree),
+        ] {
+            material_fence.check()?;
+            anyhow::ensure!(
+                reference.as_str()
+                    == format!("ak:blob:{}", crate::canonical::sha256_digest(&bytes)),
+                "frozen MLS Commit public material differs from its signed reference"
+            );
+            let size = bytes.len() as u64;
+            let uploaded = crate::transport::EndpointClients::from_http(self.http.clone())
+                .blob()
+                .upload_bytes_scoped(
+                    bytes,
+                    "application/octet-stream",
+                    Some(event.realm_id.as_str()),
+                    None,
+                )
+                .await?;
+            anyhow::ensure!(
+                &uploaded.blob_ref == reference && uploaded.size_bytes == size,
+                "MLS Commit public material upload differs from frozen bytes"
+            );
+            material_fence.check()?;
+        }
         let record = resumed.export_state_record()?;
         let mut salt = [0_u8; 16];
         getrandom::fill(&mut salt)?;

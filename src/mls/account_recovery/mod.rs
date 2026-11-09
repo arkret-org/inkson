@@ -18,7 +18,9 @@
 //! - [`upload`] — backup / rotation upload flow and superseded cleanup.
 
 mod backup_body;
+mod content_roots;
 mod current_basis;
+pub(crate) use content_roots::ensure_content_root_backup;
 mod recovery_transaction;
 mod restore;
 mod rotation_transaction;

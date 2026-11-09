@@ -253,10 +253,7 @@ impl RealmAdminController {
                 };
                 let commit_event = match self.state_store.read(|store| {
                     crate::mls::group_events::mls_commit_event_from_store(
-                        store,
-                        &realm_id,
-                        &actor_id,
-                        &staged.envelope,
+                        store, &realm_id, &actor_id, &staged,
                     )
                 }) {
                     Ok(event) => event,

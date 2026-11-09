@@ -60,6 +60,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     target_ref: &arkret_sdk::EventId,
     created_at: chrono::DateTime<chrono::Utc>,
     canonical_emoji: &str,
+    material: arkret_models_crypto::EventContentMaterial,
 ) -> Result<EncryptedReaction, MlsRuntimeError> {
     super::reject_retired_minimal_metadata_realm(state_store, realm_id)?;
     let snapshot = state_store
@@ -97,7 +98,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     // reaction rides the same scheme as every other application payload. The
     // caller resolved the durable send gate; submission re-checks the frozen
     // envelope against the accepted current (`crate::mls::send_gate`).
-    let scheme = arkret_sdk::EncryptedPayloadScheme::MlsRfc9420;
+    let scheme = arkret_sdk::EncryptedPayloadScheme::EpochContentAead;
     let routing_window = u64::try_from(created_at.timestamp_millis().div_euclid(3_600_000))
         .map_err(|_| {
             MlsRuntimeError::Serialize("reaction timestamp precedes Unix epoch".to_owned())
@@ -147,6 +148,7 @@ pub fn encrypt_reaction_with_device_snapshot(
             routing_window,
             routing_tag: routing_tag.clone(),
         },
+        material,
     )
     .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
     let encrypted_payload = group

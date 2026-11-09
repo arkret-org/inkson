@@ -103,7 +103,7 @@ pub(crate) fn encrypted_payload_from_verified_event_context(
             reason,
         );
     };
-    let scheme = arkret_sdk::EncryptedPayloadScheme::MlsRfc9420;
+    let scheme = arkret_sdk::EncryptedPayloadScheme::EpochContentAead;
     if !matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. })
         && matches!(
             state_store.installed_scope_mls_current(effective_scope),
@@ -133,6 +133,13 @@ pub(crate) fn encrypted_payload_from_verified_event_context(
             event_kind,
             sender_domain,
             reaction_routing_window,
+            crate::mls::content_roots::retained_original_material(
+                state_store,
+                envelope,
+                effective_scope,
+                event_kind,
+                verified_sender_domain,
+            )?,
         )
         .map_err(|error| warn_pending(&format!("reconstruct encrypted Event header: {error}")))
         .ok()?;
@@ -430,6 +437,64 @@ pub fn verified_author_group_view(
     )
 }
 
+/// Resolve this device's exact accepted MLS leaf for authoring. The Event
+/// signature key is deliberately independent of the installed leaf key.
+pub(crate) fn current_local_content_endpoint(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    authority: &AccountId,
+    device_id: &DeviceId,
+    effective_scope: &arkret_sdk::ScopeRef,
+) -> Result<arkret_models_crypto::ContentEndpoint, MlsRuntimeError> {
+    let current = state_store
+        .current_mls_group_for_scope(effective_scope)
+        .ok_or_else(|| {
+            MlsRuntimeError::Identity("content producer has no accepted current group".into())
+        })?;
+    let group_id = current
+        .effective_scope
+        .canonical_mls_group_id()
+        .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?;
+    let snapshot = state_store
+        .mls_checkpoint_for_scope(effective_scope)
+        .ok_or(MlsRuntimeError::MissingWelcome)?;
+    let accepted_ref = state_store
+        .mls_group_state_ref_for_scope(effective_scope, &snapshot.group_id, snapshot.epoch)
+        .map_err(MlsRuntimeError::Identity)?;
+    if current.effective_scope != *effective_scope
+        || group_id.as_str() != snapshot.group_id
+        || current.epoch != snapshot.epoch
+        || current.current_mls_commit_event_ref != accepted_ref
+    {
+        return Err(MlsRuntimeError::Identity(
+            "content producer checkpoint differs from accepted current group".into(),
+        ));
+    }
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
+        .map_err(MlsRuntimeError::DeviceSecret)?;
+    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, current.epoch)
+        .map_err(|error| MlsRuntimeError::CheckpointRestore(error.to_string()))?;
+    if group.group_id() != group_id || group.epoch() != current.epoch {
+        return Err(MlsRuntimeError::Identity(
+            "restored producer differs from accepted current group".into(),
+        ));
+    }
+    let producer = group
+        .local_content_endpoint()
+        .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?;
+    if producer.actor_id != arkret_sdk::ActorId::account(authority.clone())
+        || producer.endpoint
+            != (arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+                device_id: device_id.clone(),
+            })
+    {
+        return Err(MlsRuntimeError::Identity(
+            "content producer is another Account or Device".into(),
+        ));
+    }
+    Ok(producer)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn verified_author_group_view_for_scope(
     state_store: &crate::state::LocalStateStore,
@@ -677,6 +742,20 @@ pub(crate) fn encrypt_values_with_device_snapshot(
     let group_state_ref = state_store
         .mls_group_state_ref_for_scope(&effective_scope, &snapshot.group_id, snapshot.epoch)
         .map_err(|_| MlsRuntimeError::EncryptionTransitionPending)?;
+    let materials = plaintext_values
+        .iter()
+        .map(|_| {
+            crate::test_support::content::checkpoint_material(
+                state_store,
+                secure_store,
+                authority,
+                device_id,
+                &effective_scope,
+                event_kind_str::STRAND_UPDATE,
+                &group_state_ref,
+            )
+        })
+        .collect::<Vec<_>>();
     encrypt_values_with_device_snapshot_for_effective_scope(
         state_store,
         secure_store,
@@ -689,6 +768,7 @@ pub(crate) fn encrypt_values_with_device_snapshot(
         group_state_ref,
         None,
         None,
+        &materials,
     )
 }
 
@@ -705,9 +785,10 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     group_state_ref: arkret_sdk::EventId,
     circle_id: Option<&str>,
     sidecar_id: Option<&arkret_sdk::SidecarId>,
+    materials: &[arkret_models_crypto::EventContentMaterial],
 ) -> Result<(Vec<arkret_sdk::DidCoreId>, Vec<serde_json::Value>), MlsRuntimeError> {
     super::reject_retired_minimal_metadata_realm(state_store, realm_id)?;
-    if plaintext_values.is_empty() {
+    if plaintext_values.is_empty() || plaintext_values.len() != materials.len() {
         return Err(MlsRuntimeError::EmptyPlaintext);
     }
     let circle = circle_id
@@ -740,20 +821,21 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     }
     let mut encrypted_values = Vec::with_capacity(plaintext_values.len());
     let mut authored_digests = Vec::with_capacity(plaintext_values.len());
-    for plaintext in plaintext_values {
+    for (plaintext, material) in plaintext_values.iter().zip(materials) {
         let sender_domain = group
             .local_content_sender_domain()
             .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
         let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
             "1.0",
             content_type,
-            arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+            arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
             effective_scope.clone(),
             event_kind,
             group.epoch(),
             group_state_ref.clone(),
             sender_domain,
             arkret_sdk::EventContentRoutingContext::None,
+            material.clone(),
         )
         .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
         let encrypted = group
@@ -860,9 +942,13 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     expected_sender_domain: Option<&str>,
     circle_id: Option<&str>,
     sidecar_id: Option<&arkret_sdk::SidecarId>,
+    content_material: arkret_models_crypto::EventContentMaterial,
+    metadata_material: Option<arkret_models_crypto::EventContentMaterial>,
 ) -> Result<DeviceSnapshotEncryption, MlsRuntimeError> {
     super::reject_retired_minimal_metadata_realm(state_store, realm_id)?;
-    if metadata_content_type.is_some() != metadata_plaintext.is_some() {
+    if metadata_content_type.is_some() != metadata_plaintext.is_some()
+        || metadata_plaintext.is_some() != metadata_material.is_some()
+    {
         return Err(MlsRuntimeError::Serialize(
             "metadata content type and plaintext must be supplied together".to_owned(),
         ));
@@ -916,35 +1002,39 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     ) {
         return Err(MlsRuntimeError::EncryptionTransitionPending);
     }
-    let encrypt_one =
-        |group: &mut arkret_sdk::ArkretMlsGroup, payload_content_type: &str, bytes: &[u8]| {
-            let sender_domain = group
-                .local_content_sender_domain()
-                .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
-            let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
-                "1.0",
-                payload_content_type,
-                arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
-                effective_scope.clone(),
-                event_kind,
-                group.epoch(),
-                group_state_ref.clone(),
-                sender_domain,
-                arkret_sdk::EventContentRoutingContext::None,
-            )
+    let encrypt_one = |group: &mut arkret_sdk::ArkretMlsGroup,
+                       payload_content_type: &str,
+                       bytes: &[u8],
+                       material| {
+        let sender_domain = group
+            .local_content_sender_domain()
             .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
-            group
-                .encrypt_payload(header, bytes)
-                .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))
-        };
-    let content = encrypt_one(&mut group, content_type, plaintext)?;
+        let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
+            "1.0",
+            payload_content_type,
+            arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
+            effective_scope.clone(),
+            event_kind,
+            group.epoch(),
+            group_state_ref.clone(),
+            sender_domain,
+            arkret_sdk::EventContentRoutingContext::None,
+            material,
+        )
+        .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
+        group
+            .encrypt_payload(header, bytes)
+            .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))
+    };
+    let content = encrypt_one(&mut group, content_type, plaintext, content_material)?;
     // The optional `encrypted_metadata` plaintext is a second application
     // message on the same ratchet, bound to the same canonical AAD as the
     // content envelope.
     let metadata = metadata_plaintext
         .zip(metadata_content_type)
-        .map(|(metadata, metadata_content_type)| {
-            encrypt_one(&mut group, metadata_content_type, metadata)
+        .zip(metadata_material)
+        .map(|((metadata, metadata_content_type), material)| {
+            encrypt_one(&mut group, metadata_content_type, metadata, material)
         })
         .transpose()?;
     let member_ids = group

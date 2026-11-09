@@ -1123,6 +1123,16 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         ready: true,
     };
 
+    let material = crate::test_support::content::checkpoint_material(
+        &state,
+        &secure,
+        &crate::test_support::authority(actor),
+        &crate::test_support::device_id(device),
+        &effective_scope,
+        arkret_wire::event_kind_str::STRAND_UPDATE,
+        &arkret_sdk::EventId::new("ak:event:AXOcDC3EfKDsROtRCskvfBlBSDUo6v4NxBuFO3jguIWC").unwrap(),
+    );
+
     let (patch, events) = encrypt_private_card_detail_patch_values_with_store_for_effective_scope(
         json!({ "content": { "$op": "set", "value": {
             "kind": "ak.content.text", "format": "markdown", "body": "private overlay"
@@ -1134,6 +1144,7 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         &mut state,
         &secure,
         Some(&context),
+        &[material],
     )
     .unwrap();
 

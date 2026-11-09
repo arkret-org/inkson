@@ -1177,42 +1177,6 @@ impl ChatController {
         let Some(state_store) = self.command_store() else {
             return;
         };
-        let operation = match build_chat_reaction_add_operation(
-            state_store,
-            &context.selected_realm_id,
-            &context.authority,
-            context.principal_id.as_str(),
-            &context.device_id,
-            &target_ref,
-            &emoji,
-            context.selected_channel_security_encrypted,
-        ) {
-            Ok(Some(operation)) => operation,
-            Ok(None) => {
-                {
-                    let next_value =
-                        "Reaction skipped: MLS state not ready for this encrypted channel"
-                            .to_owned();
-                    self.status_msg.revise(|value| *value = next_value);
-                };
-                {
-                    let next_value = None;
-                    self.reaction_picker.revise(|value| *value = next_value);
-                };
-                return;
-            }
-            Err(error) => {
-                {
-                    let next_value = format!("Reaction skipped: {error:#}");
-                    self.status_msg.revise(|value| *value = next_value);
-                };
-                {
-                    let next_value = None;
-                    self.reaction_picker.revise(|value| *value = next_value);
-                };
-                return;
-            }
-        };
         {
             let next_value = None;
             self.reaction_picker.revise(|value| *value = next_value);
@@ -1224,7 +1188,26 @@ impl ChatController {
         super::task::dispatch(async move {
             let result =
                 with_authed_api_with_sync(&base_url, api_token, wait_for, |api| async move {
-                    api.event_submitter()?.submit_sdk_event(&operation).await
+                    let Some(operation) = build_chat_reaction_add_operation(
+                        &api,
+                        state_store.clone(),
+                        &context.selected_realm_id,
+                        &context.authority,
+                        context.principal_id.as_str(),
+                        &context.device_id,
+                        &target_ref,
+                        &emoji,
+                        context.selected_channel_security_encrypted,
+                    )
+                    .await?
+                    else {
+                        anyhow::bail!("reaction is waiting for its accepted content state");
+                    };
+                    api.event_submitter()?
+                        .with_authority(context.authority)
+                        .with_state_store(state_store.handle())
+                        .submit_sdk_event(&operation)
+                        .await
                 })
                 .await;
             if let Err(error) = result {

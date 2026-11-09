@@ -83,7 +83,7 @@ async fn native_attachment_input_and_descriptor_are_protected_and_endpoint_bound
         .unwrap()
         .unwrap();
     assert_eq!(restored, staged);
-    let prepared = restored.prepare(&chunks).await.unwrap();
+    let prepared = restored.prepare(&chunks, None).await.unwrap();
     vault()
         .freeze_prepared_attachment(&object.id, prepared.clone())
         .await
@@ -129,7 +129,7 @@ async fn restart_and_unknown_upload_reuse_the_exact_frozen_object() {
             .unwrap()
             .unwrap();
         assert_eq!(restored, staged);
-        let prepared = restored.prepare(&chunks).await.unwrap();
+        let prepared = restored.prepare(&chunks, None).await.unwrap();
         store
             .freeze_prepared_attachment(&original.id, prepared.clone())
             .await
@@ -144,7 +144,7 @@ async fn restart_and_unknown_upload_reuse_the_exact_frozen_object() {
             .unwrap()
             .unwrap();
         assert_eq!(exact.prepared.as_ref(), Some(&prepared));
-        assert_eq!(exact.prepare(&chunks).await.unwrap(), prepared);
+        assert_eq!(exact.prepare(&chunks, None).await.unwrap(), prepared);
         assert_eq!(
             &*chunks.read_part("ciphertext", 0).await.unwrap(),
             &exact_bytes
@@ -178,7 +178,7 @@ async fn corrupted_preparation_never_replaces_the_durable_intent() {
             .unwrap();
     let original = object(arkret_sdk::DigestSuite::Sha256);
     let staged = stage(&store, &chunks, &original).await;
-    let mut tampered = staged.prepare(&chunks).await.unwrap();
+    let mut tampered = staged.prepare(&chunks, None).await.unwrap();
     tampered.ciphertext_size += 1;
     assert!(
         store
@@ -233,7 +233,7 @@ async fn large_attachment_parts_are_read_on_demand_and_never_enter_the_vault() {
         .freeze_attachment_input(&object.id, arkret_sdk::Hash::new(hasher.finish()).unwrap())
         .await
         .unwrap();
-    let prepared = object.prepare(&chunks).await.unwrap();
+    let prepared = object.prepare(&chunks, None).await.unwrap();
     store
         .freeze_prepared_attachment(&object.id, prepared.clone())
         .await

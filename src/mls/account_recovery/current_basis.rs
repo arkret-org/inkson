@@ -124,6 +124,7 @@ pub(super) async fn read_list_with_source(
             backup_kind: None,
             cursor: None,
             limit: Some(1),
+            agent_id: None,
         })
         .await?;
     source.check_session()?;
@@ -166,10 +167,14 @@ fn validate_basis(
     Ok(())
 }
 
+/// Verify an envelope read from the holder-private native backup resource.
+/// The original accepted authorization supplies its historical signing key;
+/// current-device and active-series admission remain independent read gates.
 pub(super) async fn verify_envelope_source(
     http: &arkret_sdk::http_client::Client,
     source: &OwnStationStateClient,
     authority: &arkret_sdk::AccountId,
+    control_realm: &arkret_sdk::RealmId,
     body: &arkret_sdk::KeyBackup,
 ) -> Result<()> {
     source.check_session()?;
@@ -181,72 +186,90 @@ pub(super) async fn verify_envelope_source(
         source.session()?.account_id() == authority,
         "backup envelope source has another Account"
     );
-    let outcome = crate::transport::keys::query_keys(
-        http,
-        authority,
-        body.signature_proof.device_id.as_str(),
-    )
-    .await?;
-    source.check_session()?;
-    let anchor = arkret_sdk::resolve_controller_backup_trust_anchor(
-        &outcome,
-        authority,
-        &body.signature_proof.device_id,
-    )
-    .map_err(|_| anyhow!("backup envelope accepted authorization is unavailable"))?;
-    let row = outcome
-        .devices_for(authority)
-        .and_then(|devices| devices.get(&body.signature_proof.device_id))
-        .ok_or_else(|| anyhow!("backup envelope device projection is unavailable"))?;
-    verify_envelope_projection(
-        body,
-        authority,
-        &row.device_projection,
-        anchor.generation_ref,
-        crate::clock::now_utc(),
-    )?;
+    body.validate()?;
+    let authorization = body
+        .signature_proof
+        .device_authorize_event_id
+        .as_ref()
+        .ok_or_else(|| anyhow!("Human backup has no original Device authorization"))?;
+    let response = source.committed_event_get(authorization).await?;
+    let arkret_sdk::CommittedEventView::Full(original) = response.value()? else {
+        anyhow::bail!("backup original Device authorization is withheld");
+    };
+    anyhow::ensure!(
+        original.event.event_id == *authorization
+            && original.event.kind == arkret_sdk::EventKind::DeviceAuthorize
+            && original.event.realm_id == *control_realm
+            && original.event.scope_ref
+                == (arkret_sdk::ScopeRef::Realm {
+                    realm_id: control_realm.clone()
+                })
+            && original.event.actor_id == arkret_sdk::ActorId::account(authority.clone())
+            && original.event.executed_by.is_none(),
+        "backup authorization is not its original same-Account PCR unit"
+    );
+    let reference = arkret_sdk::CommittedEventRef {
+        event_id: original.event.event_id.clone(),
+        commit_id: original.commit.commit_id.clone(),
+        stream_ref: original.commit.stream_ref.clone(),
+        stream_position: original.commit.stream_position,
+    };
+    // The shared consumer re-reads the exact stream row and verifies its
+    // historical producer, original Event proof and covering Commit.
+    let response =
+        garth::own_station_results::consume_bound_event(source, &reference, response).await?;
+    let arkret_sdk::CommittedEventView::Full(original) = response.value()? else {
+        anyhow::bail!("verified backup authorization is not a full original");
+    };
+    let payload: arkret_sdk::DeviceAuthorizePayload =
+        serde_json::from_value(serde_json::to_value(&original.event.payload)?)?;
+    verify_envelope_authorization(body, authority, authorization, &payload)?;
     source.check_session()?;
     Ok(())
 }
 
-pub(super) fn verify_envelope_projection(
+/// The caller has already consumed this authorization's exact native original.
+/// This validates historical signature binding, not current endpoint admission.
+pub(super) fn verify_envelope_authorization(
     body: &arkret_sdk::KeyBackup,
     authority: &arkret_sdk::AccountId,
-    projection: &arkret_sdk::VerifiedDeviceProjection,
-    generation: u64,
-    now: chrono::DateTime<chrono::Utc>,
+    authorization_event_id: &arkret_sdk::EventId,
+    authorization: &arkret_sdk::DeviceAuthorizePayload,
 ) -> Result<()> {
     body.validate()?;
     anyhow::ensure!(
         body.actor_id == arkret_sdk::ActorId::account(authority.clone())
-            && body.device_id.as_ref() == Some(&body.signature_proof.device_id),
+            && body.custodian_actor_id.is_none()
+            && body.custody_authorization_ref.is_none()
+            && body.device_id.as_ref() == Some(&authorization.device_id)
+            && body.signature_proof.device_id.as_ref() == Some(&authorization.device_id)
+            && body.signature_proof.agent_authorization_event_ref.is_none(),
         "backup envelope complete Account/device differs"
     );
     anyhow::ensure!(
-        projection.device_status == arkret_sdk::DeviceStatus::Active
-            && projection.attested_at <= now
-            && now < projection.expires_at
-            && projection.authorized_generation_ref == generation,
-        "backup envelope device projection is not current"
+        body.signature_proof.device_authorize_event_id.as_ref() == Some(authorization_event_id),
+        "backup envelope historical authorization differs from its exact original"
     );
-    anyhow::ensure!(
-        body.signature_proof.device_authorize_event_id == projection.device_authorize_event_id,
-        "backup envelope historical authorization is not proved by this projection"
-    );
+    arkret_signatures::verify_device_authorize_possession(authorization, authority)
+        .map_err(|error| anyhow!("backup authorization possession: {error}"))?;
     if let Some(checkpoint) = body.source_commit_ref.as_ref() {
         anyhow::ensure!(
-            checkpoint.device_generation_ref == generation && generation > 0,
-            "backup envelope historical generation is not proved by this projection"
+            checkpoint.device_generation_ref == authorization.authorized_generation_ref
+                && authorization.authorized_generation_ref > 0,
+            "backup envelope historical generation differs from its original authorization"
         );
     }
-    let window = &projection.authorization_window;
     anyhow::ensure!(
-        window.not_before <= body.created_at
-            && window.expires_at.is_none_or(|end| body.created_at < end),
+        authorization.not_before <= body.created_at
+            && authorization
+                .expires_at
+                .flatten()
+                .is_none_or(|end| body.created_at < end),
         "backup envelope was signed outside its accepted authorization window"
     );
-    let key_did = projection.device_signing_key_did.as_str();
-    let multibase = key_did
+    let multibase = authorization
+        .device_public_key_did
+        .as_str()
         .strip_prefix("did:key:")
         .ok_or_else(|| anyhow!("backup signing key is not a registered did:key"))?;
     let method = body.signature_proof.verification_method.as_str();
@@ -255,7 +278,7 @@ pub(super) fn verify_envelope_projection(
         .ok_or_else(|| anyhow!("backup verification method has no exact selector"))?;
     anyhow::ensure!(
         crate::mls_api_helpers::principal_core_id(controller)? == authority.principal_id
-            && fragment == body.signature_proof.device_id.as_str(),
+            && fragment == authorization.device_id.as_str(),
         "backup verification method differs from its complete Account/device"
     );
     anyhow::ensure!(
