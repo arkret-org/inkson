@@ -28,12 +28,19 @@ fn describe(error: impl std::fmt::Display) -> String {
 /// this transition newly occupies; a membership-changing commit without them
 /// fails closed instead of attributing a leaf from credential bytes alone.
 pub(crate) async fn install_accepted_transition(
+    http: &arkret_sdk::http_client::Client,
     state: &StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     item: &CommittedEventFullView,
     authority_hints: &[MlsLeafAuthorityHint],
 ) -> Result<MlsInstallOutcome, String> {
+    let session = crate::transport::auth::AuthoringSessionFence::capture().map_err(describe)?;
+    if !session.belongs_to_account(authority)
+        || session.signer.device_id() != Some(device_id.as_str())
+    {
+        return Err("accepted MLS transition belongs to another local session".into());
+    }
     let _install = welcome_install_lock().lock().await;
     let transition = accepted_mls_transition(item)?;
     if item.event.kind == arkret_sdk::EventKind::MlsGenesis {
@@ -148,6 +155,43 @@ pub(crate) async fn install_accepted_transition(
             return Err(format!("MLS install received a {} Event", other.as_str()));
         }
     };
+    if group.is_active() {
+        let genesis = if item.event.kind == arkret_sdk::EventKind::MlsGenesis {
+            item.event.event_id.clone()
+        } else {
+            state
+                .read(|store| {
+                    store
+                        .current_mls_group_for_scope(&transition.effective_scope)
+                        .filter(|current| current.effective_scope == transition.effective_scope)
+                        .map(|current| current.genesis_event_ref)
+                })
+                .ok_or("accepted MLS transition has no confirmed Genesis")?
+        };
+        let context = crate::mls::content_roots::resolve_root_context(
+            http,
+            &group,
+            &genesis,
+            &item.event.event_id,
+        )
+        .await
+        .map_err(describe)?;
+        crate::mls::content_roots::retain_received_epoch_root(
+            secure_store.as_ref(),
+            authority,
+            device_id,
+            &group,
+            &context,
+        )
+        .await
+        .map_err(describe)?;
+    }
+    session.check_session_identity().map_err(describe)?;
+    if !state.read(|store| {
+        store.active_authority().as_ref() == Some(authority) && !store.current_reset_required()
+    }) {
+        return Err("MLS transition account changed during root retention".into());
+    }
     persist_installed_group(
         state,
         &transition,

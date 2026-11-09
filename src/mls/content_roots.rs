@@ -53,15 +53,9 @@ pub(crate) async fn prepare_material(
         &current.current_mls_commit_event_ref,
     )
     .await?;
-    let root = group.export_content_root(&context)?;
-    let root_ref = arkret_crypto::content_history::content_root_ref(&root, &context)?;
-    let entry = arkret_models_crypto::ContentRootBackupEntry {
-        item_kind: arkret_models_crypto::ContentRootItemKind::ContentEpochRoot,
-        secret_id: format!("root_{}", root_ref.as_str().trim_start_matches("sha256:")),
-        root_context: context.clone(),
-        root_ref: root_ref.clone(),
-        root_base64url: root.clone(),
-    };
+    let entry = export_epoch_root(&group, &context)?;
+    let root = entry.root_base64url.clone();
+    let root_ref = entry.root_ref.clone();
     let backups = crate::mls::account_recovery::ensure_content_root_backup(
         api,
         secure.as_ref(),
@@ -134,6 +128,54 @@ pub(crate) async fn prepare_material(
         outer_event: intent.pre_encryption_outer_event()?,
         protection,
     })
+}
+
+fn export_epoch_root(
+    group: &arkret_sdk::ArkretMlsGroup,
+    context: &arkret_models_crypto::ContentRootContext,
+) -> anyhow::Result<arkret_models_crypto::ContentRootBackupEntry> {
+    context.validate()?;
+    anyhow::ensure!(
+        group.scope() == &context.effective_scope
+            && group.epoch() == context.epoch
+            && group.group_ciphersuite_canonical_id()? == context.cipher_suite,
+        "content root context differs from the installed RFC epoch"
+    );
+    let root = group.export_content_root(context)?;
+    let root_ref = arkret_crypto::content_history::content_root_ref(&root, context)?;
+    Ok(arkret_models_crypto::ContentRootBackupEntry {
+        item_kind: arkret_models_crypto::ContentRootItemKind::ContentEpochRoot,
+        secret_id: format!("root_{}", root_ref.as_str().trim_start_matches("sha256:")),
+        root_context: context.clone(),
+        root_ref,
+        root_base64url: root,
+    })
+}
+
+/// The caller first verifies the exact accepted context and complete roster.
+/// Retain R before installing the next checkpoint; this is a local read key,
+/// never an upload receipt, private-state backup or history authorization.
+pub(crate) async fn retain_received_epoch_root(
+    secure: &dyn crate::secure_key_store::SecureKeyStore,
+    account: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    group: &arkret_sdk::ArkretMlsGroup,
+    context: &arkret_models_crypto::ContentRootContext,
+) -> anyhow::Result<()> {
+    let actor = arkret_sdk::ActorId::account(account.clone());
+    let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+        device_id: device.clone(),
+    };
+    let producer = group.local_content_endpoint()?;
+    anyhow::ensure!(
+        group.is_active() && producer.actor_id == actor && producer.endpoint == endpoint,
+        "received content root belongs to another local endpoint"
+    );
+    let root = export_epoch_root(group, context)?;
+    garth::mls::content_roots::ContentRootVault::new(secure, &actor, &endpoint)
+        .retain_root(&root)
+        .await?;
+    Ok(())
 }
 
 pub(crate) fn retained_original_material(
@@ -240,4 +282,129 @@ pub(crate) async fn resolve_root_context(
     context.validate()?;
     source.check_session()?;
     Ok(context)
+}
+
+#[cfg(test)]
+mod tests {
+    use garth::mls::content_roots::ContentRootVault;
+
+    use super::*;
+
+    fn fixture() -> (
+        arkret_sdk::ArkretMlsGroup,
+        arkret_models_crypto::EventContentMaterial,
+        arkret_sdk::AccountId,
+        arkret_sdk::DeviceId,
+    ) {
+        // Cryptographic fixtures do not establish Native or history authority.
+        let account = crate::test_support::authority("did:web:alice.example");
+        let device =
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1").unwrap();
+        let identity = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
+            arkret_sdk::ActorId::account(account.clone()),
+            device.clone(),
+        )
+        .unwrap();
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            )
+            .unwrap(),
+        };
+        let group = identity.create_group(&scope).unwrap();
+        let reference =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x51; 32]);
+        let material =
+            crate::test_support::content::material(&group, "ak.message.create", &reference);
+        (group, material, account, device)
+    }
+
+    #[tokio::test]
+    async fn retained_epoch_root_opens_content_after_private_group_is_gone() {
+        let (mut group, material, account, device) = fixture();
+        let context = material.content_context.root_context.clone();
+        let reference = material.content_context.root_ref.clone();
+        let header = arkret_models_crypto::EventContentPreEncryptionHeader::reconstruct(
+            "1.0",
+            "application/json",
+            arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
+            group.scope().clone(),
+            "ak.message.create",
+            group.epoch(),
+            context.group_state_ref.clone(),
+            group.local_content_sender_domain().unwrap(),
+            arkret_models_crypto::EventContentRoutingContext::None,
+            material,
+        )
+        .unwrap();
+        let payload = group
+            .encrypt_payload(header, b"retained original body")
+            .unwrap();
+        let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+        retain_received_epoch_root(&secure, &account, &device, &group, &context)
+            .await
+            .unwrap();
+        drop(group);
+        let actor = arkret_sdk::ActorId::account(account);
+        let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device { device_id: device };
+        let reopened = ContentRootVault::new(&secure, &actor, &endpoint);
+        let root = reopened.root(&reference).await.unwrap().unwrap();
+        assert_eq!(root.root_context, context);
+        assert_eq!(
+            arkret_crypto::content_history::open_content(
+                &root.root_base64url,
+                &payload.pre_encryption_header,
+                &payload.ciphertext,
+            )
+            .unwrap(),
+            b"retained original body"
+        );
+        let wrong_endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+            device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000b1")
+                .unwrap(),
+        };
+        assert!(
+            ContentRootVault::new(&secure, &actor, &wrong_endpoint)
+                .root(&reference)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn received_root_rejects_another_endpoint_and_an_uninstalled_epoch() {
+        let (group, material, account, device) = fixture();
+        let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+        let context = &material.content_context.root_context;
+        let wrong_device =
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000b1").unwrap();
+        assert!(
+            retain_received_epoch_root(&secure, &account, &wrong_device, &group, context)
+                .await
+                .is_err()
+        );
+        let foreign = crate::test_support::authority("did:web:bob.example");
+        assert!(
+            retain_received_epoch_root(&secure, &foreign, &device, &group, context)
+                .await
+                .is_err()
+        );
+        let mut future = context.clone();
+        future.epoch += 1;
+        assert!(
+            retain_received_epoch_root(&secure, &account, &device, &group, &future)
+                .await
+                .is_err()
+        );
+        let actor = arkret_sdk::ActorId::account(account);
+        let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device { device_id: device };
+        assert!(
+            ContentRootVault::new(&secure, &actor, &endpoint)
+                .root(&material.content_context.root_ref)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
 }

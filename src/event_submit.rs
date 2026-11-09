@@ -2976,6 +2976,7 @@ impl EventSubmitter {
                     event: queued_event(item).clone(),
                 };
                 let installed = crate::mls::runtime::install_accepted_transition(
+                    &self.http,
                     state_store,
                     authority,
                     device_id,

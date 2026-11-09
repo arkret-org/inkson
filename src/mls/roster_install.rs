@@ -53,6 +53,32 @@ pub(crate) async fn install_welcome_roster_from_service(
         .self_mls_group_state_material(&material_request)
         .await
         .map_err(|error| error.to_string())?;
+    let mut recovery_material = std::collections::BTreeMap::new();
+    for record in pages.iter().flat_map(|page| page.roster.records.iter()) {
+        let arkret_models_collaboration::mls_roster_authority::MlsRosterRecord::Recovery {
+            commit_event,
+            ..
+        } = record
+        else {
+            continue;
+        };
+        let request = arkret_sdk::mls_roster_recovery_material_request(record, &peer)
+            .map_err(|error| error.to_string())?;
+        let material = api
+            .http()
+            .self_mls_group_state_material(&request)
+            .await
+            .map_err(|error| error.to_string())?;
+        session
+            .check_session_identity()
+            .map_err(|error| error.to_string())?;
+        if recovery_material
+            .insert(commit_event.event_id.clone(), material)
+            .is_some()
+        {
+            return Err("MLS recovery roster repeats a public base".into());
+        }
+    }
     session
         .check_session_identity()
         .map_err(|error| error.to_string())?;
@@ -61,5 +87,50 @@ pub(crate) async fn install_welcome_roster_from_service(
     }) {
         return Err("MLS roster account changed during material read".into());
     }
-    arkret_sdk::install_verified_mls_self_roster_bindings(group, &pages, &request, &material)
+    arkret_sdk::install_verified_mls_self_roster_bindings_with_recovery(
+        group,
+        &pages,
+        &request,
+        &material,
+        &recovery_material,
+    )?;
+    // An excluded endpoint must persist the removal, without deriving a key
+    // for the epoch it can no longer read.
+    if !group.is_active() {
+        return Ok(());
+    }
+    let context = crate::mls::content_roots::resolve_root_context(
+        &api.sdk_http_client().map_err(|error| error.to_string())?,
+        group,
+        &peer.genesis_event_ref,
+        &accepted_commit.event.event_id,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    session
+        .check_session_identity()
+        .map_err(|error| error.to_string())?;
+    let device = match group.local_endpoint_identity() {
+        arkret_sdk::MlsEndpointIdentity::HumanDevice { device_id, .. } => device_id,
+        _ => return Err("Inkson roster installation requires its own Human Device".into()),
+    };
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    crate::mls::content_roots::retain_received_epoch_root(
+        secure.as_ref(),
+        authority,
+        &device,
+        group,
+        &context,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    session
+        .check_session_identity()
+        .map_err(|error| error.to_string())?;
+    if !state.read(|store| {
+        store.active_authority().as_ref() == Some(authority) && !store.current_reset_required()
+    }) {
+        return Err("MLS roster account changed during root retention".into());
+    }
+    Ok(())
 }

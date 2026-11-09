@@ -2110,17 +2110,9 @@ pub(super) fn send_encrypted_message(
                             "status": resp_status.clone(),
                         }),
                     );
-                    // BUG B (X9): persist the message plaintext
-                    // into the author-owned sidecar so reload / a
-                    // new device can render the author's own
-                    // encrypted messages (OpenMLS forbids an
-                    // author from decrypting their own
-                    // ciphertext). Keyed by
-                    // `message:{protocol_message_id}` under the
-                    // discussion strand — the same derived id the
-                    // read side looks up — sharing the
-                    // `mls_private_plaintext` map that the X5.3
-                    // cross-device backup already snapshots.
+                    // Keep a protected local presentation cache. Historical
+                    // reads authenticate the original ciphertext and retained
+                    // epoch root; this cache is never uploaded for recovery.
                     store.save_private_plaintext(
                         &realm_for_record,
                         &strand_id_for_sidecar,

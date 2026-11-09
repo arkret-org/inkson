@@ -1309,34 +1309,22 @@ impl LocalStateStore {
         })
     }
 
-    /// X5.3 — serialize the ENTIRE local-plaintext sidecar map
-    /// (`realm -> strand -> field -> plaintext`) to JSON bytes for the encrypted
-    /// cross-device backup. Returns the serialization of an empty map (`{}`)
-    /// when no sidecar entries exist, so callers can cheaply detect "nothing to
-    /// back up" via [`Self::private_plaintext_is_empty`] first.
+    /// Serialize local presentation-cache fixtures, never a remote archive.
+    #[cfg(test)]
     pub fn private_plaintext_snapshot_json(&self) -> Vec<u8> {
         self.with_unoverlaid_account_fields(|state| {
             serde_json::to_vec(&state.mls_private_plaintext).unwrap_or_else(|_| b"{}".to_vec())
         })
     }
 
-    /// X5.3 — true when the sidecar holds no plaintext for any Realm/strand/field.
-    /// Used to skip the cross-device backup upload when there is nothing to
-    /// protect.
+    /// Inspect the presentation cache in local persistence tests.
+    #[cfg(test)]
     pub fn private_plaintext_is_empty(&self) -> bool {
         self.with_unoverlaid_account_fields(|state| state.mls_private_plaintext.is_empty())
     }
 
-    /// X5.3 — merge an incoming sidecar map (decrypted from a cross-device
-    /// backup) into the local cache, then flush.
-    ///
-    /// Merge semantics: incoming entries only FILL fields that are missing
-    /// locally; on a (Realm, strand, field) conflict the EXISTING LOCAL value is
-    /// kept. Rationale: the local sidecar is written synchronously on every
-    /// encrypted write by the author on THIS device, so a locally-present value
-    /// is at least as fresh as the backup (which is only re-uploaded
-    /// periodically). On a brand-new browser the local cache is empty, so the
-    /// backup populates everything — the common restore case.
+    /// Merge local cache fixtures without overwriting an existing value.
+    #[cfg(test)]
     pub fn merge_private_plaintext_map(
         &mut self,
         incoming: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
