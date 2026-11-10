@@ -2,7 +2,7 @@
 
 > 状态：Inkson 客户端设计说明，非规范正文。协议以
 > `arkret-spec/spec/v1/zh/identity/key-management.md` 和
-> `crypto-media/device-lifecycle.md` 为准。
+> `crypto-media/device-lifecycle.md`、`crypto-media/content-history.md` 为准。
 
 ## 1. 边界与不变量
 
@@ -53,6 +53,16 @@ PCR genesis 固定为两个有序 Event：
   create-once/re-anchor 路径。不得要求已经损毁的设备批准。
 - root recovery completion 后，仍然有效且绑定同一 DPoP holder 的 Account Handoff
   可凭终态 receipt 直接换取 Standard grant；不创建临时受限 grant，也不再次 OIDC。
+
+身份替代单元只使用已经验证的恢复证明与新设备密钥，不要求旧
+`mls_account_secret` 存在，也不在提交前导入旧私有 checkpoint。该步骤没有解封历史备份，
+所以终局 receipt 的 `unlocked_backups` 为空、`welcome_count` 为0；下载到密文不算解封。
+断点续接沿已耐久的同一请求与替代设备签名键完成，不把24词或备份私钥写进请求。
+
+身份完成后，历史根通过 current-device 的逐对象 `content_history` 授权与 fresh challenge
+读取；已消费的 identity recovery session 不授予这条读取资格。个人原PCR全历史恢复、
+公开原作者证明准备以及全scope安全收尾仍需分别实施并验证。身份 receipt 不能表示
+这些阶段已完成，客户端也不能因为缺少旧 checkpoint secret 就新建 Account 或PCR。
 
 ## 4. 恢复材料与代际围栏
 

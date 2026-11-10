@@ -51,13 +51,10 @@ pub(super) async fn recover_bound_principal_device(
     }
     let (api, recovery_grant_id, recovery_grant_jkt) =
         issue_recovery_session_transport(handoff, state_store.clone()).await?;
-    let store_handle = state_store.handle();
     if let Some(mut completed) = crate::mls::account_recovery::resume_pending_pcr_policy_recovery(
         &api,
-        &store_handle,
         &account_id,
         &expected_device,
-        recovery_words,
     )
     .await?
     {
@@ -141,11 +138,9 @@ pub(super) async fn recover_bound_principal_device(
         .await?;
     let mut completed = crate::mls::account_recovery::execute_pcr_policy_recovery(
         &api,
-        &store_handle,
         principal_did,
         &session,
         &proof_outcome,
-        recovery_words,
     )
     .await?;
     let account =

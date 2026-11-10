@@ -103,40 +103,42 @@ Open phase-3 items:
 - Partial bootstrap behavior is tracked in §13.
 - OIDC callback and passkey completion is tracked in §18.
 
-## MLS history recovery and account secret
+## Content recovery and local MLS checkpoints
 
-The desktop and web clients now use the same live OpenMLS path for persisted
-MLS snapshots. WebAssembly builds no longer treat MLS history as an
-unsupported target, but they still store long-lived local material in browser
-storage rather than an OS keychain.
+Application content uses `ak.encryption.epoch_content_aead.v1`. An accepted
+MLS epoch exports a content root bound to its complete scope, original group
+state and fixed Realm backup strategy. Each original body or attachment has
+its own endpoint and salt binding. Retained roots and authorized history grants
+provide historical decryption; local private MLS checkpoints serve ongoing
+membership and sending.
 
-Encrypted realm / kanban history recovery uses one account-level MLS snapshot
-secret. The secret is wrapped into a `secret_storage` key-backup item with
-`item_kind = "mls_account_secret"`; the wrapping key is derived from the
-user's recovery passphrase with Argon2id and XChaCha20-Poly1305. A fresh device
-can fetch that server-side ciphertext, unwrap it locally after the user enters
-the passphrase, and then decrypt every `mls_history` backup sealed with the
-account secret.
+The account MLS checkpoint secret can be wrapped as the `mls_account_secret`
+item in `secret_storage`. Its availability does not establish access to
+content roots, current membership or a completed recovery. The PCR-policy
+identity coordinator completes the signed reanchor/authorize unit without
+fetching or importing an old checkpoint secret. Its terminal receipt records
+an empty `unlocked_backups` list because this coordinator opens no backup.
 
-Security consequences:
+The recovery contract keeps three results separate: identity replacement,
+verified historical content, and security cleanup across every affected scope.
+After identity replacement, historical root reads require the current Device's
+object-bound proof and a fresh server challenge. A consumed identity recovery
+session is not that credential. The 24-word lossless-history requirement applies
+to the original personal PCR; ordinary Realm history also requires its own
+current history authorization.
 
-- A weak or leaked recovery passphrase can expose all historical encrypted MLS
-  history backups protected by the account secret.
-- Device revocation does not currently erase an account secret already copied
-  onto the revoked device. The revoked device may retain access to history it
-  already stored or can still fetch through valid server credentials.
-- Inkson cannot issue a remote wipe for browser localStorage, IndexedDB,
-  native keychain records, exported logs, or cached plaintext on a device that
-  is offline or controlled by an attacker. The revocation UI therefore warns
-  users that rotation protects future backups and group epochs, not old
-  material already present on that device.
-- The local 1.0 design intentionally uses one account secret rather than a
-  per-realm secret. This keeps backup and restore simple, but compromise of
-  the account secret has account-wide impact.
+An offline device can retain plaintext, roots and private state it already
+received. Future isolation requires removing old endpoints from the affected
+MLS groups and using new roots and fresh encryption keys for every new backup
+block and recipient branch. Copying the old account secret must not unlock
+those new blocks. The full Native mnemonic recovery, External Commit and
+old-device/new-backup exclusion path remains an open implementation and live
+acceptance item; local root or identity-unit tests do not establish it.
 
-Required follow-up before production hardening: either add account-secret
-versioning and rotation on device revoke, or keep the above limitation visible
-in product UI and release notes.
+Recovery words and the derived recovery-proof/backup private keys remain cold
+material and do not enter ordinary persisted device state. The local clients
+cannot remotely wipe browser storage, native keychains or previously exported
+plaintext on a lost device.
 
 ## Supply-chain and release risks
 

@@ -659,6 +659,9 @@ pub async fn ensure_recovery_policy(
 }
 
 #[cfg(test)]
+pub(crate) use tests::recovery_unlock_fixture_for_principal;
+
+#[cfg(test)]
 mod tests {
     use ed25519_dalek::Verifier as _;
 
@@ -686,9 +689,19 @@ mod tests {
         RecoveryPolicySummary,
         arkret_sdk::RecoverySession,
     ) {
+        recovery_unlock_fixture_for_principal("did:webvh:z6mkfixture:principal.example")
+    }
+
+    pub(crate) fn recovery_unlock_fixture_for_principal(
+        principal_did: &str,
+    ) -> (
+        String,
+        arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
+        RecoveryPolicySummary,
+        arkret_sdk::RecoverySession,
+    ) {
         crate::operation::set_authoring_station_id(None);
-        let principal_did =
-            arkret_sdk::Did::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap();
+        let principal_did = arkret_sdk::Did::new(principal_did.to_owned()).unwrap();
         let account_id = arkret_sdk::AccountId::new(
             arkret_sdk::project_did_to_core_id(&principal_did).unwrap(),
             arkret_sdk::DidCoreId::new(
@@ -754,7 +767,7 @@ mod tests {
         let device_multikey = arkret_sdk::canonical::ed25519_pubkey_to_did_key_multibase(
             device_signing_key.verifying_key().as_bytes(),
         );
-        let created_at = policy.issued_at + chrono::Duration::seconds(1);
+        let created_at = policy.issued_at;
         // Exercise a whole-second expiry: chrono's generic JSON serializer
         // omits .000, whereas the wire contract requires millisecond precision.
         let expires_at = chrono::DateTime::from_timestamp(

@@ -40,10 +40,9 @@ pub(crate) use restore::mls_restore_prompt_required_after_material;
 pub use restore::{
     AccountSecretRestoreReport, auto_restore_mls_account_secret_with_passphrase,
     fetch_mls_restore_payload, fetch_mls_restore_payload_after_encrypted_projection,
-    fetch_mls_restore_payload_after_projection,
-    fetch_mls_restore_payload_with_recovery_session_unlock_proof,
-    fetch_mls_restore_payload_with_unlock_proof, mls_backup_prompt_required,
-    mls_restore_prompt_required, restore_mls_account_secret_with_passphrase_from_payload,
+    fetch_mls_restore_payload_after_projection, fetch_mls_restore_payload_with_unlock_proof,
+    mls_backup_prompt_required, mls_restore_prompt_required,
+    restore_mls_account_secret_with_passphrase_from_payload,
     restore_mls_account_secret_with_recovery_key_from_payload,
 };
 pub(crate) use rotation_transaction::execute_device_revoke_security_rotation;

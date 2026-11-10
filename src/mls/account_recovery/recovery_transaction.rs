@@ -19,7 +19,6 @@ use arkret_sdk::{
     SecurityTransaction, SecurityTransactionCreateRequestBody,
 };
 use arkret_wire::{CommitStreamRef, Hash, NonEmptyString, ReceiptId, TransactionId};
-use zeroize::Zeroizing;
 
 fn non_empty(value: String) -> anyhow::Result<NonEmptyString> {
     NonEmptyString::new(value).map_err(anyhow::Error::msg)
@@ -29,7 +28,6 @@ pub(crate) struct PreparedPcrPolicyRecovery {
     pub security_transaction_create_request_body: RecoveryTransactionCreateRequestBody,
     pub publication_context: arkret_sdk::ProducerVerificationContext,
     pub proof_summary: arkret_models_crypto::RecoverySessionProofSummary,
-    pub recovery_private_key: Zeroizing<[u8; 32]>,
     pub verified_session: arkret_sdk::RecoverySession,
 }
 
@@ -66,9 +64,9 @@ fn completed_recovery(
     })
 }
 
-/// A durable completed recovery already flushed restored private material
-/// before its terminal submission. Resume grant issuance directly; its
-/// consumed recovery session is no longer a backup-unlock credential.
+/// A durable completed transaction proves the identity replacement only.
+/// Resume grant issuance directly; its consumed recovery session is not a
+/// credential for the replacement Device's separate content recovery.
 pub(crate) fn load_completed_pending_pcr_policy_recovery(
     account_id: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
@@ -134,7 +132,6 @@ pub(crate) async fn prepare_pcr_policy_recovery(
     principal_did: &arkret_sdk::Did,
     session: &arkret_sdk::RecoverySession,
     proof_outcome: &arkret_sdk::RecoverySessionProofSubmitResponseBody,
-    recovery_words: &str,
 ) -> anyhow::Result<PreparedPcrPolicyRecovery> {
     // A 2xx submit reply already means the proof verified and the session
     // entered `verified`; the outcome echoes neither `state` nor
@@ -145,6 +142,28 @@ pub(crate) async fn prepare_pcr_policy_recovery(
     let verified_session = api
         .recovery_session(session.recovery_session_id.as_str())
         .await?;
+    let device_signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("replacement device signer is unavailable"))?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    prepare_verified_pcr_policy_recovery(
+        principal_did,
+        session,
+        proof_outcome,
+        verified_session,
+        device_signer.as_ref(),
+        secure_store.as_ref(),
+    )
+    .await
+}
+
+async fn prepare_verified_pcr_policy_recovery(
+    principal_did: &arkret_sdk::Did,
+    session: &arkret_sdk::RecoverySession,
+    proof_outcome: &arkret_sdk::RecoverySessionProofSubmitResponseBody,
+    verified_session: arkret_sdk::RecoverySession,
+    device_signer: &crate::event_signer::InksonEventSigner,
+    secure_store: &(dyn crate::secure_key_store::SecureKeyStore + Send + Sync),
+) -> anyhow::Result<PreparedPcrPolicyRecovery> {
     verified_session.validate_shape()?;
     if arkret_sdk::project_did_to_core_id(principal_did)?
         != verified_session.account_id.principal_id
@@ -153,6 +172,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
     }
     if verified_session.state != arkret_sdk::RecoverySessionState::Verified
         || verified_session.identity_model != arkret_sdk::RecoveryIdentityModel::PcrPolicy
+        || proof_outcome.recovery_session_id != session.recovery_session_id
         || verified_session.recovery_session_id != session.recovery_session_id
         || verified_session.account_id != session.account_id
         || verified_session.requesting_device_id != session.requesting_device_id
@@ -165,20 +185,12 @@ pub(crate) async fn prepare_pcr_policy_recovery(
 
     let previous_device_generation = verified_session.current_device_generation_ref;
     let result_device_generation = next_recovery_device_generation(previous_device_generation)?;
-    let backup_material =
-        arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
-            recovery_words,
-            "",
-            0,
-        )?;
 
     let scope_ref = verified_session
         .publication_authority_context
         .scope_ref
         .clone();
     let created_at = crate::clock::now_utc_millis();
-    let device_signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("replacement device signer is unavailable"))?;
     let device_public_key_multibase = device_signer
         .public_key_multibase()
         .ok_or_else(|| anyhow::anyhow!("replacement device signer has no Ed25519 public key"))?;
@@ -189,9 +201,8 @@ pub(crate) async fn prepare_pcr_policy_recovery(
             && crate::clock::now_utc() < verified_session.expires_at,
         "recovery session does not bind the current replacement key or is expired"
     );
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let (_, hpke_public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair_durable(
-        secure_store.as_ref(),
+        secure_store,
         &verified_session.account_id,
         &verified_session.requesting_device_id,
     )
@@ -336,7 +347,6 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         ))?,
         security_transaction_create_request_body,
         proof_summary,
-        recovery_private_key: Zeroizing::new(backup_material.backup_hpke_serialized_private_key),
         verified_session,
     })
 }
@@ -362,51 +372,26 @@ fn exact_device_reanchor_payload(
     Ok(payload)
 }
 
-fn recovery_backup_classes_unlocked(
-    restore_payload: &serde_json::Value,
-) -> anyhow::Result<Vec<arkret_models_crypto::RecoveryBackupUnlocked>> {
-    let mut classes = crate::mls::runtime::iter_backup_bodies(restore_payload)
-        .filter(|backup| {
-            backup
-                .get("ciphertext")
-                .and_then(serde_json::Value::as_str)
-                .is_some()
-        })
-        .map(|backup| {
-            Ok(arkret_models_crypto::RecoveryBackupUnlocked {
-                backup_kind: serde_json::from_value(
-                    backup
-                        .get("backup_kind")
-                        .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("backup omits kind"))?,
-                )?,
-                backup_id: arkret_sdk::BackupId::new(
-                    backup
-                        .get("backup_id")
-                        .and_then(serde_json::Value::as_str)
-                        .ok_or_else(|| anyhow::anyhow!("backup omits id"))?
-                        .to_owned(),
-                )?,
-                series_id: arkret_sdk::BackupSeriesId::new(
-                    backup
-                        .get("series_id")
-                        .and_then(serde_json::Value::as_str)
-                        .ok_or_else(|| anyhow::anyhow!("backup omits series"))?
-                        .to_owned(),
-                )?,
-                ciphertext_digest: Hash::new(
-                    backup
-                        .get("ciphertext_digest")
-                        .and_then(serde_json::Value::as_str)
-                        .ok_or_else(|| anyhow::anyhow!("backup omits ciphertext digest"))?
-                        .to_owned(),
-                )?,
-            })
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    classes.sort_by(|left, right| left.backup_id.as_str().cmp(right.backup_id.as_str()));
-    classes.dedup_by(|left, right| left.backup_id == right.backup_id);
-    Ok(classes)
+fn identity_recovery_terminal_observation(
+    session: &arkret_sdk::RecoverySession,
+    proof: &arkret_models_crypto::RecoverySessionProofSummary,
+) -> crate::fresh_device_recovery::RecoveryTerminalObservation {
+    crate::fresh_device_recovery::RecoveryTerminalObservation {
+        policy_id: session.policy_id.clone(),
+        policy_version: session.policy_version,
+        trust_domain: session.trust_domain.clone(),
+        proof_summary: arkret_models_crypto::RecoveryProofSummary {
+            kind: proof.kind,
+            proof_digest: proof.proof_digest.clone(),
+            quorum_participant_count: None,
+        },
+        // No historical object has been opened by the identity coordinator.
+        backup_classes_unlocked: vec![],
+        welcome_count: 0,
+        welcome_realm_summary: None,
+        started_at: session.created_at,
+        completed_at: crate::clock::now_utc(),
+    }
 }
 
 fn reject_terminal_recovery_transaction(
@@ -426,38 +411,16 @@ fn reject_terminal_recovery_transaction(
 
 pub(crate) async fn execute_pcr_policy_recovery(
     api: &crate::transport::TransportClient,
-    state_store: &crate::runtime::input::StateStoreHandle,
     principal_did: &arkret_sdk::Did,
     session: &arkret_sdk::RecoverySession,
     proof_outcome: &arkret_sdk::RecoverySessionProofSubmitResponseBody,
-    recovery_words: &str,
 ) -> anyhow::Result<CompletedFreshDeviceRecovery> {
-    let prepared =
-        prepare_pcr_policy_recovery(api, principal_did, session, proof_outcome, recovery_words)
-            .await?;
+    let prepared = prepare_pcr_policy_recovery(api, principal_did, session, proof_outcome).await?;
     let session = &prepared.verified_session;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let restore_payload = super::fetch_mls_restore_payload_with_recovery_session_unlock_proof(
-        api,
-        session.account_id.principal_id.as_str(),
-        session.requesting_device_id.as_str(),
-        session,
-    )
-    .await?;
-    // Checkpoint-key import does not establish history or membership readiness.
-    super::restore_mls_account_secret_with_recovery_key_from_payload(
-        &restore_payload,
-        secure_store.as_ref(),
-        &session.account_id,
-        session.account_id.principal_id.as_str(),
-        prepared.recovery_private_key.as_slice(),
-        (session.policy_id.as_str(), session.policy_version),
-    )
-    .await?;
-    state_store
-        .read(crate::state::LocalStateStore::begin_durable_flush)?
-        .wait()
-        .await?;
+    // The verified identity proof authorizes only the replacement unit. Old
+    // checkpoint secrets are neither needed nor imported before the fence;
+    // history uses the new Device's separately authorized per-object lane.
 
     let transaction_id = prepared
         .security_transaction_create_request_body
@@ -492,21 +455,7 @@ pub(crate) async fn execute_pcr_policy_recovery(
             .ok_or_else(|| anyhow::anyhow!("replacement device signer is unavailable"))?;
         let terminal = crate::fresh_device_recovery::sign_recovery_terminal_commit_continue(
             &transaction,
-            crate::fresh_device_recovery::RecoveryTerminalObservation {
-                policy_id: session.policy_id.clone(),
-                policy_version: session.policy_version,
-                trust_domain: session.trust_domain.clone(),
-                proof_summary: arkret_models_crypto::RecoveryProofSummary {
-                    kind: prepared.proof_summary.kind,
-                    proof_digest: prepared.proof_summary.proof_digest,
-                    quorum_participant_count: None,
-                },
-                backup_classes_unlocked: recovery_backup_classes_unlocked(&restore_payload)?,
-                welcome_count: 0,
-                welcome_realm_summary: None,
-                started_at: session.created_at,
-                completed_at: crate::clock::now_utc(),
-            },
+            identity_recovery_terminal_observation(session, &prepared.proof_summary),
             signer.as_ref(),
         )?;
         transaction = workflow
@@ -521,13 +470,12 @@ pub(crate) async fn execute_pcr_policy_recovery(
 }
 
 /// Resume the byte-identical durable request after reload or response loss.
-/// Recovery words are re-entered; they are never part of the persisted plan.
+/// Its already verified proof and exact replacement key remain binding; no
+/// historical private material is imported while completing the identity unit.
 pub(crate) async fn resume_pending_pcr_policy_recovery(
     api: &crate::transport::TransportClient,
-    state_store: &crate::runtime::input::StateStoreHandle,
     expected_account: &arkret_sdk::AccountId,
     expected_device: &arkret_sdk::DeviceId,
-    recovery_words: &str,
 ) -> anyhow::Result<Option<CompletedFreshDeviceRecovery>> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let Some(transaction_id) =
@@ -613,52 +561,12 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
         .proof_summary
         .clone()
         .ok_or_else(|| anyhow::anyhow!("verified recovery session omitted proof summary"))?;
-    let recovery_material =
-        arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
-            recovery_words,
-            "",
-            0,
-        )?;
-    let restore_payload = super::fetch_mls_restore_payload_with_recovery_session_unlock_proof(
-        api,
-        session.account_id.principal_id.as_str(),
-        session.requesting_device_id.as_str(),
-        &session,
-    )
-    .await?;
-    super::restore_mls_account_secret_with_recovery_key_from_payload(
-        &restore_payload,
-        secure_store.as_ref(),
-        &session.account_id,
-        session.account_id.principal_id.as_str(),
-        &recovery_material.backup_hpke_serialized_private_key,
-        (session.policy_id.as_str(), session.policy_version),
-    )
-    .await?;
-    state_store
-        .read(crate::state::LocalStateStore::begin_durable_flush)?
-        .wait()
-        .await?;
     if !crate::fresh_device_recovery::transaction_is_completed(&transaction) {
         let signer = crate::event_signer::active_signer()
             .ok_or_else(|| anyhow::anyhow!("replacement device signer is unavailable"))?;
         let terminal = crate::fresh_device_recovery::sign_recovery_terminal_commit_continue(
             &transaction,
-            crate::fresh_device_recovery::RecoveryTerminalObservation {
-                policy_id: session.policy_id.clone(),
-                policy_version: session.policy_version,
-                trust_domain: session.trust_domain.clone(),
-                proof_summary: arkret_models_crypto::RecoveryProofSummary {
-                    kind: proof_summary.kind,
-                    proof_digest: proof_summary.proof_digest,
-                    quorum_participant_count: None,
-                },
-                backup_classes_unlocked: recovery_backup_classes_unlocked(&restore_payload)?,
-                welcome_count: 0,
-                welcome_realm_summary: None,
-                started_at: session.created_at,
-                completed_at: crate::clock::now_utc(),
-            },
+            identity_recovery_terminal_observation(&session, &proof_summary),
             signer.as_ref(),
         )?;
         transaction = workflow
@@ -674,7 +582,209 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
 
 #[cfg(test)]
 mod tests {
-    use super::next_recovery_device_generation;
+    use ed25519_dalek::Verifier as _;
+
+    use super::*;
+
+    fn hash(value: &impl serde::Serialize) -> Hash {
+        Hash::new(arkret_sdk::canonical::sha256_digest(
+            arkret_sdk::canonical::canonical_json_bytes(value).unwrap(),
+        ))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn identity_unit_and_terminal_sign_without_any_old_checkpoint_secret() {
+        let (words, _, policy, session) =
+            crate::recovery_flow::recovery_unlock_fixture_for_principal(
+                "did:webvh:zRecoveryUnit:principal.example",
+            );
+        let proof =
+            crate::recovery_flow::build_recovery_unlock_proof_from_words(&session, &policy, &words)
+                .unwrap();
+        let arkret_sdk::RecoverySessionProof::RecoveryUnlock(unlock) = &proof else {
+            panic!("expected the mnemonic proof");
+        };
+        // This unit test models the already verified source snapshot. Native
+        // policy admission and server fencing require their separate live test.
+        let summary = arkret_models_crypto::RecoverySessionProofSummary {
+            kind: RecoveryProofKind::RecoveryUnlock,
+            proof_digest: hash(&proof),
+            verification_method: Some(unlock.verification_method.clone()),
+        };
+        let outcome = arkret_sdk::RecoverySessionProofSubmitResponseBody {
+            recovery_session_id: session.recovery_session_id.clone(),
+            proof_summary: Some(summary.clone()),
+        };
+        let mut verified = session.clone();
+        verified.state = arkret_sdk::RecoverySessionState::Verified;
+        verified.proof_summary = Some(summary);
+        let principal =
+            arkret_sdk::Did::new("did:webvh:zRecoveryUnit:principal.example".to_owned()).unwrap();
+        let signer = crate::event_signer::build_ed25519_device_signer(
+            [41; 32],
+            principal.as_str(),
+            session.requesting_device_id.as_str(),
+        );
+        let store = crate::secure_key_store::MemorySecureKeyStore::default();
+        assert!(
+            crate::mls::runtime::load_account_mls_secret(&store, &session.account_id)
+                .unwrap()
+                .is_none()
+        );
+        let prepared = prepare_verified_pcr_policy_recovery(
+            &principal,
+            &session,
+            &outcome,
+            verified.clone(),
+            &signer,
+            &store,
+        )
+        .await
+        .unwrap();
+        let create = prepared.security_transaction_create_request_body;
+        arkret_sdk::VerifiedSubmission::verify(
+            SecurityTransactionCreateRequestBody::Recovery(create.clone()),
+            |_| Ok(prepared.publication_context.clone()),
+        )
+        .unwrap();
+        let intent = &create.recovery_intent;
+        let plan = arkret_models_crypto::PcrPolicyRecoveryPlan {
+            binding: arkret_models_crypto::PcrPolicyRecoveryBinding {
+                identity_model: arkret_sdk::RecoveryIdentityModel::PcrPolicy,
+                recovery_session_id: intent.recovery_session_id.clone(),
+                replacement_device_id: intent.replacement_device_id.clone(),
+                reanchor_event_id: intent.reanchor_unit.request.events[0]
+                    .event
+                    .event_id
+                    .clone(),
+                authorize_event_id: intent.reanchor_unit.request.events[1]
+                    .event
+                    .event_id
+                    .clone(),
+                terminal_receipt_id: intent.terminal_receipt_id.clone(),
+            },
+            recovery_session_snapshot_digest: hash(&verified),
+            proof_digest: prepared.proof_summary.proof_digest.clone(),
+            previous_model_generation_ref: intent.previous_model_generation_ref,
+            new_model_generation_ref: intent.new_model_generation_ref,
+            reanchor_unit: intent.reanchor_unit.clone(),
+            reanchor_commit_intent: intent.reanchor_commit_intent.clone(),
+        };
+        let plan = arkret_models_crypto::SecurityTransactionPreparedPlan::Recovery(plan);
+        let transaction = SecurityTransaction {
+            transaction_id: create.transaction_id.clone(),
+            kind: create.kind,
+            account_id: create.account_id.clone(),
+            authorizing_device_id: None,
+            expires_at: create.expires_at,
+            created_at: crate::clock::now_utc(),
+            request_digest: hash(&SecurityTransactionCreateRequestBody::Recovery(
+                create.clone(),
+            )),
+            prepared_plan_digest: hash(&plan),
+            prepared_plan: plan,
+            accepted_steps: vec![],
+            revoke_proposal: None,
+            revoke_command_outcome: None,
+            terminal_outcome: None,
+        };
+        transaction.validate_structural().unwrap();
+        let terminal = crate::fresh_device_recovery::sign_recovery_terminal_commit_continue(
+            &transaction,
+            identity_recovery_terminal_observation(&verified, &prepared.proof_summary),
+            &signer,
+        )
+        .unwrap();
+        terminal.validate_for_transaction(&transaction).unwrap();
+        let arkret_models_crypto::ClientStepAttestationArtifact::Recovery(commit) =
+            &terminal.client_attestation.artifact
+        else {
+            panic!("expected the identity terminal artifact");
+        };
+        let receipt = &commit.recovery_receipt;
+        assert!(receipt.unlocked_backups.is_empty());
+        assert_eq!(receipt.welcome_count, 0);
+        assert_eq!(receipt.previous_model_generation_ref, 3);
+        assert_eq!(receipt.new_model_generation_ref, 4);
+        assert_eq!(receipt.account_id, session.account_id);
+        assert_eq!(receipt.new_device_id, session.requesting_device_id);
+        let key = ed25519_dalek::SigningKey::from_bytes(&[41; 32]).verifying_key();
+        for (bytes, signature) in [
+            (
+                receipt.signature_transcript_bytes().unwrap(),
+                &receipt.signature_proof.signature,
+            ),
+            (
+                terminal.client_attestation.signing_bytes().unwrap(),
+                &terminal.client_attestation.signature_proof.signature,
+            ),
+        ] {
+            let signature = ed25519_dalek::Signature::from_slice(
+                &arkret_sdk::base64url_decode(signature.as_str()).unwrap(),
+            )
+            .unwrap();
+            key.verify_strict(&bytes, &signature).unwrap();
+        }
+        let mut rebound = receipt.clone();
+        rebound.new_model_generation_ref += 1;
+        let signature = ed25519_dalek::Signature::from_slice(
+            &arkret_sdk::base64url_decode(receipt.signature_proof.signature.as_str()).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            key.verify(&rebound.signature_transcript_bytes().unwrap(), &signature)
+                .is_err()
+        );
+        assert!(
+            crate::mls::runtime::load_account_mls_secret(&store, &session.account_id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            crate::mls::runtime::load_device_hpke_keypair(
+                &store,
+                &session.account_id,
+                &session.requesting_device_id,
+            )
+            .unwrap()
+            .is_some()
+        );
+        for mismatch in ["key", "station", "proof", "pending"] {
+            let mut changed = verified.clone();
+            let signer = crate::event_signer::build_ed25519_device_signer(
+                if mismatch == "key" {
+                    [42; 32]
+                } else {
+                    [41; 32]
+                },
+                principal.as_str(),
+                session.requesting_device_id.as_str(),
+            );
+            match mismatch {
+                "station" => {
+                    changed.account_id.station_id = arkret_sdk::DidCoreId::new(
+                        "ak:did_core:webvh:zOther:other-station.example".to_owned(),
+                    )
+                    .unwrap()
+                }
+                "proof" => {
+                    changed.proof_summary.as_mut().unwrap().proof_digest = hash(&"other proof")
+                }
+                "pending" => changed.state = arkret_sdk::RecoverySessionState::Pending,
+                _ => {}
+            }
+            let empty = crate::secure_key_store::MemorySecureKeyStore::default();
+            assert!(
+                prepare_verified_pcr_policy_recovery(
+                    &principal, &session, &outcome, changed, &signer, &empty,
+                )
+                .await
+                .is_err(),
+                "{mismatch}"
+            );
+        }
+    }
 
     #[test]
     fn recovery_generation_is_the_single_checked_successor() {

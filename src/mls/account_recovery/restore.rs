@@ -314,24 +314,7 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
     device_id: &str,
 ) -> Result<Value> {
     let payload = fetch_mls_restore_payload(api, actor_id).await?;
-    hydrate_mls_restore_payload_with_unlock_proof(api, payload, actor_id, device_id, None).await
-}
-
-pub async fn fetch_mls_restore_payload_with_recovery_session_unlock_proof(
-    api: &crate::transport::TransportClient,
-    actor_id: &str,
-    device_id: &str,
-    recovery_session: &arkret_sdk::RecoverySession,
-) -> Result<Value> {
-    let payload = fetch_mls_restore_payload_after_projection(api, actor_id).await?;
-    hydrate_mls_restore_payload_with_unlock_proof(
-        api,
-        payload,
-        actor_id,
-        device_id,
-        Some(recovery_session),
-    )
-    .await
+    hydrate_mls_restore_payload_with_unlock_proof(api, payload, actor_id, device_id).await
 }
 
 async fn hydrate_mls_restore_payload_with_unlock_proof(
@@ -339,7 +322,6 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
     payload: Value,
     actor_id: &str,
     device_id: &str,
-    recovery_session: Option<&arkret_sdk::RecoverySession>,
 ) -> Result<Value> {
     let mut full_backups = Vec::new();
     for entry in payload
@@ -376,25 +358,15 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
         } else {
             backup_id.as_str()
         };
-        let full = match recovery_session {
-            Some(session) => {
-                crate::key_backup::fetch_key_backup_with_recovery_session_unlock_proof(
-                    api, &entry, actor_id, device_id, session,
-                )
-                .await
-            }
-            None => {
-                let signer = crate::event_signer::active_signer();
-                crate::key_backup::fetch_key_backup_with_device_unlock_proof(
-                    api,
-                    &entry,
-                    actor_id,
-                    device_id,
-                    signer.as_ref(),
-                )
-                .await
-            }
-        }
+        let signer = crate::event_signer::active_signer();
+        let full = crate::key_backup::fetch_key_backup_with_device_unlock_proof(
+            api,
+            &entry,
+            actor_id,
+            device_id,
+            signer.as_ref(),
+        )
+        .await
         .with_context(|| format!("fetch key backup {backup_id} with unlock proof"))?;
         full_backups.push(full);
     }
