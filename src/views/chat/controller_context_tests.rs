@@ -48,12 +48,7 @@ fn production_controller_callback_keeps_owned_state_without_context_hooks() {
     };
     let sentinel = scope.cage("stable controller state".to_owned());
     for _ in 0..4 {
-        controller.add_reaction(
-            command.clone(),
-            "missing-message".into(),
-            "invalid-event".into(),
-            "👍".into(),
-        );
+        controller.add_reaction(command.clone(), "invalid-event".into(), "👍".into());
         let settled = app.settle(glory::ui::App::DEFAULT_SETTLE_PASSES).unwrap();
         assert!(
             !settled.pending,
@@ -64,7 +59,7 @@ fn production_controller_callback_keeps_owned_state_without_context_hooks() {
             controller
                 .status_msg
                 .get_untracked()
-                .starts_with("Reaction skipped: invalid reaction target Event id:")
+                .starts_with("Reaction skipped: invalid reaction target Message id:")
         );
     }
 }

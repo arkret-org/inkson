@@ -1149,37 +1149,17 @@ impl ChatController {
         });
     }
 
-    pub fn add_reaction(
-        self,
-        context: ChatCommandContext,
-        message_id: String,
-        target_ref: String,
-        emoji: String,
-    ) {
-        if let Err(error) = arkret_sdk::EventId::new(target_ref.clone()) {
-            self.status_msg.revise(|value| {
-                *value = format!("Reaction skipped: invalid reaction target Event id: {error}");
-            });
-            return;
-        }
-        self.messages.revise(|values| {
-            if let Some(message) = values.iter_mut().find(|message| message.id == message_id) {
-                if let Some((_, senders)) =
-                    message.reactions.iter_mut().find(|(key, _)| key == &emoji)
-                {
-                    if !senders
-                        .iter()
-                        .any(|sender| sender == context.principal_id.as_str())
-                    {
-                        senders.push(context.principal_id.to_string());
-                    }
-                } else {
-                    message
-                        .reactions
-                        .push((emoji.clone(), vec![context.principal_id.to_string()]));
-                }
+    pub fn add_reaction(self, context: ChatCommandContext, target_ref: String, emoji: String) {
+        let target = match arkret_sdk::MessageId::new(target_ref) {
+            Ok(target) => target,
+            Err(error) => {
+                self.status_msg.revise(|value| {
+                    *value =
+                        format!("Reaction skipped: invalid reaction target Message id: {error}");
+                });
+                return;
             }
-        });
+        };
         let Some(state_store) = self.command_store() else {
             return;
         };
@@ -1201,7 +1181,7 @@ impl ChatController {
                         &context.authority,
                         context.principal_id.as_str(),
                         &context.device_id,
-                        &target_ref,
+                        &target,
                         &emoji,
                         context.selected_channel_security_encrypted,
                     )

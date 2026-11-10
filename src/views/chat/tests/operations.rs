@@ -665,19 +665,19 @@ fn chat_message_redact_operation_uses_message_id_for_message_target() {
 
 #[test]
 fn chat_reaction_add_operation_uses_schema_target_ref() {
+    let target = arkret_sdk::MessageId::from_event_id(
+        &arkret_sdk::EventId::new("ak:event:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo").unwrap(),
+    );
     let op = chat_reaction_add_operation(
         "ak:realm:AcLZB9aC8iMR8iBq1sUbB77yPclZIvptyHtZVgiszdI5",
         "ak:did_core:web:bob.example",
-        "ak:event:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo",
-        "+1",
+        &target,
+        "👍",
     )
     .expect("builds");
 
-    assert_eq!(
-        op.payload()["target_ref"],
-        "ak:event:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo"
-    );
-    assert_eq!(op.payload()["key"], "+1");
+    assert_eq!(op.payload()["target_ref"], target.as_str());
+    assert_eq!(op.payload()["key"], "👍");
     assert!(!op.payload().contains_key("event_id"));
     assert!(!op.payload().contains_key("actor"));
     arkret_schema_conformance::event_payload_validator_catalog()

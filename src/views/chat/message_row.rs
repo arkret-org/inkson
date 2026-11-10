@@ -915,7 +915,6 @@ fn edit_controls(
                             let message = row.get_untracked();
                             controller.add_reaction(
                                 command_context_for(&context.get_untracked(), &message),
-                                message.id.clone(),
                                 message.mutation_target_ref().to_owned(),
                                 emoji.to_owned(),
                             );

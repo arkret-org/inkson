@@ -202,11 +202,11 @@ pub(crate) fn chat_message_redact_operation(
 pub(crate) fn chat_reaction_add_operation(
     realm_id: &str,
     actor: &str,
-    event_id: &str,
+    target: &arkret_sdk::MessageId,
     key: &str,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let payload = arkret_sdk::ReactionPayload {
-        target_ref: event_id.into(),
+        target_ref: target.to_string(),
         key: key.to_owned(),
         annotation: None,
         encrypted_payload: None,
@@ -214,7 +214,7 @@ pub(crate) fn chat_reaction_add_operation(
     crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::ReactionAdd>(
         realm_id, actor, payload,
     )
-    .target_ref(event_id)
+    .target_ref(target.as_str())
     .build_sdk_event("inkson")
 }
 
@@ -225,13 +225,13 @@ pub(crate) fn chat_reaction_add_operation(
 pub(crate) fn chat_reaction_add_operation_encrypted(
     realm_id: &str,
     actor: &str,
-    event_id: &str,
+    target: &arkret_sdk::MessageId,
     routing_tag: &str,
     encrypted_payload: &arkret_sdk::EncryptedEnvelope,
     created_at: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let payload = arkret_sdk::ReactionPayload {
-        target_ref: event_id.into(),
+        target_ref: target.to_string(),
         key: routing_tag.to_owned(),
         annotation: None,
         encrypted_payload: Some(encrypted_payload.clone()),
@@ -239,7 +239,7 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
     crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::ReactionAdd>(
         realm_id, actor, payload,
     )
-    .target_ref(event_id)
+    .target_ref(target.as_str())
     .created_at(created_at)
     .build_sdk_event("inkson")
 }
@@ -256,20 +256,20 @@ pub(crate) async fn build_chat_reaction_add_operation(
     authority: &arkret_sdk::AccountId,
     actor: &str,
     device_id: &arkret_sdk::DeviceId,
-    event_id: &str,
+    target: &arkret_sdk::MessageId,
     emoji: &str,
     channel_encrypted: bool,
 ) -> anyhow::Result<Option<crate::operation::LocalOperation>> {
+    let operation = chat_reaction_add_operation(realm_id, actor, target, emoji)?;
     if !channel_encrypted {
-        return chat_reaction_add_operation(realm_id, actor, event_id, emoji).map(Some);
+        return Ok(Some(operation));
     }
     let realm_id = trim_realm_id(realm_id);
-    let target_ref = arkret_sdk::EventId::new(event_id.to_owned())
-        .map_err(|error| anyhow::anyhow!("invalid reaction target Event id: {error}"))?;
+    // The encrypted routing context binds the original create Event. The
+    // outer reaction still targets the Message derived from that Event.
+    let target_event = target.event_id();
     let created_at = crate::clock::now_utc();
-    let draft = chat_reaction_add_operation(&realm_id, actor, event_id, emoji)?
-        .into_intent()
-        .with_created_at(created_at);
+    let draft = operation.into_intent().with_created_at(created_at);
     let handle = state_store.handle();
     let frozen = api
         .event_submitter()?
@@ -295,7 +295,7 @@ pub(crate) async fn build_chat_reaction_add_operation(
             &realm_id,
             authority,
             device_id,
-            &target_ref,
+            &target_event,
             created_at,
             emoji,
             material,
@@ -311,7 +311,7 @@ pub(crate) async fn build_chat_reaction_add_operation(
     let operation = chat_reaction_add_operation_encrypted(
         &realm_id,
         actor,
-        event_id,
+        target,
         &sealed.routing_tag,
         &encrypted_payload,
         created_at,
