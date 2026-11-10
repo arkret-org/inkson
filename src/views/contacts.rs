@@ -1976,8 +1976,6 @@ mod feedback_tests {
 
     #[test]
     fn open_contact_detail_observes_acceptance_and_keeps_equal_refresh_mounted() {
-        use glory::render::Props;
-
         let (app, context, _directory) = crate::views::settings::restored_surface_tests::harness();
         let contact = ContactView {
             peer: arkret_sdk::contact_operations::ContactPeer::Human {
