@@ -1140,6 +1140,23 @@ impl VerifiedAccountFrame {
         self.stage_own_checkpoints_for(store, false)
     }
 
+    pub(crate) fn require_current_own_checkpoints(
+        &self,
+        store: &mut crate::state::LocalStateStore,
+        public_only: bool,
+    ) -> anyhow::Result<()> {
+        if let Some(client) = &self.own_client {
+            self.check_session()?;
+            for (stream, replica) in &self.own_replicas {
+                if public_only && matches!(stream, CommitStreamRef::Sidecar { .. }) {
+                    continue;
+                }
+                store.require_own_station_checkpoint_current(client, replica, stream)?;
+            }
+        }
+        Ok(())
+    }
+
     fn stage_own_checkpoints_for(
         &self,
         store: &mut crate::state::LocalStateStore,

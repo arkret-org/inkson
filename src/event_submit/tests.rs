@@ -93,9 +93,9 @@ async fn accepted_setup_policy_uses_promoted_account_before_runtime_commit() {
                 "device_authorize_event_id": arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [12; 32]),
                 "authorized_generation_ref": 7,
                 "device_status": "active",
-                "authorization_window": {"not_before": now, "expires_at": null},
-                "attested_at": now,
-                "expires_at": now + chrono::Duration::minutes(5)
+                "authorization_window": {"not_before": arkret_sdk::canonical::format_timestamp_canonical(now), "expires_at": null},
+                "attested_at": arkret_sdk::canonical::format_timestamp_canonical(now),
+                "expires_at": arkret_sdk::canonical::format_timestamp_canonical(now + chrono::Duration::minutes(5))
             },
             "authoring_generation": {
                 "authority_model": "accepted_device",

@@ -869,7 +869,13 @@ async fn install_live_cut<F: Fn() -> bool>(
     let current_changed = stage.changed();
     projector
         .state_store
-        .write(|store| store.require_sidecar_current_not_superseded(snapshot.value()?))
+        .write(|store| -> anyhow::Result<()> {
+            store.require_sidecar_current_not_superseded(snapshot.value()?)?;
+            for stream in streams {
+                store.require_own_station_checkpoint_current(client, replica, stream)?;
+            }
+            Ok(())
+        })
         .map_err(crate::state::current_index::current_stage_error)?;
     let transaction = projector.state_store.write(|store| {
         store.verified_projection_transaction(|store| {
@@ -1199,6 +1205,7 @@ pub(super) mod tests {
     use garth::history_recovery::replay_with_admitted_replica;
 
     use super::*;
+    use crate::secure_key_store::DeviceSeedScopeTestGuard;
 
     fn hint(row: CommittedEventView, cursor: usize) -> HintFrame {
         serde_json::from_value(serde_json::json!({
@@ -1259,6 +1266,7 @@ pub(super) mod tests {
 
     #[tokio::test]
     async fn twenty_queued_hints_use_one_snapshot_and_one_real_scan() {
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
         let (rows, snapshot) = burst_fixture();
         let realm = snapshot.realm_id.clone();
         let frames = rows
@@ -1509,6 +1517,7 @@ pub(super) mod tests {
 
     #[tokio::test]
     async fn twenty_separate_batches_reuse_only_durably_admitted_content_at_the_same_cut() {
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
         let (rows, snapshot, key) = content_burst_fixture();
         let realm = snapshot.realm_id.clone();
         let mut bodies = vec![
@@ -1518,7 +1527,7 @@ pub(super) mod tests {
                 "floor_commit_id":rows[0].commit().commit_id,"floor_reason":"stream_start"},"truncated":false
             }),
         ];
-        bodies.extend((0..20).map(|_| serde_json::json!({"__signer_key":key})));
+        bodies.push(serde_json::json!({"__signer_key":key}));
         let (client, source, server) = http(bodies);
         let directory = tempfile::tempdir().unwrap();
         let account = crate::test_support::AccountFixture::new("did:web:alice.example")
@@ -1593,6 +1602,7 @@ pub(super) mod tests {
 
     #[tokio::test]
     async fn hint_coverage_never_adopts_a_concurrent_generation_after_publication() {
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
         let (rows, snapshot, key) = content_burst_fixture();
         let realm = snapshot.realm_id.clone();
         let mut bodies = vec![
@@ -1602,7 +1612,7 @@ pub(super) mod tests {
                 "floor_commit_id":rows[0].commit().commit_id,"floor_reason":"stream_start"},"truncated":false
             }),
         ];
-        bodies.extend((0..20).map(|_| serde_json::json!({"__signer_key":key})));
+        bodies.push(serde_json::json!({"__signer_key":key}));
         let (client, _, server) = http(bodies);
         let directory = tempfile::tempdir().unwrap();
         let account = crate::test_support::AccountFixture::new("did:web:alice.example")
@@ -1651,6 +1661,7 @@ pub(super) mod tests {
 
     #[tokio::test]
     async fn hint_batch_does_not_scan_or_advance_when_snapshot_does_not_cover_hint() {
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
         let first = withheld(0, None);
         let second = withheld(1, Some(first.commit().commit_id.clone()));
         let realm = first.commit().realm_id.clone();
@@ -1957,11 +1968,15 @@ pub(super) mod tests {
                         realm_id: request.realm_id,
                         recipient_account_id: request.recipient_account_id,
                         recipient_actor_id: request.recipient_actor_id,
-                        resolutions: vec![SignerKeyResolution::HistoricalResolved {
-                            selector: request.queries[0].clone(),
-                            key: serde_json::from_value(key.clone()).unwrap(),
-                            accepted_at: crate::test_support::committed_event::fixture_time(1),
-                        }],
+                        resolutions: request
+                            .queries
+                            .into_iter()
+                            .map(|selector| SignerKeyResolution::HistoricalResolved {
+                                selector,
+                                key: serde_json::from_value(key.clone()).unwrap(),
+                                accepted_at: crate::test_support::committed_event::fixture_time(1),
+                            })
+                            .collect(),
                     })
                     .unwrap();
                 } else if body.get("visible_stream_heads").is_some() {
@@ -2190,6 +2205,7 @@ pub(super) mod tests {
 
     #[tokio::test]
     async fn own_live_since_join_bootstrap_persists_current_head_without_historical_rows() {
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
         let row = withheld(5, Some(arkret_sdk::RealmCommitId::from_digest([43; 32])));
         let mut snapshot = current_snapshot(std::slice::from_ref(&row), 1);
         snapshot.retention_and_history_floor.stream_floors[0].oldest_position = 3;
@@ -2402,6 +2418,7 @@ pub(super) mod tests {
 
     #[tokio::test]
     async fn link_join_success_persists_live_start_before_later_tail() {
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
         let (rows, mut snapshot) = burst_fixture();
         let row = rows.last().unwrap().clone();
         snapshot.retention_and_history_floor.stream_floors[0].oldest_position = 3;
@@ -2553,6 +2570,7 @@ pub(super) mod tests {
 
     #[tokio::test]
     async fn late_live_cut_retries_before_arming_without_poisoning_or_cursor_advance() {
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
         let first = withheld(0, None);
         let second = withheld(1, Some(first.commit().commit_id.clone()));
         let realm = first.commit().realm_id.clone();
@@ -2608,6 +2626,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn account_list_change_refuses_inflight_live_snapshot_without_poisoning_or_cursor_advance()
      {
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
         let first = withheld(0, None);
         let realm = first.commit().realm_id.clone();
         let stream = first.commit().stream_ref.clone();
@@ -2664,6 +2683,7 @@ pub(super) mod tests {
 
     #[tokio::test]
     async fn initial_join_and_activity_do_not_refuse_an_inflight_live_snapshot() {
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
         let first = withheld(0, None);
         let realm = first.commit().realm_id.clone();
         let stream = first.commit().stream_ref.clone();
@@ -2760,7 +2780,7 @@ pub(super) mod tests {
                 "oldest_position": 0, "floor_commit_id": rows[0].commit().commit_id,
                 "floor_reason": "stream_start"}, "truncated": false}),
         ];
-        bodies.extend((0..originals.len()).map(|_| serde_json::json!({"__signer_key":key})));
+        bodies.push(serde_json::json!({"__signer_key":key}));
         let (client, _, server) = http(bodies);
         let bound = client.snapshot_head(&snapshot.realm_id).await.unwrap();
         let (_, pages) = replay(&client, &snapshot.realm_id, &stream, &bound, None)
@@ -2860,6 +2880,7 @@ pub(super) mod tests {
 
     #[tokio::test]
     async fn own_live_current_installs_new_chat_reopens_and_keeps_account_cursor() {
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
         let first = withheld(0, None);
         let second = withheld(1, Some(first.commit().commit_id.clone()));
         let directory = tempfile::tempdir().unwrap();
@@ -3203,6 +3224,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn own_live_current_failed_flush_recovers_independently_without_cursor_or_checkpoint_advance()
      {
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
         let first = withheld(0, None);
         let second = withheld(1, Some(first.commit().commit_id.clone()));
         let rows = vec![first.clone(), second];

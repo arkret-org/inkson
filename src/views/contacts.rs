@@ -1553,6 +1553,24 @@ pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool)
     contacts_panel_with_header(scope, context, advanced, Rc::new(|_| empty()))
 }
 
+type ContactPanelLoad = Option<Result<Vec<arkret_sdk::AgentProjection>, String>>;
+
+fn live_contact_view(
+    load: Cage<ContactPanelLoad>,
+    contacts: Cage<Vec<ContactView>>,
+    render: impl Fn(&Scope, ContactPanelLoad, Vec<ContactView>) -> View + 'static,
+) -> View {
+    let render = Rc::new(render);
+    reactive(load, move |_, result| {
+        let render = render.clone();
+        // The authenticated inbox refresh owns the live projection. Equal
+        // refreshes must not remount the Contact form or discard its draft.
+        crate::presentation::widgets::reactive_distinct(contacts, move |scope, rows| {
+            render(scope, result.clone(), rows)
+        })
+    })
+}
+
 fn contacts_panel_with_header(
     scope: &Scope,
     context: Rc<InksonContext>,
@@ -1637,10 +1655,10 @@ fn contacts_panel_with_header(
                 .await
                 .map_err(|e| e.display())?;
                 if stamp.is_current(&ctx) {
-                    ctx.contact_rows.revise(|v| *v = response.contacts.clone());
                     ctx.state_store
                         .write(|store| store.replace_accepted_human_contacts(&response.contacts));
-                    Ok((response.contacts, agents))
+                    ctx.contact_rows.revise(|v| *v = response.contacts);
+                    Ok(agents)
                 } else {
                     Err(tr("contacts.load_error"))
                 }
@@ -1649,37 +1667,37 @@ fn contacts_panel_with_header(
     };
     let render = {
         let ctx = context.clone();
-        Rc::new(move |scope: &Scope, result, detail_side: bool| {
-            let (rows, owned_agents): (Vec<ContactView>, Vec<arkret_sdk::AgentProjection>) =
-                match result {
-                    None => {
-                        let loading = paragraph(
-                            "muted contacts-loading",
-                            ctx.translated(scope, "contacts.loading"),
-                        );
-                        return loading;
-                    }
-                    Some(Err(error)) => {
-                        let error = stack(
-                            "event error-banner contacts-error",
-                            vec![
-                                paragraph("muted", error),
-                                action(
-                                    scope,
-                                    ctx.clone(),
-                                    "contacts-retry-button",
-                                    "contacts.retry",
-                                    "secondary",
-                                    true,
-                                    move || reload.revise(|v| *v += 1),
-                                ),
-                            ],
-                        );
-                        return error;
-                    }
-                    Some(Ok(rows)) => rows,
-                };
+        Rc::new(move |scope: &Scope, result, rows, detail_side: bool| {
+            let owned_agents: Vec<arkret_sdk::AgentProjection> = match result {
+                None => {
+                    let loading = paragraph(
+                        "muted contacts-loading",
+                        ctx.translated(scope, "contacts.loading"),
+                    );
+                    return loading;
+                }
+                Some(Err(error)) => {
+                    let error = stack(
+                        "event error-banner contacts-error",
+                        vec![
+                            paragraph("muted", error),
+                            action(
+                                scope,
+                                ctx.clone(),
+                                "contacts-retry-button",
+                                "contacts.retry",
+                                "secondary",
+                                true,
+                                move || reload.revise(|v| *v += 1),
+                            ),
+                        ],
+                    );
+                    return error;
+                }
+                Some(Ok(agents)) => agents,
+            };
             let blocklist = ctx.state_store.read(|s| s.client_blocklist());
+            let rows: Vec<ContactView> = rows;
             let rows = rows
                 .into_iter()
                 .filter(|row| !advanced || row.state == arkret_sdk::ContactState::Accepted)
@@ -1897,19 +1915,25 @@ fn contacts_panel_with_header(
         })
     };
     let body = if advanced {
-        crate::presentation::widgets::reactive(load.data, move |scope, result| {
-            render(scope, result, true)
-        })
+        live_contact_view(
+            load.data,
+            context.contact_rows,
+            move |scope, result, rows| render(scope, result, rows, true),
+        )
     } else {
         let list_render = render.clone();
         layout(
             scope,
-            crate::presentation::widgets::reactive(load.data, move |scope, result| {
-                list_render(scope, result, false)
-            }),
-            crate::presentation::widgets::reactive(load.data, move |scope, result| {
-                render(scope, result, true)
-            }),
+            live_contact_view(
+                load.data,
+                context.contact_rows,
+                move |scope, result, rows| list_render(scope, result, rows, false),
+            ),
+            live_contact_view(
+                load.data,
+                context.contact_rows,
+                move |scope, result, rows| render(scope, result, rows, true),
+            ),
         )
     };
 
@@ -1949,6 +1973,82 @@ fn contacts_panel_with_header(
 mod feedback_tests {
     use super::*;
     use crate::transport::auth::ApiCallError;
+
+    #[test]
+    fn open_contact_detail_observes_acceptance_and_keeps_equal_refresh_mounted() {
+        use glory::render::Props;
+
+        let (app, context, _directory) = crate::views::settings::restored_surface_tests::harness();
+        let contact = ContactView {
+            peer: arkret_sdk::contact_operations::ContactPeer::Human {
+                account_id: crate::test_support::authority("did:web:bob.example"),
+            },
+            state: arkret_sdk::ContactState::PendingOutgoing,
+            request_event_ref: None,
+            request_message: None,
+            response_event_ref: None,
+            tombstone_event_ref: None,
+            next_prepare_input: None,
+            granted_to_peer_scopes: vec![],
+            granted_by_peer_scopes: vec![],
+            bidirectional_scopes: vec![],
+            effective_scopes: None,
+            direct_conversation: None,
+            contact_agent_projections: vec![],
+            peer_endpoint: None,
+        };
+        let scope = app.scope();
+        let contacts = scope.cage(vec![contact.clone()]);
+        let load = scope.cage(Some(Ok(Vec::new())));
+        app.mount(live_contact_view(
+            load,
+            contacts,
+            move |scope, _, mut rows| {
+                contact_row(
+                    scope,
+                    context.clone(),
+                    rows.remove(0),
+                    false,
+                    Rc::new(|_| {}),
+                )
+            },
+        ))
+        .unwrap();
+        let message_node = || {
+            let tree = app.tree();
+            let mut nodes = tree.roots().to_vec();
+            while let Some(id) = nodes.pop() {
+                let node = tree.node(id).unwrap();
+                if node
+                    .descriptor
+                    .view()
+                    .classes
+                    .iter()
+                    .any(|class| class == "contact-message")
+                {
+                    return Some(id);
+                }
+                nodes.extend(node.children.iter().copied());
+            }
+            None
+        };
+        app.flush().unwrap();
+        assert!(message_node().is_none());
+        let accepted = ContactView {
+            state: arkret_sdk::ContactState::Accepted,
+            ..contact
+        };
+        contacts.revise(|rows| *rows = vec![accepted.clone()]);
+        app.flush().unwrap();
+        let first = message_node().expect("the open Contact detail exposes Message on acceptance");
+        contacts.revise(|rows| *rows = vec![accepted]);
+        app.flush().unwrap();
+        assert_eq!(
+            message_node(),
+            Some(first),
+            "an identical inbox read preserves the mounted controls"
+        );
+    }
 
     #[test]
     fn actual_contact_list_selects_an_agent_without_opening_a_conversation() {

@@ -1313,6 +1313,7 @@ impl InksonAccountProjector {
         self.ctx
             .state_store
             .write(|store| -> anyhow::Result<()> {
+                verified.require_current_own_checkpoints(store, false)?;
                 for snapshot in verified.current_snapshots().values() {
                     store.require_sidecar_current_not_superseded(snapshot.snapshot())?;
                 }
@@ -1839,6 +1840,15 @@ impl InksonAccountProjector {
                 if !self.fence() {
                     return Err(garth::Error::AuthorityCutBehind);
                 }
+                self.ctx
+                    .state_store
+                    .write(|store| -> anyhow::Result<()> {
+                        for proof in &verified {
+                            proof.require_current_own_checkpoints(store, true)?;
+                        }
+                        Ok(())
+                    })
+                    .map_err(crate::state::current_index::current_stage_error)?;
                 self.ctx
                     .state_store
                     .write(|store| {

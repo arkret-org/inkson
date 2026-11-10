@@ -6,6 +6,7 @@ use super::tests::{
     content_burst_fixture, frozen, http_for_account_observed, seal_current_snapshot, test_projector,
 };
 use super::*;
+use crate::secure_key_store::DeviceSeedScopeTestGuard;
 use crate::test_support::committed_event::{
     FixtureStation, fixture_time, verified_realm_fixture_as,
 };
@@ -79,10 +80,7 @@ impl PrivateFixture {
             self.scan(after, end, withheld),
         ];
         if !withheld {
-            bodies.extend(
-                (after.map_or(0, |position| position as usize + 1)..=end)
-                    .map(|_| serde_json::json!({"__signer_key":self.key})),
-            );
+            bodies.push(serde_json::json!({"__signer_key":self.key}));
         }
         bodies
     }
@@ -218,6 +216,7 @@ fn local_store(path: &std::path::Path) -> Arc<Mutex<crate::state::LocalStateStor
 
 #[tokio::test]
 async fn ten_legal_sidecars_only_the_changed_stream_reads_one_tail_row() {
+    let _scope = DeviceSeedScopeTestGuard::replace(None);
     let (_, _, key) = content_burst_fixture();
     // One Sidecar per controller/Realm, retaining independent Realm cuts.
     let fixtures = (30..40).map(|seed| fixture(seed, &key)).collect::<Vec<_>>();
@@ -319,6 +318,7 @@ async fn ten_legal_sidecars_only_the_changed_stream_reads_one_tail_row() {
 
 #[tokio::test]
 async fn cold_private_recovery_reaccepts_originals_instead_of_reusing_persistent_coordinates() {
+    let _scope = DeviceSeedScopeTestGuard::replace(None);
     let (_, _, key) = content_burst_fixture();
     let fixture = fixture(41, &key);
     let mut bodies = fixture.reads(None, 1, false);
@@ -395,6 +395,7 @@ async fn cold_private_recovery_reaccepts_originals_instead_of_reusing_persistent
 
 #[tokio::test]
 async fn private_tail_failure_never_advances_the_durable_cut_and_retries_independently() {
+    let _scope = DeviceSeedScopeTestGuard::replace(None);
     let (_, _, key) = content_burst_fixture();
     for refusal in [
         "withheld",

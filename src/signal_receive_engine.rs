@@ -87,6 +87,8 @@ pub struct MlsSignalDecryptor {
     /// `(key_ref, epoch, device_id, purpose, aead_profile)`. It is shared
     /// across every envelope this engine opens, and bounded by the SDK.
     replay: Mutex<arkret_sdk::AeadNonceReplayTracker>,
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    observed_gate: std::cell::Cell<&'static str>,
 }
 
 impl MlsSignalDecryptor {
@@ -101,12 +103,16 @@ impl MlsSignalDecryptor {
             authority,
             device_id,
             replay: Mutex::new(arkret_sdk::AeadNonceReplayTracker::new()),
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            observed_gate: std::cell::Cell::new("outer_admission"),
         }
     }
 }
 
 impl garth::signal::SignalDecryptor for MlsSignalDecryptor {
     async fn decrypt(&self, envelope: &arkret_wire::SignalEnvelope) -> garth::Result<Vec<u8>> {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        self.observed_gate.set("sender_revocation");
         if let Some(device_id) = &envelope.sender_device_id
             && crate::identity::device_directory::known_device_revoked(
                 &envelope.sender_actor_id.to_string(),
@@ -121,6 +127,8 @@ impl garth::signal::SignalDecryptor for MlsSignalDecryptor {
         // shared restore helper's epoch gate drops a Signal naming any other
         // epoch rather than routing around it. No decryption queue, no
         // downgrade, no backfill.
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        self.observed_gate.set("restore_mls_session");
         let session = self
             .state_store
             .read(|store| {
@@ -135,6 +143,8 @@ impl garth::signal::SignalDecryptor for MlsSignalDecryptor {
             })
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let group = session.group;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        self.observed_gate.set("winning_group_state");
         let accepted_group_state_ref = self
             .state_store
             .read(|store| {
@@ -150,6 +160,8 @@ impl garth::signal::SignalDecryptor for MlsSignalDecryptor {
                 "Signal does not bind the accepted winning MLS group state".to_owned(),
             ));
         }
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        self.observed_gate.set("sender_leaf");
         let mut matching_leaves = group
             .verified_leaf_bindings()
             .map_err(|error| garth::Error::Protocol(error.to_string()))?
@@ -213,7 +225,9 @@ impl garth::signal::SignalDecryptor for MlsSignalDecryptor {
         // for this exact delivery; signal.md forbids replaying governance
         // history locally per frame, so that authenticated value is the
         // accepted head passed into the MLS opener.
-        group
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        self.observed_gate.set("envelope_open");
+        let opened = group
             .open_signal_envelope(
                 envelope,
                 sender_authority,
@@ -221,7 +235,18 @@ impl garth::signal::SignalDecryptor for MlsSignalDecryptor {
                 &envelope.authority_commit_id,
                 &mut replay,
             )
-            .map_err(|error| garth::Error::Protocol(error.to_string()))
+            .map_err(|error| garth::Error::Protocol(error.to_string()));
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        match &opened {
+            Ok(_) => self.observed_gate.set("plaintext_admission"),
+            Err(garth::Error::Protocol(message))
+                if message.contains("aead_nonce_counter_replay") =>
+            {
+                self.observed_gate.set("nonce_replay");
+            }
+            Err(_) => {}
+        }
+        opened
     }
 }
 
@@ -1535,6 +1560,8 @@ async fn run_signal_receive_attempt(
                         (principal, epoch, digest)
                     })
                 };
+                #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                decryptor.observed_gate.set("outer_admission");
                 let outcome = receiver
                     .receive(
                         &envelope,
@@ -1554,10 +1581,12 @@ async fn run_signal_receive_attempt(
                         Ok(SignalReceiveOutcome::StaleSequence) => "stale_sequence",
                         Err(_) => "rejected",
                     };
+                    let rejected_at = outcome.is_err().then(|| decryptor.observed_gate.get());
                     record_signal_receiver_evidence(
                         principal,
                         epoch,
-                        serde_json::json!({"envelope_digest": digest, "receive_stage": stage}),
+                        serde_json::json!({"envelope_digest": digest, "receive_stage": stage,
+                            "rejected_at": rejected_at}),
                     );
                 }
                 // Proof, nonce and plaintext admission are per-envelope.

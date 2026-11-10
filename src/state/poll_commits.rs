@@ -218,6 +218,45 @@ impl LocalStateStore {
         Ok(())
     }
 
+    /// Refuse an in-flight read overtaken by a separately verified checkpoint.
+    /// The caller checks this immediately before its synchronous transaction,
+    /// preserving the typed retry without changing any retained coordinate.
+    pub(crate) fn require_own_station_checkpoint_current(
+        &mut self,
+        client: &arkret_sdk::http_client::own_station_results::OwnStationStateClient,
+        replica: &garth::own_station_results::OwnStationReplica,
+        stream_ref: &arkret_sdk::CommitStreamRef,
+    ) -> anyhow::Result<()> {
+        client.check_session()?;
+        anyhow::ensure!(
+            self.active_authority().as_ref() == Some(client.session()?.account_id()),
+            "own-Station checkpoint changed the complete account store"
+        );
+        let head = replica
+            .head(stream_ref)
+            .ok_or_else(|| anyhow::anyhow!("own-Station replay has no accepted head"))?;
+        anyhow::ensure!(
+            &head.stream_ref == stream_ref,
+            "own-Station checkpoint changed stream"
+        );
+        let key = serde_json::to_string(stream_ref)?;
+        self.ensure_cached_loaded();
+        if let Some(old) = self.cached.verified_commit_stream_cursors.get(&key) {
+            anyhow::ensure!(
+                old.stream_ref == head.stream_ref,
+                "own-Station checkpoint changed stream"
+            );
+            if head.stream_position < old.stream_position {
+                return Err(super::current_index::CurrentCutSuperseded.into());
+            }
+            anyhow::ensure!(
+                head.stream_position != old.stream_position || head.commit_id == old.commit_id,
+                "own-Station checkpoint forks the durable stream"
+            );
+        }
+        Ok(())
+    }
+
     /// Store a genuine own-Station replay checkpoint. A snapshot head alone
     /// never establishes this state; the replica admitted a complete original
     /// prefix, re-admitted the exact durable original, or verified the exact
@@ -891,12 +930,26 @@ mod tests {
         store.flush().unwrap();
         let expected = store.verified_commit_stream_cursor(&stream_ref).unwrap();
         let original = serde_json::to_value(store.load()).unwrap();
-        for _ in 0..2 {
+        for superseded in [true, false] {
             let mut late = garth::own_station_results::OwnStationReplica::new(realm.clone());
             let page = late
                 .apply_bound_scan(&client, client.scan_commit_stream(&request).await.unwrap())
                 .await
                 .unwrap();
+            let error = store
+                .require_own_station_checkpoint_current(&client, &late, &stream_ref)
+                .unwrap_err();
+            assert_eq!(
+                error.is::<super::current_index::CurrentCutSuperseded>(),
+                superseded,
+                "only a lower verified checkpoint can be retried"
+            );
+            let classified = super::current_index::current_stage_error(error);
+            assert_eq!(
+                matches!(classified, garth::Error::AuthorityCutBehind),
+                superseded
+            );
+            assert_eq!(serde_json::to_value(store.load()).unwrap(), original);
             assert!(
                 store
                     .verified_projection_transaction(|s| s
