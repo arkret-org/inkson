@@ -348,7 +348,7 @@ impl super::ClientLocalState {
             local_device_refresh_pending: _,
             mls_private_plaintext: _,
             mls_decrypted_plaintext: _,
-            metadata_originals: _,
+            encrypted_originals: _,
             authenticated_identity_links: _,
             composer_drafts: _,
             realm_remarks: _,

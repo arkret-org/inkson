@@ -2239,7 +2239,7 @@ fn accepted_metadata_survives_later_messages_without_opening_its_view() {
     .unwrap();
     let account = fixture::authority(bob_actor);
     let device = fixture::device_id(bob_device);
-    crate::identity::metadata::retain_accepted_metadata(
+    crate::identity::metadata::retain_accepted_encrypted_original_for_test(
         &state, &unsigned, &account, &device, &secure,
     );
     assert!(
@@ -2290,7 +2290,9 @@ fn accepted_metadata_survives_later_messages_without_opening_its_view() {
         )
     };
     assert!(verify_native(&event).is_ok());
-    crate::identity::metadata::retain_accepted_metadata(&state, &event, &account, &device, &secure);
+    crate::identity::metadata::retain_accepted_encrypted_original_for_test(
+        &state, &event, &account, &device, &secure,
+    );
     assert!(
         state
             .mls_decrypted_plaintext_for(realm, encrypted.payload_digest.as_str())
@@ -2430,9 +2432,9 @@ fn accepted_metadata_survives_later_messages_without_opening_its_view() {
         ),
         Some(plaintext)
     );
-    assert_eq!(cold.metadata_originals_for(realm).len(), 1);
+    assert_eq!(cold.encrypted_originals_for(realm).len(), 1);
     assert!(verify_native(&rebound).is_ok());
-    crate::identity::metadata::retain_accepted_metadata(
+    crate::identity::metadata::retain_accepted_encrypted_original_for_test(
         &cold, &rebound, &account, &device, &secure,
     );
     assert!(
@@ -2451,6 +2453,320 @@ fn accepted_metadata_survives_later_messages_without_opening_its_view() {
         )
         .is_none(),
         "an old digest cache cannot authenticate another original E"
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn rsvp_original_survives_a_cold_empty_tail_and_rejects_header_rebinding() {
+    // This composes a separately verified Native signature with local MLS/root
+    // fixtures. It is not Native admission or a full all-devices-lost recovery.
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("receiver.json");
+    let mut state = crate::state::LocalStateStore::with_path(&path);
+    let secure = MemorySecureKeyStore::new();
+    let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
+    let account = fixture::authority("did:web:bob.example");
+    let device = fixture::device_id("ak:device:01904100-0000-7000-8000-0000000000b2");
+    let account_context = fixture::AccountFixture::new("did:web:bob.example")
+        .station(account.station_id.as_str())
+        .build();
+    state.switch_active_account(&account_context).unwrap();
+    let (mut alice, _) = two_member_group_with_bob_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        "did:web:bob.example",
+        device.as_str(),
+    );
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: realm.parse().unwrap(),
+    };
+    let reference =
+        |byte| arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [byte; 32]);
+    let group_ref = reference(91);
+    let snapshot = state.mls_checkpoint_for_scope(&scope).unwrap();
+    state
+        .record_mls_group_state_ref_for_scope(
+            &scope,
+            &snapshot.group_id,
+            snapshot.epoch,
+            group_ref.clone(),
+        )
+        .unwrap();
+    fixture::install_accepted_mls_group_at_epoch(&mut state, &scope, snapshot.epoch, 0);
+    let strand = arkret_sdk::StrandId::from_event_id(&reference(92));
+    let plaintext = json!({"status":"accepted"});
+    let mut unsigned = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+        "ak.rsvp.set", scope.clone(), fixture::account_actor("did:web:alice.example"),
+        json!({"event_ref":strand,"occurrence":null,"entry":{"schedule_basis_refs":[reference(93)],"response":plaintext}}),
+    ).build_unsigned().unwrap();
+    let mut material = fixture::content::material(&alice, "ak.rsvp.set", &group_ref);
+    material.outer_event =
+        arkret_models_crypto::EventContentMaterial::outer_event_for(&unsigned).unwrap();
+    fixture::content::retain_root(
+        &secure,
+        &account,
+        &device,
+        &alice,
+        &material.content_context.root_context,
+    );
+    let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
+        "1.0",
+        arkret_models_collaboration::objects::productivity::RSVP_RESPONSE_CONTENT_TYPE,
+        arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
+        scope.clone(),
+        "ak.rsvp.set",
+        alice.epoch(),
+        group_ref,
+        alice.local_content_sender_domain().unwrap(),
+        arkret_sdk::EventContentRoutingContext::None,
+        material,
+    )
+    .unwrap();
+    let encrypted = alice
+        .encrypt_payload(
+            header,
+            &arkret_sdk::canonical::canonical_json_bytes(&plaintext).unwrap(),
+        )
+        .unwrap();
+    let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(&encrypted).unwrap();
+    unsigned.payload = serde_json::from_value(json!({"event_ref":strand,"occurrence":null,
+        "entry":{"schedule_basis_refs":[reference(93)],"encrypted_response":envelope}}))
+    .unwrap();
+    let signer = arkret_test_kit::keys::seeded_signer(
+        "did:web:alice.example".parse().unwrap(),
+        arkret_sdk::DidUrl::new(
+            "did:web:alice.example#ak:device:01904100-0000-7000-8000-0000000000a1",
+        )
+        .unwrap(),
+    );
+    let event = arkret_test_kit::signed_event::sign_verifiable_event(
+        unsigned,
+        &signer,
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap()
+    .expect_verifiable();
+    let native_public = arkret_test_kit::keys::development_verifying_key(
+        "did:web:alice.example#ak:device:01904100-0000-7000-8000-0000000000a1",
+    );
+    let native_key = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+        bytes: native_public.as_bytes().to_vec(),
+    };
+    let verify_native = |original: &arkret_sdk::Event| {
+        let bytes = arkret_sdk::signatures::EventProofBuilder::new()
+            .envelope_bytes(original)
+            .unwrap();
+        arkret_sdk::signatures::verify_ed25519_detached_jws_proof_with_digest_suite(
+            original.producer_proof.as_ref().unwrap(),
+            &bytes,
+            &original.actor_id,
+            &native_key,
+            arkret_sdk::DigestSuite::Sha256,
+        )
+    };
+    assert!(verify_native(&event).is_ok());
+    assert_ne!(
+        alice
+            .original_content_endpoint(&event)
+            .unwrap()
+            .signature_key_base64url,
+        arkret_sdk::base64url_encode(native_public.as_bytes())
+    );
+    crate::identity::metadata::retain_accepted_encrypted_original_for_test(
+        &state, &event, &account, &device, &secure,
+    );
+    assert_eq!(
+        state.encrypted_original(realm, &event.event_id),
+        Some(event.clone())
+    );
+    let current_strand = arkret_sdk::Strand::discussion(
+        strand.clone(),
+        realm.parse().unwrap(),
+        "Calendar",
+        fixture::account_actor("did:web:alice.example"),
+    );
+    fixture::install_current_entries(
+        &mut state,
+        realm,
+        vec![arkret_wire::CurrentState::Value {
+            selector: arkret_wire::CurrentSelector::Strand {
+                strand_id: strand.clone(),
+            },
+            source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+                realm_id: realm.parse().unwrap(),
+            },
+            revision: arkret_wire::CurrentRevision {
+                commit_id: arkret_sdk::RealmCommitId::from_digest([94; 32]),
+                stream_position: 94,
+            },
+            value: serde_json::to_value(current_strand).unwrap(),
+        }],
+    );
+    let resumed_current = state.current_product_view().unwrap();
+    state
+        .persist_e2ee_plaintext_cache_with_secure_store(&secure)
+        .unwrap();
+    let mut cold = crate::state::LocalStateStore::with_path(path);
+    cold.switch_active_account(&account_context).unwrap();
+    cold.hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+        .unwrap();
+    assert!(cold.load().raw_operations.is_empty());
+    assert!(cold.mls_checkpoint_for_scope(&scope).is_some());
+    assert!(cold.current_product_view().is_none());
+    // A resumed authorized index read installs current independently. It does
+    // not supply the old original, plaintext or root. This fixture keeps its
+    // private leaf checkpoint; public-history preparation is a separate lane.
+    cold.install_current_product_view(resumed_current).unwrap();
+    assert_eq!(
+        cold.encrypted_original(realm, &event.event_id),
+        Some(event.clone())
+    );
+    arkret_event_draft::validate_event_payload(
+        &event.kind,
+        &serde_json::to_value(&event.payload).unwrap(),
+    )
+    .unwrap();
+    let original_value = serde_json::to_value(&event).unwrap();
+    let verified_sender = crate::views::chat::verified_chat_sender_domain_for_realm(
+        realm,
+        &original_value,
+        Some(&cold),
+        Some((&account, account.principal_id.as_str(), &device)),
+    )
+    .expect("the retained Native original has a qualified sender");
+    let directly_opened =
+        crate::state::projection::try_local_mls_decrypt_from_verified_original_with_secure_store(
+            &cold,
+            realm,
+            &account,
+            &device,
+            &serde_json::to_value(&envelope).unwrap(),
+            &event,
+            &verified_sender,
+            &secure,
+        )
+        .expect("the valid original and retained root reopen without the raw-operation tail");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&directly_opened).unwrap(),
+        plaintext
+    );
+    let winner = crate::state::projection_views::RsvpWinnerProjectionView {
+        source_event_id: event.event_id.to_string(),
+        source_event_digest: event.event_id.event_digest().to_string(),
+        entry: event.payload["entry"].clone(),
+    };
+    let cell = crate::state::projection_views::RsvpCellProjectionView {
+        occurrence: None,
+        actor_id: event.actor_id.signing_principal_id().to_string(),
+        winner: Some(winner.clone()),
+        retained_writes: vec![],
+    };
+    let open = |store: &crate::state::LocalStateStore,
+                keys: &MemorySecureKeyStore,
+                cell: &crate::state::projection_views::RsvpCellProjectionView,
+                winner: &crate::state::projection_views::RsvpWinnerProjectionView| {
+        crate::views::kanban::decrypt_rsvp_original_for_test(
+            store,
+            realm,
+            (&account, &device),
+            &strand,
+            cell,
+            winner,
+            keys,
+        )
+    };
+    assert_eq!(
+        cold.active_authority().as_ref(),
+        Some(&account),
+        "the render context uses the active full Account"
+    );
+    assert!(
+        !cold.current_reset_required(),
+        "the render context has no pending current reset"
+    );
+    let current = cold.current_product_view().unwrap();
+    let value = current
+        .entries
+        .iter()
+        .find_map(|row| match row {
+            arkret_wire::CurrentState::Value {
+                selector: arkret_wire::CurrentSelector::Strand { strand_id },
+                value,
+                ..
+            } if strand_id == &strand => Some(value),
+            _ => None,
+        })
+        .unwrap();
+    let selected: arkret_models_collaboration::objects::strand::Strand =
+        serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(selected.id.as_ref(), Some(&strand));
+    assert!(selected.scope_circle_id.is_none());
+    assert_eq!(
+        event.payload.get("occurrence"),
+        Some(&serde_json::Value::Null)
+    );
+    assert_eq!(
+        serde_json::to_value(open(&cold, &secure, &cell, &winner).unwrap()).unwrap(),
+        plaintext
+    );
+    assert!(open(&cold, &MemorySecureKeyStore::new(), &cell, &winner).is_none());
+    let mut wrong = winner.clone();
+    wrong.entry["schedule_basis_refs"] = json!([reference(95)]);
+    assert!(open(&cold, &secure, &cell, &wrong).is_none());
+    let mut wrong_cell = cell.clone();
+    wrong_cell.occurrence = Some("2026-11-10".into());
+    assert!(open(&cold, &secure, &wrong_cell, &winner).is_none());
+    let mut rebound = event;
+    rebound.created_at += chrono::Duration::seconds(1);
+    rebound.producer_proof = None;
+    let rebound = arkret_test_kit::signed_event::sign_verifiable_event(
+        rebound,
+        &signer,
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap()
+    .expect_verifiable();
+    assert!(verify_native(&rebound).is_ok());
+    crate::identity::metadata::retain_accepted_encrypted_original_for_test(
+        &cold, &rebound, &account, &device, &secure,
+    );
+    let mut rebound_winner = winner;
+    rebound_winner.source_event_id = rebound.event_id.to_string();
+    rebound_winner.source_event_digest = rebound.event_id.event_digest().to_string();
+    assert!(
+        cold.mls_decrypted_plaintext_for(realm, encrypted.payload_digest.as_str())
+            .is_some()
+    );
+    assert!(open(&cold, &secure, &cell, &rebound_winner).is_none());
+    let foreign = fixture::AccountFixture::new("did:web:bob.example")
+        .station(fixture::SERVER_STATION_ID)
+        .build();
+    assert!(
+        crate::views::kanban::decrypt_rsvp_original_for_test(
+            &cold,
+            realm,
+            (&foreign.authority, &device),
+            &strand,
+            &cell,
+            cell.winner.as_ref().unwrap(),
+            &secure,
+        )
+        .is_none(),
+        "the same principal at another Station is a different Account"
+    );
+    secure
+        .delete_secret(&account_mls_secret_key(&account).unwrap())
+        .unwrap();
+    assert!(
+        load_account_mls_secret(&secure, &account)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        open(&cold, &secure, &cell, cell.winner.as_ref().unwrap()).is_none(),
+        "missing private leaf state and an unprepared public proof must stay pending"
     );
 }
 

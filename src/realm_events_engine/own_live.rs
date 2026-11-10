@@ -969,7 +969,7 @@ async fn install_live_cut<F: Fn() -> bool>(
         .state_store
         .read(|store| {
             for page in pages {
-                crate::identity::metadata::retain_accepted_page_metadata(store, page)?;
+                crate::identity::metadata::retain_accepted_page_encrypted_originals(store, page)?;
             }
             Ok::<_, String>(())
         })

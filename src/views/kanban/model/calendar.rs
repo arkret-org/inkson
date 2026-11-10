@@ -1029,6 +1029,17 @@ fn decrypt_rsvp_winner(
     cell: &crate::state::projection_views::RsvpCellProjectionView,
     winner: &crate::state::projection_views::RsvpWinnerProjectionView,
 ) -> Option<arkret_sdk::RsvpResponse> {
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    decrypt_rsvp_winner_with_secure_store(ctx, strand_id, cell, winner, secure.as_ref())
+}
+
+pub(crate) fn decrypt_rsvp_winner_with_secure_store(
+    ctx: &MlsDecryptCtx<'_>,
+    strand_id: &str,
+    cell: &crate::state::projection_views::RsvpCellProjectionView,
+    winner: &crate::state::projection_views::RsvpWinnerProjectionView,
+    secure: &dyn crate::secure_key_store::SecureKeyStore,
+) -> Option<arkret_sdk::RsvpResponse> {
     let (authority, device_id) = ctx.identity?;
     let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?;
     let current = ctx.state_store.current_product_view()?;
@@ -1055,24 +1066,29 @@ fn decrypt_rsvp_winner(
     {
         return None;
     }
-    // The row that carries the signed envelope keeps whatever key it was first
-    // recorded under: an RSVP authored here stays keyed by its holder-local
-    // operation id after acceptance. Match the embedded Event identity instead.
+    let original_id = arkret_sdk::EventId::new(winner.source_event_id.clone()).ok()?;
+    // A projected winner can outlive the bounded raw-operation tail. Its exact
+    // accepted original remains in the protected, account-scoped local cache.
     let event_value = ctx
         .state_store
-        .load()
-        .raw_operations
-        .into_iter()
-        .filter(|record| record.realm_id.as_deref() == Some(ctx.realm_id))
-        .find_map(|record| {
-            record
-                .payload
-                .get("event")
-                .filter(|event| {
-                    event.get("event_id").and_then(Value::as_str)
-                        == Some(winner.source_event_id.as_str())
+        .encrypted_original(ctx.realm_id, &original_id)
+        .and_then(|event| serde_json::to_value(event).ok())
+        .or_else(|| {
+            ctx.state_store
+                .load()
+                .raw_operations
+                .into_iter()
+                .filter(|record| record.realm_id.as_deref() == Some(ctx.realm_id))
+                .find_map(|record| {
+                    record
+                        .payload
+                        .get("event")
+                        .filter(|event| {
+                            event.get("event_id").and_then(Value::as_str)
+                                == Some(original_id.as_str())
+                        })
+                        .cloned()
                 })
-                .cloned()
         })?;
     let event_value = &event_value;
     let event: arkret_sdk::Event = serde_json::from_value(event_value.clone()).ok()?;
@@ -1083,6 +1099,11 @@ fn decrypt_rsvp_winner(
         .ok()
         .map(|actor| actor.signing_principal_id().to_string())
         .unwrap_or_else(|| cell.actor_id.clone());
+    let occurrence = match event.payload.get("occurrence") {
+        Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(value.as_str()),
+        _ => return None,
+    };
     if event.kind != arkret_sdk::EventKind::RsvpSet
         || event.realm_id.as_str() != ctx.realm_id
         || event.scope_ref != scope
@@ -1090,7 +1111,7 @@ fn decrypt_rsvp_winner(
         || event.event_id.event_digest().as_str() != winner.source_event_digest
         || event.actor_id.signing_principal_id().as_str() != cell_actor
         || event.payload.get("event_ref")?.as_str()? != strand_id
-        || event.payload.get("occurrence")?.as_str() != cell.occurrence.as_deref()
+        || occurrence != cell.occurrence.as_deref()
         || event.payload.get("entry")? != &winner.entry
     {
         return None;
@@ -1102,15 +1123,17 @@ fn decrypt_rsvp_winner(
         Some((authority, authority.principal_id.as_str(), &device_id)),
     )?;
     let ciphertext = winner.entry.get("encrypted_response")?;
-    let plaintext = crate::state::projection::try_local_mls_decrypt_from_verified_original(
-        ctx.state_store,
-        ctx.realm_id,
-        authority,
-        &device_id,
-        ciphertext,
-        &event,
-        &sender,
-    )?;
+    let plaintext =
+        crate::state::projection::try_local_mls_decrypt_from_verified_original_with_secure_store(
+            ctx.state_store,
+            ctx.realm_id,
+            authority,
+            &device_id,
+            ciphertext,
+            &event,
+            &sender,
+            secure,
+        )?;
     let response: arkret_sdk::RsvpResponse = serde_json::from_slice(&plaintext).ok()?;
     response.validate().ok()?;
     Some(response)

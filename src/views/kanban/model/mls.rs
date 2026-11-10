@@ -11,33 +11,20 @@ pub(crate) struct MlsDecryptCtx<'a> {
     pub(crate) identity: Option<(&'a arkret_sdk::AccountId, &'a str)>,
 }
 
-/// Build a render-time decrypt context only when entering the MLS runtime is
-/// locally safe. A persisted Realm snapshot is wrapped by the account MLS
-/// secret; when that secret is absent, attempting every encrypted historical
-/// patch would rescan all secret versions for every field and block the wasm
-/// main thread. Keep the envelopes opaque until recovery restores the secret.
-///
-/// A Realm with no local snapshot is still allowed through because exporter
-/// history-secret decryption does not require the snapshot/account wrapper.
+/// Build a context for the active Account. Original content reads use retained
+/// roots and verified public history; the old private checkpoint and its
+/// account-secret wrapper are not prerequisites or sources of read authority.
 pub(crate) fn mls_decrypt_ctx_if_ready<'a>(
     state_store: &'a LocalStateStore,
     realm_id: &'a str,
     authority: &'a arkret_sdk::AccountId,
     device_id: &'a str,
 ) -> Option<MlsDecryptCtx<'a>> {
-    let snapshot_requires_account_secret = state_store.mls_checkpoint_for(realm_id).is_some();
-    if snapshot_requires_account_secret {
-        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let account_secret_available = matches!(
-            crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), authority),
-            Ok(Some(_))
-        );
-        if !should_enter_mls_decrypt_runtime(
-            snapshot_requires_account_secret,
-            account_secret_available,
-        ) {
-            return None;
-        }
+    if state_store.active_authority().as_ref() != Some(authority)
+        || state_store.current_reset_required()
+        || arkret_sdk::DeviceId::new(device_id.to_owned()).is_err()
+    {
+        return None;
     }
     Some(MlsDecryptCtx {
         state_store,
@@ -130,22 +117,12 @@ pub(crate) fn private_strand_event_field_value(
     serde_json::from_slice(&plaintext).ok()
 }
 
-fn should_enter_mls_decrypt_runtime(
-    snapshot_requires_account_secret: bool,
-    account_secret_available: bool,
-) -> bool {
-    !snapshot_requires_account_secret || account_secret_available
-}
-
-/// Cheap key-only check for the raw MLS payload/envelope shape. Projection and
+/// Cheap key-only check for the raw encrypted payload/envelope shape. Projection and
 /// patch wrappers are handled by [`mls_envelope_value`].
 pub(crate) fn value_is_raw_mls_envelope(value: &Value) -> bool {
     let Some(object) = value.as_object() else {
         return false;
     };
-    if object.get("scheme").and_then(Value::as_str) == Some("mls_rfc9420") {
-        return true;
-    }
     object.contains_key("ciphertext") && object.contains_key("content_type")
 }
 
@@ -270,18 +247,4 @@ pub(crate) fn private_strand_field_text(
     }
     // Tier 2: encrypted content remains opaque without verified Event context.
     private_strand_display_text(ctx, value)
-}
-
-#[cfg(test)]
-mod readiness_tests {
-    use super::should_enter_mls_decrypt_runtime;
-
-    #[test]
-    fn persisted_snapshot_without_account_secret_never_enters_render_time_mls_runtime() {
-        assert!(!should_enter_mls_decrypt_runtime(true, false));
-        assert!(should_enter_mls_decrypt_runtime(true, true));
-        // History-secret-only reads remain possible before a local snapshot is
-        // installed, and do not require the account snapshot wrapper.
-        assert!(should_enter_mls_decrypt_runtime(false, false));
-    }
 }

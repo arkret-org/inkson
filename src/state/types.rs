@@ -1200,30 +1200,19 @@ pub struct ClientLocalState {
     #[serde(default, skip_serializing)]
     pub mls_private_plaintext:
         imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
-    /// local-only decrypted-plaintext cache for REMOTE members'
-    /// MLS application messages, keyed `realm_id -> payload_digest ->
-    /// base64url(plaintext)`. The receive chain is persisted forward on every
-    /// successful decrypt (`encryption-and-audit.md` §5.6 first duty: persist the receive chain),
-    /// which deliberately consumes the per-message ratchet key — re-rendering
-    /// the same ciphertext (chat scroll, board re-projection, restart)
-    /// MUST therefore be served from this cache instead of replaying the
-    /// ratchet from an earlier snapshot. `payload_digest` is the envelope's
-    /// canonical `sha256:` digest (bound over epoch/content_type/AAD/
-    /// ciphertext), so the key is stable across re-fetches of the same event.
-    ///
-    /// Like [`Self::mls_private_plaintext`] (the author-side sidecar) this
-    /// MUST NEVER leave the device; eviction is deliberate non-behavior —
-    /// once the ratchet has advanced past a message, the cache entry is the
-    /// only remaining way to render it after the ratchet advances. It is
-    /// persisted only through the account-scoped hardened secure-store cache
-    /// and is never serialized into plaintext account-state storage. When
-    /// hardened storage is unavailable it remains memory-only.
+    /// Device-local presentation bytes, keyed `realm_id -> payload_digest ->
+    /// base64url(plaintext)`. A digest does not authenticate the original Event
+    /// header; readers still verify its full original and Root-based AEAD.
+    /// Evicted content can be reopened from authorized retained roots and
+    /// public epoch proofs without replaying a private MLS receive chain.
+    /// Persist only in the account-scoped hardened cache, never plaintext
+    /// account state or remote backup; otherwise keep it in memory.
     #[serde(default, skip_serializing)]
     pub mls_decrypted_plaintext: imbl::OrdMap<String, imbl::OrdMap<String, String>>,
-    /// Exact signed metadata originals consumed at the sealed accepted-page boundary.
+    /// Exact signed encrypted originals consumed at the sealed accepted-page boundary.
     /// They are local read material, not portable admission or disclosure proofs.
-    #[serde(default, skip_serializing)]
-    pub(crate) metadata_originals: imbl::OrdMap<String, imbl::OrdMap<arkret_sdk::EventId, String>>,
+    #[serde(skip)]
+    pub(crate) encrypted_originals: imbl::OrdMap<String, imbl::OrdMap<arkret_sdk::EventId, String>>,
     /// Exact IdentityLink and LeafNode bytes observed through an authenticated
     /// MLS decrypt. This pairwise-to-principal mapping is private and therefore
     /// persists only in the hardened E2EE cache.
@@ -1575,7 +1564,7 @@ impl Default for ClientLocalState {
             local_device_refresh_pending: false,
             mls_private_plaintext: imbl::OrdMap::new(),
             mls_decrypted_plaintext: imbl::OrdMap::new(),
-            metadata_originals: imbl::OrdMap::new(),
+            encrypted_originals: imbl::OrdMap::new(),
             authenticated_identity_links: imbl::OrdMap::new(),
             composer_drafts: imbl::OrdMap::new(),
             realm_remarks: imbl::OrdMap::new(),
@@ -1621,7 +1610,7 @@ pub(crate) struct MlsReceiveOverlay {
     /// `ClientLocalState::mls_decrypted_plaintext`
     /// (`realm_id -> payload_digest -> base64url(plaintext)`).
     pub(crate) plaintexts: BTreeMap<String, BTreeMap<String, String>>,
-    pub(crate) metadata_originals: BTreeMap<String, BTreeMap<arkret_sdk::EventId, String>>,
+    pub(crate) encrypted_originals: BTreeMap<String, BTreeMap<arkret_sdk::EventId, String>>,
     pub(crate) identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
 }
 
@@ -1630,7 +1619,7 @@ impl MlsReceiveOverlay {
         self.snapshots.is_empty()
             && self.recovery_snapshots.is_empty()
             && self.plaintexts.is_empty()
-            && self.metadata_originals.is_empty()
+            && self.encrypted_originals.is_empty()
             && self.identity_links.is_empty()
     }
 
@@ -1657,9 +1646,9 @@ impl MlsReceiveOverlay {
                 slot.insert(digest.clone(), plaintext.clone());
             }
         }
-        for (realm, entries) in &self.metadata_originals {
+        for (realm, entries) in &self.encrypted_originals {
             state
-                .metadata_originals
+                .encrypted_originals
                 .entry(realm.clone())
                 .or_default()
                 .extend(entries.clone());

@@ -1426,7 +1426,9 @@ impl InksonAccountProjector {
             .state_store
             .read(|store| {
                 for page in verified.pages() {
-                    crate::identity::metadata::retain_accepted_page_metadata(store, page)?;
+                    crate::identity::metadata::retain_accepted_page_encrypted_originals(
+                        store, page,
+                    )?;
                 }
                 Ok::<_, String>(())
             })
@@ -1881,7 +1883,7 @@ impl InksonAccountProjector {
                     .read(|store| {
                         for proof in &verified {
                             for page in proof.own_pages() {
-                                crate::identity::metadata::retain_accepted_page_metadata(
+                                crate::identity::metadata::retain_accepted_page_encrypted_originals(
                                     store, page,
                                 )?;
                             }

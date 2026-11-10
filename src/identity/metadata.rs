@@ -1,4 +1,4 @@
-//! Host decryption and sender evidence for standard Space and Strand metadata.
+//! Accepted originals and host decryption for encrypted UI projections.
 
 use serde_json::Value;
 
@@ -6,7 +6,7 @@ use crate::state::LocalStateStore;
 
 /// Run only after the accepted projection transaction and its durability
 /// barrier. A refused installation must not install decrypted presentation data.
-pub(crate) fn retain_accepted_page_metadata(
+pub(crate) fn retain_accepted_page_encrypted_originals(
     store: &LocalStateStore,
     page: &impl crate::transport::own_station_results::AcceptedPageRows,
 ) -> Result<(), String> {
@@ -17,25 +17,7 @@ pub(crate) fn retain_accepted_page_metadata(
             let arkret_sdk::CommittedEventView::Full(full) = row else {
                 return None;
             };
-            (matches!(
-                full.event.kind,
-                arkret_sdk::EventKind::SpaceCreate
-                    | arkret_sdk::EventKind::SpaceUpdate
-                    | arkret_sdk::EventKind::StrandCreate
-                    | arkret_sdk::EventKind::StrandUpdate
-            ) && (full
-                .event
-                .payload
-                .get("object")
-                .and_then(|object| object.get("encrypted_metadata"))
-                .is_some()
-                || full
-                    .event
-                    .payload
-                    .get("patch")
-                    .and_then(|patch| patch.pointer("/encrypted_metadata/value"))
-                    .is_some()))
-            .then_some(&full.event)
+            presentation_envelope(&full.event).map(|_| &full.event)
         })
         .collect::<Vec<_>>();
     if originals.is_empty() {
@@ -49,11 +31,11 @@ pub(crate) fn retain_accepted_page_metadata(
             .accepted_account()
             .is_some_and(|account| account != &endpoint.authority)
     {
-        return Err("metadata page belongs to another active account".into());
+        return Err("encrypted original page belongs to another active account".into());
     }
     let secure = crate::secure_key_store::default_secure_key_store("inkson");
     for event in originals {
-        retain_accepted_metadata_original(
+        retain_accepted_encrypted_original(
             store,
             event,
             &endpoint.authority,
@@ -64,38 +46,36 @@ pub(crate) fn retain_accepted_page_metadata(
     Ok(())
 }
 
-/// Retain metadata from its accepted original and exact frozen encryption
+fn presentation_envelope(event: &arkret_sdk::Event) -> Option<arkret_sdk::EncryptedEnvelope> {
+    let body = serde_json::to_value(&event.payload).ok()?;
+    let value = match event.kind {
+        arkret_sdk::EventKind::SpaceCreate | arkret_sdk::EventKind::StrandCreate => {
+            body.pointer("/object/encrypted_metadata")?
+        }
+        arkret_sdk::EventKind::SpaceUpdate | arkret_sdk::EventKind::StrandUpdate => {
+            body.pointer("/patch/encrypted_metadata/value")?
+        }
+        arkret_sdk::EventKind::RsvpSet => body.pointer("/entry/encrypted_response")?,
+        _ => return None,
+    };
+    let envelope: arkret_sdk::EncryptedEnvelope = serde_json::from_value(value.clone()).ok()?;
+    envelope.validate().ok()?;
+    Some(envelope)
+}
+
+/// Retain presentation content from its accepted original and exact frozen encryption
 /// header. Reading content never consumes an MLS application message key.
-fn retain_accepted_metadata_original(
+fn retain_accepted_encrypted_original(
     store: &LocalStateStore,
     event: &arkret_sdk::Event,
     account: &arkret_sdk::AccountId,
     device: &arkret_sdk::DeviceId,
     secure: &dyn crate::secure_key_store::SecureKeyStore,
 ) {
-    if !matches!(
-        event.kind,
-        arkret_sdk::EventKind::SpaceCreate
-            | arkret_sdk::EventKind::SpaceUpdate
-            | arkret_sdk::EventKind::StrandCreate
-            | arkret_sdk::EventKind::StrandUpdate
-    ) {
+    let Some(envelope) = presentation_envelope(event) else {
         return;
-    }
+    };
     let Ok(original) = serde_json::to_value(event) else {
-        return;
-    };
-    let Some(body) = original.get("payload") else {
-        return;
-    };
-    let Some(value) = body
-        .pointer("/object/encrypted_metadata")
-        .or_else(|| body.pointer("/patch/encrypted_metadata/value"))
-    else {
-        return;
-    };
-    let Ok(envelope) = serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(value.clone())
-    else {
         return;
     };
     let Some(sender) = crate::identity::committed_sender::verified_chat_sender_domain_for_realm(
@@ -106,14 +86,14 @@ fn retain_accepted_metadata_original(
     ) else {
         return;
     };
-    store.retain_metadata_original(event);
+    store.retain_encrypted_original(event);
     let Some(payload) = crate::mls::runtime::encrypted_payload_from_verified_original(
         store, secure, account, device, event, &envelope, &sender,
     ) else {
         return;
     };
     // The runtime opens the retained content root without changing MLS state.
-    // Missing original material leaves metadata pending.
+    // Missing root material leaves the presentation pending, retaining its original.
     let _ = crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
         store,
         secure,
@@ -129,14 +109,14 @@ fn retain_accepted_metadata_original(
 /// A fixture models the already verified sealed-page boundary separately
 /// from Root/AEAD behavior. Production callers cannot inject a raw Event here.
 #[cfg(test)]
-pub(crate) fn retain_accepted_metadata(
+pub(crate) fn retain_accepted_encrypted_original_for_test(
     store: &LocalStateStore,
     event: &arkret_sdk::Event,
     account: &arkret_sdk::AccountId,
     device: &arkret_sdk::DeviceId,
     secure: &dyn crate::secure_key_store::SecureKeyStore,
 ) {
-    retain_accepted_metadata_original(store, event, account, device, secure);
+    retain_accepted_encrypted_original(store, event, account, device, secure);
 }
 
 fn observe_open_gate(digest: &arkret_sdk::Hash, gate: &'static str, passed: bool) {
@@ -217,7 +197,7 @@ pub(crate) fn open_metadata_with_secure_store(
     let expected = current_metadata_context(store, realm, id, envelope);
     let cipher = serde_json::to_value(envelope).ok()?;
     let snapshot = store.load();
-    let mut retained = store.metadata_originals_for(realm);
+    let mut retained = store.encrypted_originals_for(realm);
     retained.extend(snapshot.raw_operations.iter().filter_map(|record| {
         let value = record.payload.get("event").unwrap_or(&record.payload);
         serde_json::from_value::<arkret_sdk::Event>(value.clone()).ok()

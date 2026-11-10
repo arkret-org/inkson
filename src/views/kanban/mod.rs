@@ -31,6 +31,20 @@ use controller::{KanbanCommand, KanbanController, new_kanban_controller};
 use due_calendar::*;
 pub(crate) use model::strand_views_from_ops;
 use model::*;
+#[cfg(test)]
+pub(crate) fn decrypt_rsvp_original_for_test(
+    store: &LocalStateStore,
+    realm: &str,
+    identity: (&arkret_sdk::AccountId, &arkret_sdk::DeviceId),
+    strand: &arkret_sdk::StrandId,
+    cell: &crate::state::projection_views::RsvpCellProjectionView,
+    winner: &crate::state::projection_views::RsvpWinnerProjectionView,
+    secure: &dyn crate::secure_key_store::SecureKeyStore,
+) -> Option<arkret_sdk::RsvpResponse> {
+    let ctx = model::mls_decrypt_ctx_if_ready(store, realm, identity.0, identity.1.as_str())?;
+    model::decrypt_rsvp_winner_with_secure_store(&ctx, strand.as_str(), cell, winner, secure)
+}
+
 mod assignment;
 mod board_select;
 mod card_detail;

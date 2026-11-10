@@ -632,7 +632,7 @@ impl LocalStateStore {
 
     /// The caller has consumed this exact original through a sealed accepted
     /// page. Persist only the bytes locally; they mint no portable authority.
-    pub(crate) fn retain_metadata_original(&self, original: &arkret_sdk::Event) {
+    pub(crate) fn retain_encrypted_original(&self, original: &arkret_sdk::Event) {
         let Ok(bytes) = arkret_sdk::canonical::canonical_json_bytes(original) else {
             return;
         };
@@ -640,7 +640,7 @@ impl LocalStateStore {
             return;
         };
         self.lock_mls_receive_overlay()
-            .metadata_originals
+            .encrypted_originals
             .entry(original.realm_id.to_string())
             .or_default()
             .insert(original.event_id.clone(), serialized);
@@ -648,14 +648,36 @@ impl LocalStateStore {
         self.persist_e2ee_plaintext_cache_if_ready();
     }
 
-    pub(crate) fn metadata_originals_for(&self, realm: &str) -> Vec<arkret_sdk::Event> {
+    pub(crate) fn encrypted_original(
+        &self,
+        realm: &str,
+        id: &arkret_sdk::EventId,
+    ) -> Option<arkret_sdk::Event> {
+        self.with_mls_receive_fields(|state, overlay| {
+            let serialized = overlay
+                .encrypted_originals
+                .get(realm)
+                .and_then(|entries| entries.get(id))
+                .or_else(|| {
+                    state
+                        .encrypted_originals
+                        .get(realm)
+                        .and_then(|entries| entries.get(id))
+                })?;
+            serde_json::from_str::<arkret_sdk::Event>(serialized)
+                .ok()
+                .filter(|original| original.event_id == *id && original.realm_id.as_str() == realm)
+        })
+    }
+
+    pub(crate) fn encrypted_originals_for(&self, realm: &str) -> Vec<arkret_sdk::Event> {
         self.with_mls_receive_fields(|state, overlay| {
             let mut originals = state
-                .metadata_originals
+                .encrypted_originals
                 .get(realm)
                 .cloned()
                 .unwrap_or_default();
-            if let Some(entries) = overlay.metadata_originals.get(realm) {
+            if let Some(entries) = overlay.encrypted_originals.get(realm) {
                 originals.extend(entries.clone());
             }
             originals
