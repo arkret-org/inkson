@@ -4,9 +4,6 @@ pub struct EndpointClients {
 }
 
 impl EndpointClients {
-    pub(crate) fn http(&self) -> &arkret_sdk::http_client::Client {
-        self.transport.http()
-    }
     pub fn new(transport: super::TransportClient) -> Self {
         Self { transport }
     }

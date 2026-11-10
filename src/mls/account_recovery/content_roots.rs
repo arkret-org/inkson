@@ -4,6 +4,18 @@ use arkret_models_crypto::{ContentRootBackupEntry, RecoveryMethod};
 use arkret_sdk::{AccountId, BackupId, MlsWelcomeRecipientEndpoint};
 use garth::mls::content_roots::ContentRootVault;
 
+fn root_backup_operation(
+    root: &arkret_sdk::Hash,
+    policy: &arkret_models_crypto::RecoveryPolicyRef,
+    recipient: &str,
+    series: Option<&arkret_sdk::BackupSeriesId>,
+) -> anyhow::Result<String> {
+    Ok(format!(
+        "root:{}",
+        arkret_sdk::canonical::canonical_sha256(&(root, policy, recipient, series))?
+    ))
+}
+
 pub(crate) async fn ensure_content_root_backup(
     api: &crate::transport::TransportClient,
     secure: &dyn crate::secure_key_store::SecureKeyStore,
@@ -73,18 +85,42 @@ pub(crate) async fn ensure_content_root_backup(
         "accepted policy has no currently usable root backup recipient"
     );
     let mut backups = Vec::new();
+    let policy_ref = arkret_models_crypto::RecoveryPolicyRef {
+        policy_id: policy.policy_id.clone(),
+        policy_version: policy.version,
+    };
     for (recipient, public) in recipients {
         fence.check()?;
-        let operation = format!(
-            "root:{}",
-            arkret_sdk::canonical::canonical_sha256(&(
-                &root.root_ref,
-                &policy.policy_id,
-                policy.version,
-                &recipient,
-            ))?
-        );
-        let frozen = if let Some(frozen) = vault.frozen_backup(&operation).await? {
+        let metadata = api.list_key_backups().await?;
+        let current_basis = super::current_basis::ConfirmedBackupBasis::read(
+            api,
+            account,
+            &metadata.active_series.control_realm_id,
+            device.as_str(),
+            None,
+        )
+        .await?;
+        let series = current_basis.state()?.secret_storage.series_id().cloned();
+        current_basis.check()?;
+        let operation =
+            root_backup_operation(&root.root_ref, &policy_ref, &recipient, series.as_ref())?;
+        let mut existing = vault.frozen_backup(&operation).await?;
+        if existing.is_none()
+            && let Some(series) = &series
+        {
+            let initial = root_backup_operation(&root.root_ref, &policy_ref, &recipient, None)?;
+            existing = vault
+                .frozen_backup(&initial)
+                .await?
+                .filter(|backup| &backup.series_id == series);
+        }
+        let frozen = if let Some(frozen) = existing {
+            anyhow::ensure!(
+                series
+                    .as_ref()
+                    .is_none_or(|series| series == &frozen.series_id),
+                "frozen root backup belongs to another active series"
+            );
             frozen
         } else {
             let list =
@@ -113,6 +149,10 @@ pub(crate) async fn ensure_content_root_backup(
                 .ok_or_else(|| anyhow::anyhow!("root backup signer is unavailable"))?;
             let auth = api.key_backup_auth_binding(account, &signer).await?;
             basis.check_auth(&auth)?;
+            anyhow::ensure!(
+                basis.state()?.secret_storage.series_id() == series.as_ref(),
+                "root backup series changed while preparing its immutable package"
+            );
             let (series_id, sequence, supersedes) = if let Some(previous) = previous {
                 let digest = garth::mls::backup_series::series_supersedes_digest(&previous)?;
                 (
@@ -145,7 +185,7 @@ pub(crate) async fn ensure_content_root_backup(
                     binding: auth,
                     source: basis.source_commit_ref()?,
                 },
-                recipient_key_ref: recipient,
+                recipient_key_ref: recipient.clone(),
                 recovery_policy_ref: arkret_models_crypto::RecoveryPolicyRef {
                     policy_id: policy.policy_id.clone(),
                     policy_version: policy.version,
@@ -167,6 +207,17 @@ pub(crate) async fn ensure_content_root_backup(
             basis.check()?;
             vault.freeze_backup(&operation, &sealed).await?
         };
+        frozen.validate()?;
+        anyhow::ensure!(
+            frozen.actor_id == actor
+                && frozen.device_id.as_ref() == Some(device)
+                && frozen.recovery_policy_ref.as_ref() == Some(&policy_ref)
+                && frozen.encryption.recipient_key_ref.as_deref() == Some(recipient.as_str())
+                && frozen.contents.len() == 1
+                && frozen.contents[0].root_ref.as_ref() == Some(&root.root_ref)
+                && frozen.contents[0].root_context.as_ref() == Some(&root.root_context),
+            "frozen backup differs from its complete root publication intent"
+        );
         fence.check()?;
         api.put_key_backup(frozen.backup_id.as_str(), frozen.clone())
             .await?;
@@ -261,7 +312,37 @@ mod tests {
                 .unwrap()
         };
         let first = seal();
-        let second = seal();
+        let mut successor = draft.clone();
+        successor.backup_id = garth::mls::backup_series::fresh_backup_id().unwrap();
+        successor.series_id =
+            arkret_sdk::BackupSeriesId::new(arkret_wire::new_prefixed_uuid7("ak:backup_series:"))
+                .unwrap();
+        successor.series_sequence = 0;
+        successor.supersedes = None;
+        let second = successor
+            .clone()
+            .seal(roots.clone(), &public, |bytes| {
+                Ok(signing.sign(bytes).to_bytes().to_vec())
+            })
+            .unwrap();
+        let operation = |series| {
+            super::root_backup_operation(
+                &roots[0].root_ref,
+                &draft.recovery_policy_ref,
+                &draft.recipient_key_ref,
+                series,
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            operation(Some(&draft.series_id)),
+            operation(Some(&draft.series_id))
+        );
+        assert_ne!(operation(None), operation(Some(&draft.series_id)));
+        assert_ne!(
+            operation(Some(&draft.series_id)),
+            operation(Some(&successor.series_id))
+        );
         assert_ne!(first.encryption.aead.enc, second.encryption.aead.enc);
         assert_ne!(first.ciphertext, second.ciphertext);
         for backup in [first, second] {

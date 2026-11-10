@@ -365,7 +365,7 @@ impl AttachmentObject {
     pub(crate) async fn prepare(
         &self,
         chunks: &crate::state::current_index::AttachmentChunkStore,
-        http: Option<&arkret_sdk::http_client::Client>,
+        api: Option<&crate::transport::TransportClient>,
     ) -> anyhow::Result<PreparedAttachment> {
         self.validate()?;
         if let Some(prepared) = &self.prepared {
@@ -392,6 +392,15 @@ impl AttachmentObject {
             "frozen attachment source digest differs"
         );
         let descriptor = if let Some(context) = &self.context {
+            let api = api.ok_or_else(|| {
+                anyhow::anyhow!("encrypted attachment requires its authenticated original source")
+            })?;
+            let active = crate::secure_key_store::active_device_seed_scope()
+                .ok_or_else(|| anyhow::anyhow!("attachment requires its active Device"))?;
+            anyhow::ensure!(
+                active.authority == self.authority && active.device_id == self.device_id,
+                "attachment author differs from the active Device"
+            );
             let snapshot = self
                 .checkpoint
                 .as_ref()
@@ -402,6 +411,10 @@ impl AttachmentObject {
                 .ok_or_else(|| anyhow::anyhow!("missing accepted reference"))?;
             let group =
                 restore_attachment_group(snapshot, &self.authority, &self.device_id, context)?;
+            anyhow::ensure!(
+                group.local_content_endpoint()? == context.producer,
+                "attachment producer differs from its original local leaf"
+            );
             let (_, tree) = group.public_group_state_bytes()?;
             let tree_ref = self
                 .state_tree_ref
@@ -421,14 +434,20 @@ impl AttachmentObject {
                 "attachment checkpoint is not the winning tree"
             );
             let root = crate::mls::content_roots::resolve_root_context(
-                http.ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "encrypted attachment requires its authenticated original source"
-                    )
-                })?,
+                &api.sdk_http_client()?,
                 &group,
                 &context.genesis_event_ref,
                 &reference,
+            )
+            .await?;
+            let entry = crate::mls::content_roots::export_epoch_root(&group, &root)?;
+            let secure = crate::secure_key_store::default_secure_key_store("inkson");
+            crate::mls::account_recovery::ensure_content_root_backup(
+                api,
+                secure.as_ref(),
+                &self.authority,
+                &self.device_id,
+                &entry,
             )
             .await?;
             let key = arkret_sdk::mls::derive_attachment_content_key(&group, &root, context)?;
@@ -651,9 +670,7 @@ pub(crate) async fn private_message_body(
         object = vault.freeze_attachment_input(&object.id, digest).await?;
     }
     if object.prepared.is_none() {
-        let prepared = object
-            .prepare(&chunks, Some(&api.sdk_http_client()?))
-            .await?;
+        let prepared = object.prepare(&chunks, Some(api)).await?;
         object = vault
             .freeze_prepared_attachment(&object.id, prepared)
             .await?;

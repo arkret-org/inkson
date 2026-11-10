@@ -82,16 +82,78 @@ pub(crate) async fn prepare_material(
         .map(serde_json::from_value)
         .transpose()?
         .unwrap_or_default();
-    let protection = arkret_models_crypto::ContentProtection {
+    let mut protection = arkret_models_crypto::ContentProtection {
         root_refs: vec![root_ref.clone()],
         blob_refs,
         backup_refs: backups,
     };
     let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
-        device_id: active.device_id,
+        device_id: active.device_id.clone(),
     };
     let vault =
         garth::mls::content_roots::ContentRootVault::new(secure.as_ref(), &actor, &endpoint);
+    if let Some(content) =
+        arkret_event_draft::content_block_plaintext(intent.kind(), path, plaintext)?
+    {
+        let source =
+            crate::transport::own_station_results::client_for_http(&api.sdk_http_client()?).await?;
+        for reference in content.referenced_blobs()? {
+            protection
+                .blob_refs
+                .push(arkret_sdk::BlobRef::new(reference)?);
+        }
+        for descriptor in content.encrypted_attachments()? {
+            let reference = descriptor.key_ref().group_state_ref.event_id()?;
+            let root = vault
+                .root_for_group_state(intent.scope_ref(), &reference)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("attachment content root is pending"))?;
+            anyhow::ensure!(
+                root.root_context.genesis_event_ref == context.genesis_event_ref,
+                "attachment belongs to another immutable group"
+            );
+            let roster = crate::mls::historical_content::read_public_epoch(
+                &source,
+                state,
+                &root.root_context,
+            )
+            .await?;
+            roster
+                .validate_content_endpoint_for_device(
+                    &actor,
+                    &active.device_id,
+                    descriptor.producer(),
+                )
+                .map_err(anyhow::Error::msg)?;
+            validate_attachment_root(&root, &descriptor)?;
+            let references = crate::mls::account_recovery::ensure_content_root_backup(
+                api,
+                secure.as_ref(),
+                &active.authority,
+                &active.device_id,
+                &root,
+            )
+            .await?;
+            protection.root_refs.push(root.root_ref);
+            protection.backup_refs.extend(references);
+            fence.check()?;
+        }
+        source.check_session()?;
+    }
+    protection.root_refs.sort();
+    protection.root_refs.dedup();
+    protection.blob_refs.sort();
+    protection.blob_refs.dedup();
+    protection.backup_refs.sort();
+    protection.backup_refs.dedup();
+    protection.validate()?;
+    anyhow::ensure!(
+        state.read(|state| state
+            .current_mls_group_for_scope(intent.scope_ref())
+            .as_ref()
+            == Some(&current)),
+        "content current changed while making its attachment roots durable"
+    );
     let operation = arkret_sdk::canonical::canonical_sha256(&intent.pre_encryption_outer_event()?)?;
     let salt = vault
         .reserve_salt(
@@ -130,7 +192,35 @@ pub(crate) async fn prepare_material(
     })
 }
 
-fn export_epoch_root(
+// The caller independently verifies the native author and original public leaf.
+// Publishing a root dependency also requires its actual blob-key commitment.
+fn validate_attachment_root(
+    root: &arkret_models_crypto::ContentRootBackupEntry,
+    descriptor: &arkret_models_crypto::EncryptedAttachment,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        descriptor.key_ref().group_state_ref.event_id()? == root.root_context.group_state_ref,
+        "attachment root differs from its original group-state reference"
+    );
+    let context = descriptor.content_key_context(
+        root.root_context.effective_scope.clone(),
+        root.root_context.genesis_event_ref.clone(),
+        root.root_context.epoch,
+    );
+    let key = arkret_crypto::content_history::derive_attachment_content_key(
+        &root.root_base64url,
+        &context,
+    )?;
+    let expected =
+        arkret_crypto::key_commitment::content_key_commitment_sha256(&context, key.as_ref())?;
+    anyhow::ensure!(
+        &expected == descriptor.key_commitment(),
+        "attachment key commitment differs from its retained content root"
+    );
+    Ok(())
+}
+
+pub(crate) fn export_epoch_root(
     group: &arkret_sdk::ArkretMlsGroup,
     context: &arkret_models_crypto::ContentRootContext,
 ) -> anyhow::Result<arkret_models_crypto::ContentRootBackupEntry> {
@@ -347,6 +437,90 @@ mod tests {
         let material =
             crate::test_support::content::material(&group, "ak.message.create", &reference);
         (group, material, account, device)
+    }
+
+    #[test]
+    fn attachment_dependency_rejects_a_root_salt_commitment_or_state_substitution() {
+        use arkret_models_crypto::{
+            AttachmentContentKeySalt, EncryptedAttachment, EncryptedAttachmentGroupStateRef,
+        };
+        let (group, material, ..) = fixture();
+        let root = export_epoch_root(&group, &material.content_context.root_context).unwrap();
+        let context = arkret_models_crypto::AttachmentContentKeyContext {
+            effective_scope: root.root_context.effective_scope.clone(),
+            genesis_event_ref: root.root_context.genesis_event_ref.clone(),
+            epoch: root.root_context.epoch,
+            scheme: arkret_crypto::blob_aead::SCHEME_STREAM.into(),
+            encryption_algorithm: arkret_crypto::blob_aead::ALG_STREAM_XCHACHA.into(),
+            content_key_salt: AttachmentContentKeySalt::from_bytes([81; 32]),
+            producer: material.content_context.producer,
+        };
+        let key = arkret_crypto::content_history::derive_attachment_content_key(
+            &root.root_base64url,
+            &context,
+        )
+        .unwrap();
+        let resolver = |reference: &EncryptedAttachmentGroupStateRef| {
+            (reference.event_id().ok().as_ref() == Some(&root.root_context.group_state_ref)).then(
+                || arkret_crypto::blob_aead::ResolvedAttachmentGroupState {
+                    effective_scope: root.root_context.effective_scope.clone(),
+                    genesis_event_ref: root.root_context.genesis_event_ref.clone(),
+                    epoch: root.root_context.epoch,
+                },
+            )
+        };
+        let parameters = arkret_crypto::blob_aead::StreamEncryptParams {
+            key_ref: arkret_models_crypto::EncryptedAttachmentKeyRef {
+                algorithm: arkret_models_crypto::EncryptedAttachmentKeyAlgorithm::Mls,
+                group_state_ref: EncryptedAttachmentGroupStateRef::Event(
+                    root.root_context.group_state_ref.clone(),
+                ),
+            },
+            content_context: context,
+            digest_suite: arkret_sdk::DigestSuite::Sha256,
+            media_type: "application/octet-stream".into(),
+            segment_bytes: 262144,
+        };
+        let (_, descriptor) = arkret_crypto::blob_aead::encrypt_stream(
+            b"original attachment",
+            &key,
+            &parameters,
+            &resolver,
+        )
+        .unwrap();
+        validate_attachment_root(&root, &descriptor).unwrap();
+        let mut changed = descriptor.clone();
+        let EncryptedAttachment::Stream(stream) = &mut changed else {
+            unreachable!()
+        };
+        stream.key_commitment =
+            arkret_sdk::Hash::new(format!("sha256:{}", "82".repeat(32))).unwrap();
+        assert!(validate_attachment_root(&root, &changed).is_err());
+        let mut changed = descriptor.clone();
+        let EncryptedAttachment::Stream(stream) = &mut changed else {
+            unreachable!()
+        };
+        stream.content_key_salt = AttachmentContentKeySalt::from_bytes([83; 32]);
+        assert!(validate_attachment_root(&root, &changed).is_err());
+        let mut changed = descriptor.clone();
+        let EncryptedAttachment::Stream(stream) = &mut changed else {
+            unreachable!()
+        };
+        stream.key_ref.group_state_ref = EncryptedAttachmentGroupStateRef::Digest(
+            arkret_sdk::Hash::new(root.root_context.group_state_ref.event_digest().to_string())
+                .unwrap(),
+        );
+        validate_attachment_root(&root, &changed).unwrap();
+        let EncryptedAttachment::Stream(stream) = &mut changed else {
+            unreachable!()
+        };
+        stream.key_ref.group_state_ref = EncryptedAttachmentGroupStateRef::Event(
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [85; 32]),
+        );
+        assert!(validate_attachment_root(&root, &changed).is_err());
+        let mut changed_root = root;
+        changed_root.root_base64url = arkret_models_crypto::ContentRootSecret::new([84; 32]);
+        assert!(validate_attachment_root(&changed_root, &descriptor).is_err());
     }
 
     #[tokio::test]

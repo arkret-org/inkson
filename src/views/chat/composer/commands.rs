@@ -170,9 +170,8 @@ pub(super) fn upload_dropped_attachments(
                 &account.authority,
                 crate::outbound_store::OutboundLane::Standard,
             )?;
-            let clients = crate::transport::EndpointClients::from_http(
-                crate::transport::auth::authed_api_ready(&base_url, api_token).await?.sdk_http_client()?,
-            );
+            let api = crate::transport::auth::authed_api_ready(&base_url, api_token).await?;
+            let clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
             anyhow::ensure!(active(), "attachment session or target changed");
             for file in files {
                 anyhow::ensure!(
@@ -278,7 +277,7 @@ pub(super) fn upload_dropped_attachments(
                         content: object.prepared.as_ref().map(|p|p.content.clone()).unwrap_or_else(||arkret_sdk::ContentBlock::new(arkret_sdk::ContentBlockKind::File, object.filename.clone())), pending: !object.uploaded}));
                 }
                 if object.prepared.is_none() {
-                    let prepared = object.prepare(&chunks,Some(clients.http())).await?;
+                    let prepared = object.prepare(&chunks,Some(&api)).await?;
                     object = vault
                         .freeze_prepared_attachment(&object.id, prepared)
                         .await?;
