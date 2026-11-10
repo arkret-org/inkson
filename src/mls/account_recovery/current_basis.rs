@@ -192,10 +192,22 @@ pub(super) async fn verify_envelope_source(
         .device_authorize_event_id
         .as_ref()
         .ok_or_else(|| anyhow!("Human backup has no original Device authorization"))?;
-    let response = source.committed_event_get(authorization).await?;
-    let arkret_sdk::CommittedEventView::Full(original) = response.value()? else {
-        anyhow::bail!("backup original Device authorization is withheld");
-    };
+    let principal = source
+        .current_principal(&arkret_sdk::CurrentPrincipalRequestBody {
+            request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
+            account_id: authority.clone(),
+        })
+        .await?;
+    let pcr =
+        garth::own_station_results::read_own_station_human_pcr_genesis(source, principal).await?;
+    anyhow::ensure!(
+        pcr.account()? == authority && pcr.realm()? == control_realm,
+        "backup authorization source has another registered Account or PCR"
+    );
+    // Private PCR originals use their native registration and historical
+    // admission proofs, not the public collaboration producer-fact branch.
+    let verified = pcr.read_original(authorization).await?;
+    let original = verified.full()?;
     anyhow::ensure!(
         original.event.event_id == *authorization
             && original.event.kind == arkret_sdk::EventKind::DeviceAuthorize
@@ -208,19 +220,6 @@ pub(super) async fn verify_envelope_source(
             && original.event.executed_by.is_none(),
         "backup authorization is not its original same-Account PCR unit"
     );
-    let reference = arkret_sdk::CommittedEventRef {
-        event_id: original.event.event_id.clone(),
-        commit_id: original.commit.commit_id.clone(),
-        stream_ref: original.commit.stream_ref.clone(),
-        stream_position: original.commit.stream_position,
-    };
-    // The shared consumer re-reads the exact stream row and verifies its
-    // historical producer, original Event proof and covering Commit.
-    let response =
-        garth::own_station_results::consume_bound_event(source, &reference, response).await?;
-    let arkret_sdk::CommittedEventView::Full(original) = response.value()? else {
-        anyhow::bail!("verified backup authorization is not a full original");
-    };
     let payload: arkret_sdk::DeviceAuthorizePayload =
         serde_json::from_value(serde_json::to_value(&original.event.payload)?)?;
     verify_envelope_authorization(body, authority, authorization, &payload)?;
@@ -493,6 +492,254 @@ mod tests {
                 .is_err()
             );
             server.join().unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn backup_signature_reads_native_pcr_original_without_public_producer_fact() {
+        use arkret_test_kit::pcr_genesis::{HumanPcrFixtureInput, HumanPcrOriginalsFixture};
+        use ed25519_dalek::Signer as _;
+        use serde_json::json;
+
+        let fixture = HumanPcrOriginalsFixture::webvh(HumanPcrFixtureInput {
+            station_id: &"ak:did_core:web:station.example".parse().unwrap(),
+            endpoint: &url::Url::parse("https://principal.example/").unwrap(),
+            root_seed: [7; 32],
+            next_root_seed: [8; 32],
+            device_seed: [41; 32],
+            device_hpke_private_key: [51; 32],
+            device_id: "ak:device:01964137-0000-7000-8000-000000000001"
+                .parse()
+                .unwrap(),
+            genesis_salt: arkret_sdk::GenesisSalt::new(arkret_sdk::base64url_encode([61; 32]))
+                .unwrap(),
+            created_at: "2026-09-16T00:00:00.000Z".parse().unwrap(),
+        })
+        .unwrap();
+        let station_key = ed25519_dalek::SigningKey::from_bytes(&[71; 32]);
+        let station_method =
+            arkret_sdk::DidUrl::new("did:web:station.example#realm-authority").unwrap();
+        let genesis = fixture.unit.create();
+        let create = arkret_sdk::CommittedEventFullView {
+            event: genesis.clone(),
+            commit: arkret_test_kit::authority_objects::signed_commit(
+                &station_method,
+                &station_key,
+                genesis,
+                0,
+                None,
+                genesis.event_id.clone(),
+                None,
+            )
+            .unwrap(),
+        };
+        let authorize = fixture.unit.founding_authorize();
+        let authorize = arkret_sdk::CommittedEventFullView {
+            event: authorize.clone(),
+            commit: arkret_test_kit::authority_objects::signed_commit(
+                &station_method,
+                &station_key,
+                authorize,
+                1,
+                Some(create.commit.commit_id.clone()),
+                genesis.event_id.clone(),
+                None,
+            )
+            .unwrap(),
+        };
+        assert!(authorize.commit.producer_signer_fact_digest.is_none());
+        let auth = arkret_crypto::backup::KeyBackupAuthBinding {
+            device_id: fixture.device_id.clone(),
+            verification_method: fixture.device_verification_method.clone(),
+            signature_algorithm: arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
+            device_authorize_event_id: authorize.event.event_id.clone(),
+        };
+        let kek = crate::recovery_crypto::derive_vault_kek(b"native PCR fixture recovery").unwrap();
+        let backup = super::super::backup_body::build_mls_account_secret_backup_body_with_kek(
+            "ak:backup:01964137-0000-7000-8000-00000000beef",
+            &fixture.account,
+            fixture.device_id.as_str(),
+            &kek,
+            &arkret_sdk::base64url_encode([17; 32]),
+            &auth,
+            &|bytes| Ok(fixture.device_signing_key.sign(bytes).to_bytes().to_vec()),
+            None,
+        )
+        .unwrap();
+
+        for refusal in ["none", "foreign_pcr", "wrong_envelope_key", "late_session"] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let base = format!("http://{}/", listener.local_addr().unwrap());
+            let binding = arkret_sdk::StationConnectionBinding {
+                service_id: fixture.account.station_id.clone(),
+                base_url: base.clone(),
+                trust_domain: "ak:trust_domain:station.example".parse().unwrap(),
+                authentication_metadata: arkret_sdk::AuthenticationMetadata::minimal(),
+            };
+            let holder = Arc::new(Source(Mutex::new(
+                OwnStationSessionSnapshot::new(
+                    binding.clone(),
+                    fixture.account.clone(),
+                    fixture.account.station_id.clone(),
+                    arkret_wire::SessionGrantId::from_issuance_digest([3; 32]),
+                    1,
+                    "fixture-grant".into(),
+                )
+                .unwrap()
+                .with_provider_identity(Default::default()),
+            )));
+            let raw = arkret_sdk::http_client::ClientBuilder::new(url::Url::parse(&base).unwrap())
+                .allow_insecure_localhost()
+                .auth(arkret_sdk::http_client::Auth::Bearer(
+                    "fixture-grant".into(),
+                ))
+                .build()
+                .unwrap();
+            let source = OwnStationStateClient::new(raw.clone(), binding, holder.clone()).unwrap();
+            let replies = vec![
+                json!(fixture.current_principal(arkret_sdk::RequestId::new_v7_at(1))),
+                json!(arkret_sdk::CommittedEventView::Full(create.clone())),
+                json!(arkret_sdk::StreamScanResponseBody {
+                    committed_events: vec![
+                        arkret_sdk::CommittedEventView::Full(create.clone()),
+                        arkret_sdk::CommittedEventView::Full(authorize.clone()),
+                    ],
+                    readable_floor: Some(arkret_sdk::ReadableFloor {
+                        oldest_position: 0,
+                        floor_commit_id: create.commit.commit_id.clone(),
+                        floor_reason: arkret_sdk::ReadableFloorReason::StreamStart,
+                    }),
+                    truncated: false,
+                }),
+                json!(fixture.document),
+                json!(fixture.log),
+            ];
+            let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let server_done = done.clone();
+            let server = std::thread::spawn(move || {
+                let mut observed = Vec::new();
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+                for (index, mut reply) in replies.into_iter().enumerate() {
+                    let mut socket = loop {
+                        match listener.accept() {
+                            Ok((socket, _)) => break socket,
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                if server_done.load(std::sync::atomic::Ordering::SeqCst)
+                                    || std::time::Instant::now() >= deadline
+                                {
+                                    return observed;
+                                }
+                                std::thread::sleep(std::time::Duration::from_millis(2));
+                            }
+                            Err(error) => panic!("fixture accept: {error}"),
+                        }
+                    };
+                    socket.set_nonblocking(false).unwrap();
+                    socket
+                        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                        .unwrap();
+                    let mut bytes = Vec::new();
+                    let header_end = loop {
+                        let mut chunk = [0; 4096];
+                        let count = socket.read(&mut chunk).unwrap();
+                        assert!(count > 0);
+                        bytes.extend_from_slice(&chunk[..count]);
+                        if let Some(position) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                            break position + 4;
+                        }
+                    };
+                    let headers =
+                        String::from_utf8_lossy(&bytes[..header_end]).to_ascii_lowercase();
+                    assert!(headers.contains("authorization: bearer fixture-grant"));
+                    let length = headers
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .map(|length| length.trim().parse::<usize>().unwrap())
+                        .unwrap_or(0);
+                    while bytes.len() < header_end + length {
+                        let mut chunk = [0; 4096];
+                        let count = socket.read(&mut chunk).unwrap();
+                        assert!(count > 0);
+                        bytes.extend_from_slice(&chunk[..count]);
+                    }
+                    let route = headers.lines().next().unwrap().to_owned();
+                    if index == 0 {
+                        assert!(route.starts_with("post /_arkret/self/account/current-principal "));
+                        let request: arkret_sdk::CurrentPrincipalRequestBody =
+                            serde_json::from_slice(&bytes[header_end..header_end + length])
+                                .unwrap();
+                        reply["request_id"] = json!(request.request_id);
+                    }
+                    assert!(!route.contains("signer-keys") && !route.contains("snapshot"));
+                    observed.push(route);
+                    if index == 4 && refusal == "late_session" {
+                        let old = holder.snapshot().unwrap();
+                        *holder.0.lock().unwrap() = OwnStationSessionSnapshot::new(
+                            old.binding().clone(),
+                            old.account_id().clone(),
+                            old.account_id().station_id.clone(),
+                            old.grant_id().clone(),
+                            old.epoch() + 1,
+                            "fixture-grant".into(),
+                        )
+                        .unwrap()
+                        .with_provider_identity(Default::default());
+                    }
+                    let body = serde_json::to_vec(&reply).unwrap();
+                    write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n", body.len()).unwrap();
+                    socket.write_all(&body).unwrap();
+                }
+                observed
+            });
+            let control_realm = if refusal == "foreign_pcr" {
+                arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+                    arkret_sdk::DigestSuite::Sha256,
+                    [99; 32],
+                ))
+            } else {
+                genesis.realm_id.clone()
+            };
+            let mut body = backup.clone();
+            if refusal == "wrong_envelope_key" {
+                body.signature_proof.signature =
+                    arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+                        ed25519_dalek::SigningKey::from_bytes(&[42; 32])
+                            .sign(&body.signing_payload_bytes().unwrap())
+                            .to_bytes(),
+                    ))
+                    .unwrap();
+            }
+            let result =
+                verify_envelope_source(&raw, &source, &fixture.account, &control_realm, &body)
+                    .await;
+            done.store(true, std::sync::atomic::Ordering::SeqCst);
+            let observed = server.join().unwrap();
+            assert_eq!(
+                observed.len(),
+                5,
+                "native founding unit and method history must be read"
+            );
+            match refusal {
+                "none" => result
+                    .expect("holder-private founding authorization verifies without a public fact"),
+                "foreign_pcr" => assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("another registered Account or PCR")
+                ),
+                "wrong_envelope_key" => assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("signature is invalid")
+                ),
+                "late_session" => {
+                    assert!(result.is_err(), "withdrawn source cannot verify the backup")
+                }
+                _ => unreachable!(),
+            }
         }
     }
 }
