@@ -195,7 +195,7 @@ pub(crate) async fn prepare_accepted_page_for_http(
     }
 }
 
-async fn read_public_epoch(
+pub(crate) async fn read_public_epoch(
     source: &OwnStationStateClient,
     state: &crate::runtime::input::StateStoreHandle,
     context: &ContentRootContext,

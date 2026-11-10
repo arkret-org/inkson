@@ -137,137 +137,26 @@ async fn load_verified_attachment(
         .sdk_http_client()?;
     anyhow::ensure!(active(), "attachment session changed");
     let clients = crate::transport::EndpointClients::from_http(http.clone());
-    // An authenticated source read is independent from possession of its ref,
-    // a cached plaintext or historical checkpoint. Withheld/redacted is denial.
-    let source_view = http.committed_event_get(&source.source).await?;
-    source_view.validate_shape()?;
-    let source_event = source_view
-        .reducer_input()
-        .ok_or_else(|| anyhow::anyhow!("attachment source is no longer authorized"))?;
+    let own = crate::transport::own_station_results::client_for_http(&http).await?;
+    let original =
+        garth::own_station_results::read_window_dependency_by_event_id(&own, &source.source)
+            .await?;
     anyhow::ensure!(
-        source_event.event_id == source.source && source_event.scope_ref == source.scope,
-        "attachment authenticated source binding differs"
+        original.full()?.event.scope_ref == source.scope,
+        "attachment original scope differs"
     );
-    source_event
-        .verify_event_id_matches_content_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?;
-    let input = crate::mls::send_gate::MlsSendGateInput::capture(&store, &source.scope);
-    let current = crate::mls::send_gate::read_durable_mls_current(&input, &source.scope)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("attachment scope has no authorized MLS group"))?;
-    anyhow::ensure!(active(), "attachment session changed");
-    let (context, checkpoint, reference) = store.read(|state| {
-        crate::attachments::attachment_receive_context(
-            state,
-            &account.authority,
-            &source.scope,
-            &current,
-            descriptor,
-        )
-    })?;
-    let winning_view = http.committed_event_get(&reference).await?;
-    winning_view.validate_shape()?;
-    let winning = winning_view
-        .reducer_input()
-        .ok_or_else(|| anyhow::anyhow!("attachment historical state is not authorized"))?;
-    anyhow::ensure!(
-        winning.event_id == reference && winning.scope_ref == source.scope,
-        "attachment state source differs"
-    );
-    winning.verify_event_id_matches_content_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?;
-    let payload = serde_json::Value::Object(winning.payload.clone().into_iter().collect());
-    let epoch = match winning.kind {
-        arkret_sdk::EventKind::MlsGenesis => {
-            let genesis: arkret_sdk::MlsGenesisPayload = serde_json::from_value(payload)?;
-            genesis.validate()?;
-            anyhow::ensure!(
-                winning.event_id == context.genesis_event_ref,
-                "attachment immutable Genesis differs"
-            );
-            0
-        }
-        arkret_sdk::EventKind::MlsCommit => {
-            let mls_commit: arkret_sdk::MlsCommitPayload = serde_json::from_value(payload)?;
-            mls_commit.validate()?;
-            mls_commit.next_epoch()
-        }
-        _ => anyhow::bail!("attachment_group_state_unresolved: reference is not an MLS state"),
-    };
-    anyhow::ensure!(
-        epoch == context.epoch && active(),
-        "attachment state epoch or authorization changed"
-    );
-    anyhow::ensure!(
-        current.genesis_event_ref == context.genesis_event_ref
-            && current.effective_scope == context.effective_scope,
-        "attachment provenance changed"
-    );
-    let roster_request = arkret_sdk::MlsMemberRosterAuthorityReadRequestBody {
-        realm_id: source
-            .scope
-            .realm_id_opt()
-            .ok_or_else(|| anyhow::anyhow!("attachment scope has no Realm"))?
-            .clone(),
-        effective_scope: source.scope.clone(),
-        mls_group_id: source.scope.canonical_mls_group_id()?,
-        target_commit_event_ref: reference.clone(),
-        target_epoch: context.epoch,
-        caller_actor_id: arkret_sdk::ActorId::account(account.authority.clone()),
-        cursor: None,
-    };
-    let pages = clients
-        .mls()
-        .unverified_member_roster_authority_pages(&roster_request)
-        .await?;
-    let peer = arkret_sdk::verify_mls_member_roster_authority_pages(&pages, &roster_request)
-        .map_err(anyhow::Error::msg)?;
-    let manifest = &pages
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("attachment authority returned no roster"))?
-        .roster
-        .manifest;
-    anyhow::ensure!(
-        manifest.genesis_event_ref == context.genesis_event_ref && active(),
-        "attachment Genesis or authorization changed"
-    );
-    let material_request = arkret_sdk::mls_roster_genesis_material_request(&peer, manifest);
-    let material = http
-        .self_mls_group_state_material(&material_request)
-        .await?;
-    anyhow::ensure!(active(), "attachment session changed");
-    let mut group = crate::attachments::restore_attachment_group(
-        &checkpoint,
+    let (context, key) = crate::attachments::read_attachment_key(
+        &own,
+        &store,
         &account.authority,
         &account.device_id,
-        &context,
-    )?;
-    arkret_sdk::install_verified_mls_self_roster_bindings(
-        &mut group,
-        &pages,
-        &roster_request,
-        &material,
-    )
-    .map_err(anyhow::Error::msg)?;
-    if current.epoch == context.epoch {
-        let (_, tree) = group.public_group_state_bytes()?;
-        let suite =
-            arkret_models_collaboration::mls_group_state_material::material_digest_from_ref(
-                &current.public_tree_ref,
-            )?
-            .digest_suite()?;
-        anyhow::ensure!(
-            current.public_tree_ref.as_str()
-                == format!("ak:blob:{}", arkret_sdk::canonical::digest(suite, &tree)),
-            "attachment checkpoint is not the winning public tree"
-        );
-    }
-    let root = crate::mls::content_roots::resolve_root_context(
-        &http,
-        &group,
-        &context.genesis_event_ref,
-        &reference,
+        &original,
+        &source.content,
+        descriptor,
     )
     .await?;
-    let key = arkret_sdk::mls::derive_attachment_content_key(&group, &root, &context)?;
+    anyhow::ensure!(active(), "attachment session changed");
+    let reference = descriptor.key_ref().group_state_ref.event_id()?;
     let resolver = |r: &EncryptedAttachmentGroupStateRef| {
         r.event_id().ok().filter(|id| id == &reference).map(|_| {
             arkret_crypto::blob_aead::ResolvedAttachmentGroupState {

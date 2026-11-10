@@ -1,5 +1,7 @@
 //! Private attachment preparation shared by compose and authenticated rendering.
 pub(crate) mod artifact;
+mod history;
+pub(crate) use history::read_attachment_key;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
@@ -7,7 +9,7 @@ use arkret_models_crypto::{
     AttachmentContentKeyContext, AttachmentContentKeySalt, EncryptedAttachment,
     EncryptedAttachmentGroupStateRef, EncryptedAttachmentKeyAlgorithm, EncryptedAttachmentKeyRef,
 };
-use arkret_sdk::{AccountId, DeviceId, EventId, ScopeRef, StrandId};
+use arkret_sdk::{AccountId, DeviceId, ScopeRef, StrandId};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DraftAttachment {
@@ -672,44 +674,6 @@ pub(crate) async fn private_message_body(
         .prepared
         .ok_or_else(|| anyhow::anyhow!("missing long-text descriptor"))?
         .content)
-}
-
-/// The raw reference is kept for segment AAD; normalized EventId is resolution only.
-pub(crate) fn attachment_receive_context(
-    state: &crate::state::LocalStateStore,
-    authority: &AccountId,
-    scope: &ScopeRef,
-    current: &arkret_wire::MlsGroupValue,
-    descriptor: &EncryptedAttachment,
-) -> anyhow::Result<(
-    AttachmentContentKeyContext,
-    garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
-    EventId,
-)> {
-    anyhow::ensure!(
-        state.active_authority().as_ref() == Some(authority) && !state.current_reset_required(),
-        "attachment account is not ready"
-    );
-    // The caller supplies the actor-authorized complete durable cut. Product
-    // views can be temporarily uninstalled during reconciliation or navigation;
-    // rereading that ephemeral cache would discard this already verified input.
-    anyhow::ensure!(
-        &current.effective_scope == scope,
-        "attachment scope differs"
-    );
-    let reference = descriptor.key_ref().group_state_ref.event_id()?;
-    let snapshot = state.attachment_checkpoint_for_ref(scope, &reference)?;
-    anyhow::ensure!(
-        snapshot.epoch <= current.epoch,
-        "attachment state is beyond the authorized cut"
-    );
-    let context = descriptor.content_key_context(
-        scope.clone(),
-        current.genesis_event_ref.clone(),
-        snapshot.epoch,
-    );
-    context.validate()?;
-    Ok((context, snapshot, reference))
 }
 
 pub(crate) fn compose_attachments(
