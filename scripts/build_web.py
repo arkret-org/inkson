@@ -63,7 +63,7 @@ def main():
         raise SystemExit(f"Refusing to overwrite source directory: {output}")
     print(f"Cargo target directory: {target}", flush=True)
     bindgen = find_bindgen(env)
-    command = ["cargo", "build", "--locked", "-p", "inkson", "--lib", "--target", "wasm32-unknown-unknown", "--features", args.features]
+    command = ["cargo", "rustc", "--locked", "-p", "inkson", "--lib", "--crate-type", "cdylib", "--target", "wasm32-unknown-unknown", "--features", args.features]
     if args.profile:
         command.extend(["--profile", args.profile])
     if args.release:

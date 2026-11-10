@@ -105,7 +105,9 @@ mobile-android = []
 mobile-ios = []
 
 [lib]
-crate-type = ["rlib", "cdylib"]
+# Rust consumers need feature-specific hashed artifacts in a shared target.
+# The web builder explicitly requests cdylib only for its browser artifact.
+crate-type = ["rlib"]
 
 [[bin]]
 name = "inkson"
