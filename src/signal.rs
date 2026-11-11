@@ -15,6 +15,9 @@
 pub use arkret_sdk::SignalSequence;
 use serde_json::Value;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod nonce_tests;
+
 /// Sender-side sequence within one `(sender_actor_id, sender_device_id, scope_ref)` stream.
 ///
 /// The receiver dedupes on `(sender_actor_id, sender_device_id, scope_ref, payload_sequence)`
@@ -137,6 +140,17 @@ fn reserve_signal_sequence_block_in_file(
     domain: &str,
     block_size: u64,
 ) -> anyhow::Result<u64> {
+    reserve_signal_counter_block_in_file(path, domain, block_size, 1, true)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn reserve_signal_counter_block_in_file(
+    path: &std::path::Path,
+    domain: &str,
+    block_size: u64,
+    minimum: u64,
+    allow_missing: bool,
+) -> anyhow::Result<u64> {
     use std::io::{Read as _, Write as _};
 
     use fs2::FileExt as _;
@@ -181,9 +195,22 @@ fn reserve_signal_sequence_block_in_file(
                     record.version
                 );
             }
+            if record.next_unreserved == 0
+                || high_waters
+                    .get(&record.domain)
+                    .is_some_and(|previous| *previous >= record.next_unreserved)
+            {
+                anyhow::bail!("Signal reservation journal contains a counter rollback");
+            }
             high_waters.insert(record.domain, record.next_unreserved);
         }
-        let first = high_waters.get(domain).copied().unwrap_or(1);
+        let first = match high_waters.get(domain).copied() {
+            Some(first) if first >= minimum => first,
+            None if allow_missing => minimum,
+            _ => anyhow::bail!(
+                "Signal nonce allocator is missing or behind the accepted checkpoint; recovery is required"
+            ),
+        };
         let next_unreserved = first
             .checked_add(block_size)
             .ok_or_else(|| anyhow::anyhow!("Signal payload_sequence exhausted"))?;
@@ -206,7 +233,7 @@ fn reserve_signal_sequence_block_in_file(
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(inline_js = r#"
-export async function reserveSignalSequenceBlock(key, blockSize) {
+export async function reserveSignalSequenceBlock(key, blockSize, minimum, allowMissing) {
   if (!globalThis.navigator?.locks) {
     throw new Error("Web Locks API is required for atomic Signal sequence reservation");
   }
@@ -214,7 +241,10 @@ export async function reserveSignalSequenceBlock(key, blockSize) {
     const storage = globalThis.localStorage;
     if (!storage) throw new Error("localStorage is unavailable");
     const encoded = storage.getItem(key);
-    const first = encoded === null ? 1n : BigInt(encoded);
+    if (encoded === null && !allowMissing) throw new Error("Signal nonce allocator is missing; recovery is required");
+    if (encoded !== null && !/^(0|[1-9][0-9]*)$/.test(encoded)) throw new Error("Signal counter state is corrupt");
+    const first = encoded === null ? BigInt(minimum) : BigInt(encoded);
+    if (first < BigInt(minimum)) throw new Error("Signal counter state rolled back; recovery is required");
     const next = first + BigInt(blockSize);
     if (next > 18446744073709551615n) throw new Error("Signal payload_sequence exhausted");
     storage.setItem(key, next.toString());
@@ -227,6 +257,8 @@ extern "C" {
     async fn reserve_signal_sequence_block_js(
         key: &str,
         block_size: u64,
+        minimum: u64,
+        allow_missing: bool,
     ) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue>;
 }
 
@@ -235,7 +267,17 @@ async fn reserve_signal_sequence_block_in_browser(
     key: &str,
     block_size: u64,
 ) -> anyhow::Result<u64> {
-    let value = reserve_signal_sequence_block_js(key, block_size)
+    reserve_signal_counter_block_in_browser(key, block_size, 1, true).await
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn reserve_signal_counter_block_in_browser(
+    key: &str,
+    block_size: u64,
+    minimum: u64,
+    allow_missing: bool,
+) -> anyhow::Result<u64> {
+    let value = reserve_signal_sequence_block_js(key, block_size, minimum, allow_missing)
         .await
         .map_err(|error| anyhow::anyhow!("reserve Signal sequence block: {error:?}"))?;
     value
@@ -243,6 +285,41 @@ async fn reserve_signal_sequence_block_in_browser(
         .ok_or_else(|| anyhow::anyhow!("Signal sequence reservation returned a non-string"))?
         .parse()
         .map_err(|error| anyhow::anyhow!("invalid Signal sequence reservation: {error}"))
+}
+
+fn signal_nonce_reservation_domain(
+    context: &arkret_sdk::AeadNonceContext,
+) -> anyhow::Result<String> {
+    use sha2::Digest as _;
+    let bytes = arkret_sdk::canonical::canonical_json_bytes(context)?;
+    // Distinct records in the existing v1 reservation store, not a new storage
+    // prefix or a replacement for the business payload_sequence domain.
+    Ok(format!(
+        "nonce:{}",
+        hex::encode(sha2::Sha256::digest(bytes))
+    ))
+}
+
+async fn reserve_signal_nonce(
+    state_store: &crate::runtime::input::StateStoreHandle,
+    actor: &arkret_sdk::ActorId,
+    nonce_context: &arkret_sdk::AeadNonceContext,
+    minimum: u64,
+) -> anyhow::Result<u64> {
+    let context = state_store.read(|store| store.signal_sequence_store_context(actor))?;
+    let domain = signal_nonce_reservation_domain(nonce_context)?;
+    #[cfg(not(target_arch = "wasm32"))]
+    let counter =
+        reserve_signal_counter_block_in_file(&context.path, &domain, 1, minimum, minimum == 0)?;
+    #[cfg(target_arch = "wasm32")]
+    let counter = reserve_signal_counter_block_in_browser(
+        &format!("inkson.signal_sequence.v1.{}.{domain}", context.namespace),
+        1,
+        minimum,
+        minimum == 0,
+    )
+    .await?;
+    Ok(counter)
 }
 
 /// Product payload carried inside a Signal's ciphertext.
@@ -653,19 +730,85 @@ pub fn restore_signal_mls_session(
 }
 
 /// Seal a Signal and durably burn the SDK-owned nonce counter before submit.
-pub fn encrypt_signal_payload_with_store(
-    state_store: &mut crate::state::LocalStateStore,
+pub async fn encrypt_signal_payload_with_store(
+    state_store: &crate::runtime::input::StateStoreHandle,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::AccountId,
     header: &SignalHeader,
     material: &SignalKeyMaterial,
     plaintext: &[u8],
 ) -> anyhow::Result<arkret_wire::SignalEncryptedPayload> {
+    let (context, minimum) = state_store.read(|store| {
+        store.signal_sequence_store_context(&header.sender_actor_id)?;
+        let session = restore_signal_mls_session(
+            store,
+            secure_store,
+            &header.scope_ref,
+            authority,
+            &header.sender_device_id,
+            material.epoch,
+        )?;
+        session
+            .group
+            .signal_nonce_reservation()
+            .map_err(anyhow::Error::from)
+    })?;
+    // This commits before encryption and is serialized across processes/tabs.
+    // After the await, restore and recheck the exact accepted state again.
+    let counter =
+        reserve_signal_nonce(state_store, &header.sender_actor_id, &context, minimum).await?;
+    let (payload, barrier) = state_store.write(|store| {
+        store.signal_sequence_store_context(&header.sender_actor_id)?;
+        encrypt_signal_payload_with_reserved_nonce_in_store(
+            store,
+            secure_store,
+            authority,
+            header,
+            material,
+            plaintext,
+            &context,
+            counter,
+        )
+    })?;
+    barrier.wait().await?;
+    state_store.read(|store| {
+        store.signal_sequence_store_context(&header.sender_actor_id)?;
+        let snapshot = store
+            .mls_checkpoint_for_scope(&header.scope_ref)
+            .ok_or_else(|| anyhow::anyhow!("Signal scope lost its accepted MLS checkpoint"))?;
+        anyhow::ensure!(
+            snapshot.epoch == material.epoch
+                && store
+                    .mls_group_state_ref_for_scope(
+                        &header.scope_ref,
+                        &snapshot.group_id,
+                        snapshot.epoch
+                    )
+                    .map_err(anyhow::Error::msg)?
+                    .as_str()
+                    == material.group_state_ref,
+            "Signal scope changed while its durable reservation was committing"
+        );
+        Ok::<(), anyhow::Error>(())
+    })?;
+    Ok(payload)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encrypt_signal_payload_with_reserved_nonce_in_store(
+    state_store: &mut crate::state::LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    authority: &arkret_sdk::AccountId,
+    header: &SignalHeader,
+    material: &SignalKeyMaterial,
+    plaintext: &[u8],
+    context: &arkret_sdk::AeadNonceContext,
+    counter: u64,
+) -> anyhow::Result<(
+    arkret_wire::SignalEncryptedPayload,
+    crate::state::LocalStatePersistBarrier,
+)> {
     let realm_id = header.scope_ref.realm_id().as_str();
-    let circle_id = header
-        .scope_ref
-        .circle_id()
-        .map(arkret_sdk::CircleId::as_str);
     let SignalMlsSession {
         mut group,
         snapshot,
@@ -704,7 +847,7 @@ pub fn encrypt_signal_payload_with_store(
         epoch: material.epoch,
     };
     let sealed = group
-        .encrypt_signal_payload(&binding, plaintext)
+        .encrypt_signal_payload_with_reserved_nonce(&binding, plaintext, context, counter)
         .map_err(|error| anyhow::anyhow!("seal Signal payload: {error}"))?;
 
     // Persist before the HTTP submit. A failed or uncertain request may skip a
@@ -727,10 +870,10 @@ pub fn encrypt_signal_payload_with_store(
     )
     .carry_epoch_started_at(&snapshot)
     .with_app_messages_observed(snapshot.app_messages_observed);
-    state_store
-        .save_mls_checkpoint_for_effective_scope(realm_id.to_owned(), circle_id, updated)
+    let barrier = state_store
+        .save_signal_mls_checkpoint(&header.scope_ref, updated)
         .map_err(anyhow::Error::msg)?;
-    Ok(sealed.encrypted_payload)
+    Ok((sealed.encrypted_payload, barrier))
 }
 
 /// Assemble the complete envelope and attach the sending device's proof.

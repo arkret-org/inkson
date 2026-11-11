@@ -299,6 +299,18 @@ impl LocalStateStore {
         Ok(())
     }
 
+    /// Signal ciphertext may leave the process only after its post-reservation
+    /// checkpoint has crossed the account store's actual commit barrier.
+    pub(crate) fn save_signal_mls_checkpoint(
+        &mut self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        envelope: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
+    ) -> Result<LocalStatePersistBarrier, String> {
+        self.install_mls_checkpoint_for_scope(effective_scope, envelope)?;
+        self.begin_durable_flush()
+            .map_err(|error| error.to_string())
+    }
+
     pub(crate) fn save_rejected_mls_checkpoint(
         &mut self,
         effective_scope: &arkret_sdk::ScopeRef,

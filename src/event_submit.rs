@@ -4063,7 +4063,7 @@ impl EventSubmitter {
         }
         let plaintext = payload.to_plaintext(&header.sender_actor_id, sequence)?;
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let encrypted_payload = state_store.write(|store| {
+        state_store.read(|store| -> anyhow::Result<()> {
             if let crate::signal::SignalPayload::ReadReceipt {
                 strand_id,
                 event_id,
@@ -4072,15 +4072,17 @@ impl EventSubmitter {
                 store.require_read_receipt_send(&header.scope_ref, strand_id, event_id)?;
             }
             store.signal_sequence_store_context(&header.sender_actor_id)?;
-            crate::signal::encrypt_signal_payload_with_store(
-                store,
-                secure_store.as_ref(),
-                authority,
-                &header,
-                material,
-                &plaintext,
-            )
+            Ok(())
         })?;
+        let encrypted_payload = crate::signal::encrypt_signal_payload_with_store(
+            state_store,
+            secure_store.as_ref(),
+            authority,
+            &header,
+            material,
+            &plaintext,
+        )
+        .await?;
         let envelope = crate::signal::seal_signal_envelope(header, encrypted_payload)?;
         Ok(envelope)
     }

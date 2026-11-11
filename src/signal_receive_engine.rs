@@ -17,7 +17,7 @@
 //! * [`MlsSignalDecryptor`] restores the scope's persisted MLS group through the same
 //!   [`crate::signal::restore_signal_mls_session`] helper the send path uses, then opens the AEAD
 //!   through the SDK, which enforces `aead_profile` equality with the group's negotiated
-//!   ciphersuite, epoch equality, the sender nonce prefix domain, the recomputed AAD and the
+//!   ciphersuite, epoch equality, the verified endpoint nonce domain, the recomputed AAD and the
 //!   per-sender nonce-counter replay window.
 //! * [`InksonSignalSink`] routes the admitted plaintext to the product consumers.
 //!
@@ -110,7 +110,11 @@ impl MlsSignalDecryptor {
 }
 
 impl garth::signal::SignalDecryptor for MlsSignalDecryptor {
-    async fn decrypt(&self, envelope: &arkret_wire::SignalEnvelope) -> garth::Result<Vec<u8>> {
+    async fn decrypt(
+        &self,
+        envelope: &arkret_wire::SignalEnvelope,
+        sender_key: &arkret_wire::StationSigningKey,
+    ) -> garth::Result<Vec<u8>> {
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         self.observed_gate.set("sender_revocation");
         if let Some(device_id) = &envelope.sender_device_id
@@ -162,65 +166,12 @@ impl garth::signal::SignalDecryptor for MlsSignalDecryptor {
         }
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         self.observed_gate.set("sender_leaf");
-        let mut matching_leaves = group
-            .verified_leaf_bindings()
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?
-            .into_iter()
-            .filter(|leaf| {
-                leaf.actor_id == envelope.sender_actor_id
-                    && match (&leaf.endpoint, envelope.sender_device_id.as_ref()) {
-                        (
-                            arkret_sdk::MlsEndpointIdentity::HumanDevice { device_id, .. },
-                            Some(sender_device_id),
-                        ) => device_id == sender_device_id,
-                        (arkret_sdk::MlsEndpointIdentity::AgentRuntime { .. }, None) => true,
-                        _ => false,
-                    }
-            });
-        let leaf = matching_leaves.next().ok_or_else(|| {
-            garth::Error::Protocol(
-                "Signal sender does not resolve to an active MLS leaf".to_owned(),
-            )
-        })?;
-        if matching_leaves.next().is_some() {
-            return Err(garth::Error::Protocol(
-                "Signal sender resolves to multiple active MLS leaves".to_owned(),
-            ));
-        }
-        let public_key = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
-            bytes: arkret_sdk::base64url_decode(leaf.signature_key.as_str())
-                .map_err(|error| garth::Error::Protocol(error.to_string()))?,
-        };
-        let sender_authority = match &leaf.endpoint {
-            arkret_sdk::MlsEndpointIdentity::HumanDevice { .. } => {
-                let device_authorize_event_id =
-                    leaf.device_authorize_event_id.as_ref().ok_or_else(|| {
-                        garth::Error::Protocol(
-                            "Signal sender MLS leaf has no device authorization transition"
-                                .to_owned(),
-                        )
-                    })?;
-                arkret_sdk::mls::SignalSenderAuthority::AccountDevice {
-                    public_key: &public_key,
-                    device_authorize_event_id,
-                }
-            }
-            arkret_sdk::MlsEndpointIdentity::AgentRuntime {
-                verification_method,
-                agent_key_authorize_event_id,
-                ..
-            } => arkret_sdk::mls::SignalSenderAuthority::Agent {
-                public_key: &public_key,
-                verification_method,
-                agent_key_authorize_event_id,
-            },
-        };
         let mut replay = self.replay.lock().map_err(|error| {
             garth::Error::Protocol(format!("signal replay tracker poisoned: {error}"))
         })?;
         // `SignalReceiver` has already checked this frame's exact Station
-        // delivery authority and producer proof. Verify the same proof under
-        // the active MLS leaf key as well, then rebuild AAD from the immutable
+        // delivery authority and producer proof. Bind that native authority to
+        // the independently verified MLS leaf, then rebuild AAD from the immutable
         // envelope header. The governing Station fresh-gated authority_commit_id
         // for this exact delivery; signal.md forbids replaying governance
         // history locally per frame, so that authenticated value is the
@@ -228,9 +179,9 @@ impl garth::signal::SignalDecryptor for MlsSignalDecryptor {
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         self.observed_gate.set("envelope_open");
         let opened = group
-            .open_signal_envelope(
+            .open_signal_envelope_with_station_key(
                 envelope,
-                sender_authority,
+                sender_key,
                 accepted_group_state_ref.as_str(),
                 &envelope.authority_commit_id,
                 &mut replay,
