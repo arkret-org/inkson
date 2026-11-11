@@ -11,18 +11,20 @@ fn primary_send_action(
     label: impl Into<Vary<String>>,
     enabled: impl Into<Vary<bool>>,
     busy: impl Into<Vary<bool>>,
+    checking: impl Into<Vary<bool>>,
     send: impl FnMut() + 'static,
 ) -> View {
     let busy = busy.into();
+    let checking = checking.into();
     Box::new(
         sapid::button()
             .unstyled()
             .label(label)
             .enabled(enabled)
             .class(scope.bond({
-                let busy = busy.clone();
+                let checking = checking.clone();
                 move || {
-                    if busy.get() {
+                    if checking.get() {
                         "primary send-chat-button send-readiness-checking".to_owned()
                     } else {
                         "primary send-chat-button".to_owned()
@@ -1138,14 +1140,19 @@ pub(super) fn chat_composer(
             }
         }),
         scope.bond(move || {
-            let current = context.get();
             let preview = preview.get();
             preview.pending
-                || if matches!(preview.route, arkret_sdk::AgentMentionRoute::Sidecar) {
-                    private_probe.get().checking
-                } else {
-                    current.send_readiness_checking
-                }
+                || (matches!(preview.route, arkret_sdk::AgentMentionRoute::Sidecar)
+                    && private_probe.get().checking)
+        }),
+        scope.bond(move || {
+            let current = context.get();
+            let preview = preview.get();
+            if matches!(preview.route, arkret_sdk::AgentMentionRoute::Sidecar) {
+                private_probe.get().checking
+            } else {
+                current.send_readiness_checking
+            }
         }),
         move || primary_send(!preview.get_untracked().plaintext),
     );

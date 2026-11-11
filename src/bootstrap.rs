@@ -649,31 +649,12 @@ async fn publish_fresh_local_mls_key_package_batch(
         },
     )
     .await;
-    let outcome = match outcome {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            for entry in &local_entries {
-                delete_unpublished_local_mls_key_package_state(
-                    secure_store,
-                    authority,
-                    device_id,
-                    &entry.keypackage_id,
-                    entry.keypackage_ref.as_str(),
-                );
-            }
-            return Err(error.display());
-        }
-    };
+    // A failed response does not prove that the Station rejected every package:
+    // a batch can have a durable prefix or lose its successful response. Keep
+    // every advertised init key so an exact claimed Welcome remains joinable.
+    // Only observed publication contributes to the local usable inventory.
+    let outcome = outcome.map_err(|error| error.display())?;
     if outcome.accepted_count as usize != records.len() {
-        for entry in &local_entries {
-            delete_unpublished_local_mls_key_package_state(
-                secure_store,
-                authority,
-                device_id,
-                &entry.keypackage_id,
-                entry.keypackage_ref.as_str(),
-            );
-        }
         return Err(format!(
             "MLS KeyPackage upload rejected: {:?}",
             outcome.rejections

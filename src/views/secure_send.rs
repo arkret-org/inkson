@@ -88,6 +88,15 @@ pub(crate) struct ScopeSendProbe {
     pub blocked_reason: Option<String>,
 }
 
+impl ScopeSendProbe {
+    /// Background revalidation must not swallow a user's activation. This is
+    /// only permission to begin an intent: authoring independently resolves and
+    /// checks the fresh durable scope before encryption or submission.
+    pub(crate) fn accepts_submission_intent(&self) -> bool {
+        self.gate.is_some() || self.checking
+    }
+}
+
 /// Observe the exact durable scope cut. No ready result crosses an account,
 /// device, private-root, current-source, creator-commit, or UI-generation change.
 pub(crate) fn scope_send_probe(

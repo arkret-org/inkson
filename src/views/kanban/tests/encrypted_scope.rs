@@ -166,6 +166,192 @@ fn encrypted_scope_blocks_plaintext_strand_update_payload() {
     assert!(kanban_plaintext_block_reason(Some(false), &event).is_none());
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn private_body_original_survives_without_an_operation_tail_or_author_plaintext() {
+    let actor = "ak:did_core:web:alice.example";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let _account_scope = active_account_scope(actor, device);
+    let secure = std::sync::Arc::new(crate::secure_key_store::MemorySecureKeyStore::new());
+    let _secure = crate::secure_key_store::DefaultSecureKeyStoreTestGuard::replace(secure.clone());
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("private-body.json");
+    let mut state = crate::state::LocalStateStore::with_path(&path);
+    state.promote_accepted_context_for_test(&"did:web:alice.example".parse().unwrap());
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let account = fixture::authority(actor);
+    let device_id = fixture::device_id(device);
+    state.save_realm_tree_projection(
+        realm,
+        creator_realm_projection(&account.principal_id, "mls_rfc9420"),
+    );
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: realm.parse().unwrap(),
+    };
+    fixture::install_accepted_mls_group(&mut state, &scope);
+    let reference = seed_ready_creator_snapshot(&mut state, secure.as_ref(), realm, actor, device);
+    let checkpoint = state.mls_checkpoint_for(realm).unwrap();
+    let secret =
+        crate::mls::runtime::load_device_checkpoint_secret(secure.as_ref(), &account, &device_id)
+            .unwrap();
+    let mut group =
+        crate::mls::persistence::restore_envelope(&checkpoint, &secret, checkpoint.epoch).unwrap();
+    let strand = "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ";
+    let plaintext =
+        json!({"kind":"ak.content.text","format":"markdown","body":"retained private body"});
+    let mut unsigned = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+        "ak.strand.update",
+        scope.clone(),
+        fixture::account_actor(actor),
+        arkret_sdk::StrandPatchPayload::for_strand(
+            strand.parse().unwrap(),
+            serde_json::from_value(json!({"content":{"$op":"set","value":plaintext}})).unwrap(),
+        )
+        .unwrap()
+        .to_value()
+        .unwrap(),
+    )
+    .build_unsigned()
+    .unwrap();
+    let mut material = fixture::content::material(&group, "ak.strand.update", &reference);
+    material.outer_event =
+        arkret_models_crypto::EventContentMaterial::outer_event_for(&unsigned).unwrap();
+    fixture::content::retain_root(
+        secure.as_ref(),
+        &account,
+        &device_id,
+        &group,
+        &material.content_context.root_context,
+    );
+    let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
+        "1.0",
+        KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
+        arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
+        scope,
+        "ak.strand.update",
+        group.epoch(),
+        reference,
+        group.local_content_sender_domain().unwrap(),
+        arkret_sdk::EventContentRoutingContext::None,
+        material,
+    )
+    .unwrap();
+    let encrypted = group
+        .encrypt_payload(header, &serde_json::to_vec(&plaintext).unwrap())
+        .unwrap();
+    let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(&encrypted).unwrap();
+    unsigned.payload = serde_json::from_value(
+        arkret_sdk::StrandPatchPayload::for_strand(
+            strand.parse().unwrap(),
+            serde_json::from_value(json!({"encrypted_content":{"$op":"set","value":envelope}}))
+                .unwrap(),
+        )
+        .unwrap()
+        .to_value()
+        .unwrap(),
+    )
+    .unwrap();
+    let method = format!("did:web:alice.example#{device}");
+    let signer = arkret_test_kit::keys::seeded_signer_for_seed(
+        [41; 32],
+        "did:web:alice.example".parse().unwrap(),
+        arkret_sdk::DidUrl::new(method.clone()).unwrap(),
+    );
+    let original = arkret_test_kit::signed_event::sign_verifiable_event(
+        unsigned,
+        &signer,
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap()
+    .expect_verifiable();
+    assert!(
+        !arkret_event_draft::EventContentEnvelopesExt::event_content_envelopes(&original)
+            .expect("registered private body slot")
+            .is_empty()
+    );
+    assert_eq!(
+        crate::identity::committed_sender::verify_chat_envelope_proof_for_realm(
+            realm,
+            &serde_json::to_value(&original).unwrap(),
+            Some(&state),
+            Some((&account, account.principal_id.as_str(), &device_id)),
+        ),
+        crate::identity::committed_sender::ChatProofVerdict::Verified
+    );
+    crate::identity::metadata::retain_accepted_encrypted_original_for_test(
+        &state,
+        &original,
+        &account,
+        &device_id,
+        secure.as_ref(),
+    );
+    assert_eq!(state.encrypted_originals_for(realm), vec![original]);
+    assert!(state.load().raw_operations.is_empty());
+    assert!(
+        state
+            .private_plaintext_for(realm, strand, KANBAN_ENCRYPTED_CONTENT_PATH)
+            .is_none()
+    );
+    let value = serde_json::to_value(&envelope).unwrap();
+    let live_context = MlsDecryptCtx {
+        state_store: &state,
+        realm_id: realm,
+        identity: Some((&account, device)),
+    };
+    assert_eq!(
+        private_strand_field_text(
+            Some(&live_context),
+            strand,
+            KANBAN_ENCRYPTED_CONTENT_PATH,
+            Some(&value)
+        ),
+        "retained private body",
+        "the retained original must decrypt before cold loading"
+    );
+    state.flush().unwrap();
+    assert!(
+        state
+            .persist_e2ee_plaintext_cache_with_secure_store(secure.as_ref())
+            .unwrap()
+    );
+    let mut restored = crate::state::LocalStateStore::with_path(&path);
+    restored.promote_accepted_context_for_test(&"did:web:alice.example".parse().unwrap());
+    restored
+        .hydrate_e2ee_plaintext_cache_with_secure_store(secure.as_ref())
+        .unwrap();
+    assert_eq!(restored.encrypted_originals_for(realm).len(), 1);
+    assert!(restored.load().raw_operations.is_empty());
+    let context = MlsDecryptCtx {
+        state_store: &restored,
+        realm_id: realm,
+        identity: Some((&account, device)),
+    };
+    assert_eq!(
+        private_strand_field_text(
+            Some(&context),
+            strand,
+            KANBAN_ENCRYPTED_CONTENT_PATH,
+            Some(&value)
+        ),
+        "retained private body"
+    );
+    assert!(!private_strand_field_locked(
+        Some(&context),
+        strand,
+        KANBAN_ENCRYPTED_CONTENT_PATH,
+        Some(&value)
+    ));
+    assert!(
+        private_strand_field_text(
+            Some(&context),
+            "ak:strand:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN",
+            KANBAN_ENCRYPTED_CONTENT_PATH,
+            Some(&value)
+        )
+        .is_empty()
+    );
+}
+
 /// R4 fail-closed: when the Realm security state is UNKNOWN (`None`, i.e.
 /// the security projection has not synced yet) the guard MUST block a
 /// plaintext private-content write rather than defaulting to plaintext.

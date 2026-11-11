@@ -241,8 +241,15 @@ fn primary_send_keeps_its_dom_identity_across_scope_probe_and_encryption_changes
         !pending
     });
     let busy = scope.bond(move || state.get().1);
-    app.mount(primary_send_action(scope, "Send", enabled, busy, || {}))
-        .unwrap();
+    app.mount(primary_send_action(
+        scope,
+        "Send",
+        enabled,
+        busy,
+        busy,
+        || {},
+    ))
+    .unwrap();
     let (id, enabled) = primary(&app);
     assert!(!enabled);
     for next in [
@@ -270,6 +277,58 @@ fn primary_send_keeps_its_dom_identity_across_scope_probe_and_encryption_changes
             Some(next.1)
         );
     }
+}
+
+#[test]
+fn background_probe_preserves_activation_while_real_submission_stays_exclusive() {
+    let app = glory::App::memory();
+    let scope = app.scope();
+    let probe = scope.cage(crate::views::secure_send::ScopeSendProbe {
+        gate: Some(crate::mls::send_gate::MlsSendGate::Plaintext),
+        checking: false,
+        blocked_reason: None,
+    });
+    let submitting = scope.cage(false);
+    let presses = Rc::new(RefCell::new(0_usize));
+    let capture = presses.clone();
+    app.mount(primary_send_action(
+        scope,
+        "Send",
+        scope.bond(move || probe.get().accepts_submission_intent()),
+        submitting,
+        scope.bond(move || probe.get().checking),
+        move || *capture.borrow_mut() += 1,
+    ))
+    .unwrap();
+    let (id, enabled) = primary(&app);
+    assert!(enabled);
+    probe.revise(|value| {
+        value.gate = None;
+        value.checking = true;
+    });
+    app.flush().unwrap();
+    assert_eq!(primary(&app), (id, true));
+    app.dispatch(id, glory::render::Event::Activate).unwrap();
+    app.flush().unwrap();
+    assert_eq!(*presses.borrow(), 1);
+
+    submitting.revise(|value| *value = true);
+    app.flush().unwrap();
+    assert_eq!(primary(&app), (id, false));
+    let _ = app.dispatch(id, glory::render::Event::Activate);
+    app.flush().unwrap();
+    assert_eq!(*presses.borrow(), 1, "an actual send remains exclusive");
+
+    submitting.revise(|value| *value = false);
+    probe.revise(|value| {
+        value.checking = false;
+        value.blocked_reason = Some("scope access is unavailable".into());
+    });
+    app.flush().unwrap();
+    assert_eq!(primary(&app), (id, false));
+    let _ = app.dispatch(id, glory::render::Event::Activate);
+    app.flush().unwrap();
+    assert_eq!(*presses.borrow(), 1, "a refused probe cannot activate send");
 }
 
 type FailureState = Rc<RefCell<Option<(Cage<Vec<ChatMessage>>, Cage<String>, Cage<String>)>>>;

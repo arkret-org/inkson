@@ -245,7 +245,9 @@ pub(super) fn snapshot(
         selected_realm_pending_mls_binding_reason =
             Some("Waiting for verified conversation authority and encryption keys.".to_owned());
     }
-    let scope_send_ready = scope_send_gate.is_some();
+    // The explicit send resolves its own durable gate. Keep its activation
+    // available while the read-only probe refreshes the same selected scope.
+    let scope_send_ready = probe.accepts_submission_intent();
     let send_readiness_checking =
         scope_readiness_checking && selected_realm_pending_mls_binding_reason.is_none();
     if !scope_send_ready && selected_realm_pending_mls_binding_reason.is_none() {

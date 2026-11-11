@@ -705,17 +705,6 @@ impl ChatController {
     }
 
     pub fn update_draft(self, draft: String) {
-        if self.draft.get_untracked() != draft {
-            let next = self
-                .attachment_target_revision
-                .get_untracked()
-                .wrapping_add(1);
-            {
-                let next_value = next;
-                self.attachment_target_revision
-                    .revise(|value| *value = next_value);
-            };
-        }
         {
             let next_value = draft;
             self.draft.revise(|value| *value = next_value);

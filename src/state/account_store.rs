@@ -847,6 +847,24 @@ pub(super) mod browser {
             cached.checkpoint = cached.last_committed.lock().unwrap().clone();
             cached.pending_result = None;
         }
+        let needs_current = state.current_generation > cached.checkpoint.state.current_generation;
+        anyhow::ensure!(
+            !needs_current || current.is_some(),
+            "account generation has no bound current publication"
+        );
+        let mut plan = plan(&scope, &cached.checkpoint, state)?;
+        if !needs_current
+            && plan.writes.is_empty()
+            && plan.deletes.is_empty()
+            && let Some(pending) = &cached.pending_result
+            && pending.borrow().is_none()
+        {
+            // The identical checkpoint already has an in-flight CAS. Join its
+            // actual durable result, including failure, without another queue slot.
+            return Ok(Barrier {
+                result: pending.clone(),
+            });
+        }
         cached
             .queued
             .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
@@ -860,12 +878,6 @@ pub(super) mod browser {
             }
         }
         let permit = Permit(cached.queued.clone());
-        let needs_current = state.current_generation > cached.checkpoint.state.current_generation;
-        anyhow::ensure!(
-            !needs_current || current.is_some(),
-            "account generation has no bound current publication"
-        );
-        let mut plan = plan(&scope, &cached.checkpoint, state)?;
         if needs_current && let Some(current) = &current {
             plan.deletes.extend(current.deletes.iter().cloned());
             plan.writes.extend(current.writes.iter().cloned());

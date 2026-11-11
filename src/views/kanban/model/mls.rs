@@ -1,9 +1,10 @@
+use arkret_sdk::EventPayloadExt as _;
+
 use super::*;
 
-/// Borrowed decrypt context threaded into the pure card builders so an
-/// encrypted realm's author-side plaintext cache can be read without cloning
-/// the local store. Projected ciphertext stays opaque until its verified outer
-/// Event context is threaded through the projection.
+/// Borrowed decrypt context for retained signed originals and the author's
+/// local plaintext cache. Projected ciphertext stays opaque until its exact
+/// verified outer Event and retained content root are available.
 #[derive(Clone, Copy)]
 pub(crate) struct MlsDecryptCtx<'a> {
     pub(crate) state_store: &'a LocalStateStore,
@@ -57,18 +58,7 @@ pub(crate) fn private_strand_event_field_value(
     let (authority, device_id) = ctx.identity?;
     let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?;
     let event: arkret_sdk::Event = serde_json::from_value(event_value.clone()).ok()?;
-    if event.kind != arkret_sdk::EventKind::StrandUpdate
-        || event.realm_id.as_str() != ctx.realm_id
-        || event.scope_ref.realm_id_opt() != Some(&event.realm_id)
-        || event.payload.get("strand_id")?.as_str()? != strand_id
-    {
-        return None;
-    }
-    let patch = event.payload.get("patch")?.as_object()?;
-    let signed_op = patch_op_for_private_path(patch, field_path)?;
-    let signed_op: arkret_wire::patch::PatchOp =
-        serde_json::from_value(signed_op.into_owned()).ok()?;
-    if signed_op.op() != arkret_wire::patch::PatchOpKind::Set || signed_op.value() != Some(value) {
+    if !original_selects_private_field(ctx, &event, strand_id, field_path, value) {
         return None;
     }
     let warn_pending = |reason: &str| {
@@ -115,6 +105,76 @@ pub(crate) fn private_strand_event_field_value(
         None
     })?;
     serde_json::from_slice(&plaintext).ok()
+}
+
+fn original_selects_private_field(
+    ctx: &MlsDecryptCtx<'_>,
+    event: &arkret_sdk::Event,
+    strand_id: &str,
+    field_path: &str,
+    value: &Value,
+) -> bool {
+    if event.realm_id.as_str() != ctx.realm_id
+        || event.scope_ref.realm_id_opt() != Some(&event.realm_id)
+    {
+        return false;
+    }
+    match event.kind {
+        arkret_sdk::EventKind::StrandCreate => {
+            arkret_sdk::StrandId::from_event_id(&event.event_id).as_str() == strand_id
+                && event.payload.get("object").and_then(|object| {
+                    object.pointer(&format!("/{}", field_path.replace('.', "/")))
+                }) == Some(value)
+        }
+        arkret_sdk::EventKind::StrandUpdate => {
+            let Ok(payload) = event.as_strand_update() else {
+                return false;
+            };
+            if payload.strand_id.as_str() != strand_id {
+                return false;
+            }
+            let Ok(patch) = serde_json::to_value(&payload.patch) else {
+                return false;
+            };
+            let Some(patch) = patch.as_object() else {
+                return false;
+            };
+            let Some(op) = patch_op_for_private_path(patch, field_path) else {
+                return false;
+            };
+            let Ok(op) = serde_json::from_value::<arkret_wire::patch::PatchOp>(op.into_owned())
+            else {
+                return false;
+            };
+            op.op() == arkret_wire::patch::PatchOpKind::Set && op.value() == Some(value)
+        }
+        _ => false,
+    }
+}
+
+fn retained_private_strand_field_text(
+    ctx: &MlsDecryptCtx<'_>,
+    strand_id: &str,
+    field_path: &str,
+    value: &Value,
+) -> Option<String> {
+    let mut originals = ctx
+        .state_store
+        .encrypted_originals_for(ctx.realm_id)
+        .into_iter()
+        .filter(|event| original_selects_private_field(ctx, event, strand_id, field_path, value));
+    let original = originals.next()?;
+    // The ciphertext alone cannot choose between different signed outer Events.
+    if originals.next().is_some() {
+        return None;
+    }
+    private_strand_event_field_text(
+        ctx,
+        &serde_json::to_value(original).ok()?,
+        strand_id,
+        field_path,
+        value,
+    )
 }
 
 /// Cheap key-only check for the raw encrypted payload/envelope shape. Projection and
@@ -200,6 +260,11 @@ pub(crate) fn private_strand_field_locked(
     if !value_is_mls_envelope(value) {
         return false;
     }
+    if ctx.is_some_and(|ctx| {
+        retained_private_strand_field_text(ctx, strand_id, field_path, value).is_some()
+    }) {
+        return false;
+    }
     // Non-empty sidecar hit → readable, not locked. Empty sidecars are not
     // useful for an encrypted `set` value; treat them as missing so the UI
     // does not confuse encrypted-but-unreadable content with "no content".
@@ -216,12 +281,14 @@ pub(crate) fn private_strand_field_locked(
     true
 }
 
-/// Resolve a projected private Strand field without its signed Event context.
+/// Resolve a projected private Strand field using retained original provenance.
 ///
-/// 1. **Local plaintext sidecar** (`save_private_plaintext`) — stored as the JSON-serialized patch
+/// 1. **Retained original** — bind the exact target, field and ciphertext, then verify the producer
+///    and decrypt with the original Event's content root.
+/// 2. **Local plaintext sidecar** (`save_private_plaintext`) — stored as the JSON-serialized patch
 ///    value, parsed through `strand_body_display_text` to keep write/read symmetric. Event overlays
 ///    independently try verified decryption, including for the same Account.
-/// 2. **Blank** — encrypted content without its verified outer Event context; never leaks the raw
+/// 3. **Blank** — encrypted content without its verified outer Event context; never leaks the raw
 ///    envelope.
 ///
 /// `field_path` MUST match the token the writer stored under — the ENCRYPTED
@@ -234,7 +301,13 @@ pub(crate) fn private_strand_field_text(
     field_path: &str,
     value: Option<&Value>,
 ) -> String {
-    // Tier 1: author's own plaintext sidecar (local-only).
+    if let (Some(ctx), Some(value)) = (ctx, value)
+        && value_is_mls_envelope(value)
+        && let Some(text) = retained_private_strand_field_text(ctx, strand_id, field_path, value)
+    {
+        return text;
+    }
+    // The author's own plaintext sidecar is a local-only fallback.
     if let Some(ctx) = ctx
         && let Some(plaintext) =
             ctx.state_store
@@ -245,6 +318,6 @@ pub(crate) fn private_strand_field_text(
             return text;
         }
     }
-    // Tier 2: encrypted content remains opaque without verified Event context.
+    // Encrypted content remains opaque without verified Event context.
     private_strand_display_text(ctx, value)
 }

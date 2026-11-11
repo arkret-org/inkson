@@ -104,6 +104,89 @@ fn pump(app: &glory::App, executor: &glory::core::executor::Executor) {
     }
 }
 
+#[test]
+fn attachment_upload_keeps_caption_edits_and_rejects_target_or_session_changes() {
+    let directory = tempfile::tempdir().unwrap();
+    let (app, _) = host();
+    let context = fixture_context(app.scope(), &directory.path().join("upload-target.json"));
+    let account = crate::test_support::AccountFixture::new("ak:did_core:web:alice.example").build();
+    context
+        .active_account
+        .revise(|value| *value = Some(account.clone()));
+    let controller = super::super::super::controller::chat_controller(
+        app.scope(),
+        context.clone(),
+        "",
+        "",
+        &account.authority,
+        &account.device_id,
+    )
+    .unwrap();
+    let strand = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+        arkret_sdk::DigestSuite::Sha256,
+        [47; 32],
+    ))
+    .to_string();
+    controller
+        .selected_channel
+        .revise(|value| *value = strand.clone());
+    let snapshot = || AttachmentUploadTarget {
+        generation: context.session_generation.get_untracked(),
+        upload_revision: controller.attachment_upload_revision.get_untracked(),
+        selection_revision: controller.selection_revision.get_untracked(),
+        target_revision: controller.attachment_target_revision.get_untracked(),
+        strand: controller.selected_channel.get_untracked(),
+        authority: account.authority.clone(),
+        device: account.device_id.clone(),
+    };
+    let target = snapshot();
+    controller.update_draft("Caption typed while uploading".into());
+    assert!(target.is_current(&context, controller));
+    controller.update_draft("Caption typed while uploading and edited again".into());
+    assert!(target.is_current(&context, controller));
+
+    controller.select_channel(
+        arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [48; 32],
+        ))
+        .to_string(),
+    );
+    controller.select_channel(strand);
+    assert!(
+        !target.is_current(&context, controller),
+        "A-B-A cannot revive an old upload"
+    );
+    let target = snapshot();
+    controller
+        .attachment_target_revision
+        .revise(|value| *value += 1);
+    assert!(!target.is_current(&context, controller));
+    let target = snapshot();
+    controller
+        .attachment_upload_revision
+        .revise(|value| *value += 1);
+    assert!(!target.is_current(&context, controller));
+    let target = snapshot();
+    context.session_generation.revise(|value| *value += 1);
+    assert!(!target.is_current(&context, controller));
+    let target = snapshot();
+    let mut other_device = account.clone();
+    other_device.device_id = "ak:device:01964137-0000-7000-8000-000000000002"
+        .parse()
+        .unwrap();
+    context
+        .active_account
+        .revise(|value| *value = Some(other_device));
+    assert!(!target.is_current(&context, controller));
+    context
+        .active_account
+        .revise(|value| *value = Some(account.clone()));
+    let target = snapshot();
+    context.active_account.revise(|value| *value = None);
+    assert!(!target.is_current(&context, controller));
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn production_command_callback_does_not_allocate_hooks_and_survives_rerender() {
     let dir = tempfile::tempdir().unwrap();

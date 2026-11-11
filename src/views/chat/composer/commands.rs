@@ -105,6 +105,39 @@ impl Drop for PendingComposerDraft {
     }
 }
 
+/// Attachment bytes are independent of the message caption. Account, Device,
+/// conversation and monotonic target revisions still fence every async step.
+struct AttachmentUploadTarget {
+    generation: u64,
+    upload_revision: u64,
+    selection_revision: u64,
+    target_revision: u64,
+    strand: String,
+    authority: arkret_sdk::AccountId,
+    device: arkret_sdk::DeviceId,
+}
+
+impl AttachmentUploadTarget {
+    fn is_current(
+        &self,
+        session: &crate::presentation::InksonContext,
+        controller: ChatController,
+    ) -> bool {
+        session.session_generation.get_untracked() == self.generation
+            && controller.attachment_upload_revision.get_untracked() == self.upload_revision
+            && controller.selected_channel.get_untracked() == self.strand
+            && controller.selection_revision.get_untracked() == self.selection_revision
+            && controller.attachment_target_revision.get_untracked() == self.target_revision
+            && session
+                .active_account
+                .get_untracked()
+                .as_ref()
+                .is_some_and(|account| {
+                    account.authority == self.authority && account.device_id == self.device
+                })
+    }
+}
+
 /// Prepare and recover exact attachment objects in the account's private vault.
 pub(super) fn upload_dropped_attachments(
     controller: ChatController,
@@ -146,25 +179,23 @@ pub(super) fn upload_dropped_attachments(
         upload_revision.revise(|value| *value = next_value);
     };
     let selection_revision = controller.selection_revision.get_untracked();
-    let draft = controller.draft.get_untracked().clone();
     let account = session.active_account.get_untracked().clone();
     let store = session.state_store.handle();
     super::super::task::dispatch(async move {
         let result = async {
             let account = account.ok_or_else(|| anyhow::anyhow!("no active attachment account"))?;
             let strand = arkret_sdk::StrandId::new(selected.clone())?;
-            let active = || {
-                session.session_generation.get_untracked() == generation
-                    && upload_revision.get_untracked() == run
-                    && controller.selected_channel.get_untracked() == selected
-                && controller.attachment_target_revision.get_untracked() == target_revision
-                && controller.selection_revision.get_untracked() == selection_revision
-                    && controller.draft.get_untracked() == draft
-                    && session.active_account.get_untracked().as_ref().is_some_and(|a| {
-                        a.authority == account.authority && a.device_id == account.device_id
-                    })
+            let target = AttachmentUploadTarget {
+                generation,
+                upload_revision: run,
+                selection_revision,
+                target_revision,
+                strand: selected.clone(),
+                authority: account.authority.clone(),
+                device: account.device_id.clone(),
             };
-            anyhow::ensure!(active(), "attachment session or draft changed");
+            let active = || target.is_current(&session, controller);
+            anyhow::ensure!(active(), "attachment session or target changed");
             let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
             let vault = crate::outbound_store::InksonOutboundStore::open(
                 &account.authority,
@@ -185,7 +216,7 @@ pub(super) fn upload_dropped_attachments(
                     &account.device_id,
                 )
                 .await?;
-                anyhow::ensure!(active(), "attachment session or draft changed");
+                anyhow::ensure!(active(), "attachment session or target changed");
                 let salt = arkret_crypto::blob_aead::fresh_content_key_salt()?;
                 let (context, checkpoint, state_tree_ref, nonce_prefix) = match gate {
                     crate::mls::send_gate::MlsSendGate::Plaintext => {
@@ -270,7 +301,7 @@ pub(super) fn upload_dropped_attachments(
                 if object.long_text {
                     continue;
                 }
-                anyhow::ensure!(active(), "attachment session or draft changed");
+                anyhow::ensure!(active(), "attachment session or target changed");
                 let chunks = crate::state::current_index::AttachmentChunkStore::open(store.read(|s|s.current_index_location()), &account.authority, &account.device_id, &object.id).await?;
                 if !attachments.get_untracked().iter().any(|a|a.id == object.id) {
                     attachments.revise(|value| value.push(crate::attachments::DraftAttachment {id: object.id.clone(), scope: scope.clone(),
@@ -285,7 +316,7 @@ pub(super) fn upload_dropped_attachments(
                 }
                 if !object.uploaded {
                     fence.check_session_identity()?;
-                    anyhow::ensure!(active(), "attachment session or draft changed");
+                    anyhow::ensure!(active(), "attachment session or target changed");
                     let gate = crate::attachments::await_attachment_send_gate(&store, &scope, &account.device_id, active).await?;
                     match (&object.context, gate) {
                         (None, crate::mls::send_gate::MlsSendGate::Plaintext) => {},
@@ -297,7 +328,7 @@ pub(super) fn upload_dropped_attachments(
                     vault.mark_attachment_uploaded(&object.id).await?;
                 }
                 fence.check_session_identity()?;
-                anyhow::ensure!(active(), "attachment session or draft changed");
+                anyhow::ensure!(active(), "attachment session or target changed");
                 let prepared_content=object.prepared.clone().ok_or_else(||anyhow::anyhow!("missing attachment descriptor"))?.content;
                 attachments.revise(|values| {if let Some(draft)=values.iter_mut().find(|a|a.id == object.id){
                     draft.pending = false;
@@ -313,11 +344,17 @@ pub(super) fn upload_dropped_attachments(
             || controller.selected_channel.get_untracked() != selected
             || controller.selection_revision.get_untracked() != selection_revision
         {
+            #[cfg(any(
+                feature = "spec-conformance",
+                all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
+            ))]
+            tracing::warn!(
+                phase = "attachment_upload_stale",
+                "stale attachment upload continuation discarded"
+            );
             return;
         }
-        if controller.attachment_target_revision.get_untracked() != target_revision
-            || controller.draft.get_untracked() != draft
-        {
+        if controller.attachment_target_revision.get_untracked() != target_revision {
             {
                 let next_value = "Attachment upload: attachment session or target changed".into();
                 status.revise(|value| *value = next_value);

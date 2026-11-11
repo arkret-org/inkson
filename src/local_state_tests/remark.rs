@@ -181,6 +181,9 @@ fn opaque_contact_remark_tombstone_removes_only_the_bound_principal() {
 
 #[test]
 fn cold_reload_restores_private_contact_labels_without_redelivering_the_cursor() {
+    let _secure = crate::secure_key_store::DefaultSecureKeyStoreTestGuard::replace(
+        std::sync::Arc::new(crate::secure_key_store::MemorySecureKeyStore::new()),
+    );
     use base64::Engine as _;
     let did = arkret_sdk::Did::new(format!(
         "did:web:remark-{}.example",

@@ -27,6 +27,7 @@ struct HintAdmission {
 struct InstalledLiveCut {
     changed: usize,
     current_changed: bool,
+    material_changed: bool,
     generation: u64,
 }
 
@@ -742,7 +743,7 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
                 .map_err(|e| protocol(e.to_string()))?;
         }
     }
-    if changed > 0 || installed.current_changed || evidence || batch.iter().any(|e| matches!(e, ClientEvent::Event(e) if e.kind == arkret_sdk::EventKind::AgentInteractionSet)) {
+    if changed > 0 || installed.current_changed || installed.material_changed || evidence || batch.iter().any(|e| matches!(e, ClientEvent::Event(e) if e.kind == arkret_sdk::EventKind::AgentInteractionSet)) {
         projector.realm_live_epoch.update(|v| *v = v.wrapping_add(1));
     }
     // Adopt only the candidate whose history and current pointer committed.
@@ -789,7 +790,7 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
         false,
     )
     .await?;
-    if installed.current_changed {
+    if installed.current_changed || installed.material_changed {
         projector
             .realm_live_epoch
             .update(|epoch| *epoch = epoch.wrapping_add(1));
@@ -959,6 +960,20 @@ async fn install_live_cut<F: Fn() -> bool>(
     .await
     .map_err(crate::state::current_index::current_stage_error)?;
     guard().map_err(crate::state::current_index::current_stage_error)?;
+    let material_changed = match crate::mls::historical_content::prepare_retained_realm(
+        client,
+        &projector.state_store,
+        realm,
+    )
+    .await
+    {
+        Ok(count) => count > 0,
+        Err(error) => {
+            tracing::warn!(%error, "retained live historical attribution remains pending");
+            false
+        }
+    };
+    guard().map_err(crate::state::current_index::current_stage_error)?;
     for page in pages {
         if let Err(error) = crate::mls::historical_content::prepare_accepted_page(
             client,
@@ -983,6 +998,7 @@ async fn install_live_cut<F: Fn() -> bool>(
     Ok(InstalledLiveCut {
         changed,
         current_changed,
+        material_changed,
         generation: published_generation,
     })
 }
@@ -1183,7 +1199,7 @@ async fn refresh_sidecars_from_snapshot<F: Fn() -> bool>(
     if !is_active() {
         return Ok(HintAdmission::default());
     }
-    if changed > 0 || installed.current_changed || evidence {
+    if changed > 0 || installed.current_changed || installed.material_changed || evidence {
         projector
             .realm_live_epoch
             .update(|v| *v = v.wrapping_add(1));

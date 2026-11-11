@@ -771,6 +771,9 @@ mod blocklist_freshness_tests {
 
     #[test]
     fn malformed_blocklist_prevents_catchup_from_authorizing_signals() {
+        let _secure = crate::secure_key_store::DefaultSecureKeyStoreTestGuard::replace(
+            std::sync::Arc::new(crate::secure_key_store::MemorySecureKeyStore::new()),
+        );
         use arkret_models_collaboration::sync_frames::account_subscribe::{
             AccountSubscribeParameters, AccountSubscribeReadAction,
         };

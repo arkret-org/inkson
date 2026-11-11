@@ -1520,6 +1520,9 @@ mod tests {
     }
     #[test]
     fn notification_inbox_old_archive_cannot_replace_delete_but_new_archive_can() {
+        let _secure = crate::secure_key_store::DefaultSecureKeyStoreTestGuard::replace(
+            std::sync::Arc::new(crate::secure_key_store::MemorySecureKeyStore::new()),
+        );
         let (authority, id, key) = inbox_fixture();
         let mut device = inbox_store();
         let deletion = inbox_event(&authority, &key, 2, true);
@@ -1568,6 +1571,9 @@ mod tests {
     }
     #[test]
     fn notification_inbox_live_delete_survives_inflight_baseline() {
+        let _secure = crate::secure_key_store::DefaultSecureKeyStoreTestGuard::replace(
+            std::sync::Arc::new(crate::secure_key_store::MemorySecureKeyStore::new()),
+        );
         let (authority, _, key) = inbox_fixture();
         let mut another = inbox_store();
         apply_inbox_frame(&mut another, &authority, inbox_baseline(false)).unwrap();
@@ -1583,6 +1589,9 @@ mod tests {
     }
     #[test]
     fn notification_inbox_foreign_corrupt_and_same_revision_updates_do_not_unhide() {
+        let _secure = crate::secure_key_store::DefaultSecureKeyStoreTestGuard::replace(
+            std::sync::Arc::new(crate::secure_key_store::MemorySecureKeyStore::new()),
+        );
         let (authority, id, key) = inbox_fixture();
         let mut device = inbox_store();
         let archive = inbox_event(&authority, &key, 1, false);

@@ -192,7 +192,9 @@ impl Detail {
 
     fn save_ready(&self, scope: &Scope) -> glory::Bond<bool> {
         let detail = self.clone();
-        scope.bond(move || detail.writable_card().is_some() && detail.probe.get().gate.is_some())
+        scope.bond(move || {
+            detail.writable_card().is_some() && detail.probe.get().accepts_submission_intent()
+        })
     }
 
     fn close(&self) {

@@ -60,8 +60,8 @@ pub(crate) async fn consent_current_authority(
         client.session()?.account_id() == holder,
         "Consent authority belongs to another Account"
     );
-    // PCR originals use their authenticated own-Station disclosure, not the
-    // ordinary collaboration stream scan required by genesis_response.
+    // PCR originals use their authenticated own-Station disclosure, separate
+    // from the immutable founding original disclosed to collaboration members.
     let event_id = arkret_sdk::EventId::from_digest(
         registered_pcr.digest_suite_code().digest_suite(),
         registered_pcr.digest_bytes(),
@@ -176,56 +176,7 @@ pub(crate) async fn genesis_response(
         arkret_sdk::CommittedEventView,
     >,
 > {
-    let event_id = arkret_sdk::EventId::from_digest(
-        realm.digest_suite_code().digest_suite(),
-        realm.digest_bytes(),
-    );
-    let response = client.committed_event_get(&event_id).await?;
-    let row = response.value()?;
-    let commit = row.commit();
-    let stream = arkret_sdk::CommitStreamRef::Realm {
-        realm_id: realm.clone(),
-    };
-    if commit.realm_id != *realm
-        || commit.event_ref != event_id
-        || commit.stream_ref != stream
-        || commit.stream_position != 0
-        || commit.previous_commit_ref.is_some()
-    {
-        return Err(garth::Error::Protocol(
-            "own Station Genesis original has inconsistent coordinates".into(),
-        ));
-    }
-    let reference = arkret_sdk::CommittedEventRef {
-        event_id,
-        commit_id: commit.commit_id.clone(),
-        stream_ref: stream,
-        stream_position: 0,
-    };
-    let response =
-        garth::own_station_results::consume_bound_event(client, &reference, response).await?;
-    let arkret_sdk::CommittedEventView::Full(full) = response.value()? else {
-        return Err(garth::Error::Protocol(
-            "Genesis original is withheld".into(),
-        ));
-    };
-    if full.event.kind != arkret_sdk::EventKind::RealmCreate
-        || full.event.realm_id != *realm
-        || full.event.scope_ref != arkret_sdk::ScopeRef::RealmGenesis
-        || arkret_sdk::RealmId::from_event_id(&full.event.event_id) != *realm
-    {
-        return Err(garth::Error::Protocol(
-            "own Station founding original is not Realm Genesis".into(),
-        ));
-    }
-    let payload: arkret_sdk::RealmCreatePayload = serde_json::to_value(&full.event.payload)
-        .and_then(serde_json::from_value)
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-    payload
-        .object
-        .validate()
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-    Ok(response)
+    garth::own_station_results::read_collaboration_realm_genesis(client, realm).await
 }
 
 /// A holder's closed self-principal result pins its immutable PCR. Its lifetime

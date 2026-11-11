@@ -52,6 +52,26 @@ impl std::fmt::Debug for HistoricalContentRosters {
 }
 
 impl HistoricalContentRosters {
+    fn install(
+        &self,
+        root: Hash,
+        source: &OwnStationStateClient,
+        roster: arkret_sdk::VerifiedMlsHistoricalContentRoster,
+    ) -> anyhow::Result<()> {
+        source.check_session()?;
+        self.with_epochs(|entries| {
+            entries.retain(|_, entry| entry.source.check_session().is_ok());
+            entries.insert(
+                root,
+                SharedEpoch::new(PublicEpoch {
+                    source: source.clone(),
+                    roster,
+                }),
+            );
+        })
+        .ok_or_else(|| anyhow::anyhow!("historical roster cache unavailable"))
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn with_epochs<T>(&self, action: impl FnOnce(&mut EpochMap) -> T) -> Option<T> {
         let mut epochs = self.0.lock().ok()?;
@@ -164,20 +184,77 @@ pub(crate) async fn prepare_accepted_page(
                 && !store.current_reset_required()),
             "historical reader changed"
         );
-        cache
-            .with_epochs(|entries| {
-                entries.retain(|_, entry| entry.source.check_session().is_ok());
-                entries.insert(
-                    root_ref,
-                    SharedEpoch::new(PublicEpoch {
-                        source: source.clone(),
-                        roster,
-                    }),
-                );
-            })
-            .ok_or_else(|| anyhow::anyhow!("historical roster cache unavailable"))?;
+        cache.install(root_ref, source, roster)?;
     }
     Ok(())
+}
+
+/// A held root may arrive after the page that carried its metadata. Retry the
+/// retained accepted originals even when a new current cut has no content rows.
+/// This prepares public provenance only; it neither admits Events nor grants
+/// history, and never restores an old private checkpoint as current.
+pub(crate) async fn prepare_retained_realm(
+    source: &OwnStationStateClient,
+    state: &crate::runtime::input::StateStoreHandle,
+    realm: &arkret_sdk::RealmId,
+) -> anyhow::Result<usize> {
+    let Some(active) = crate::secure_key_store::active_device_seed_scope() else {
+        return Ok(0);
+    };
+    anyhow::ensure!(
+        source.session()?.account_id() == &active.authority,
+        "retained content belongs to another reader"
+    );
+    let account = active.authority;
+    let actor = arkret_sdk::ActorId::account(account.clone());
+    let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+        device_id: active.device_id,
+    };
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    let vault =
+        garth::mls::content_roots::ContentRootVault::new(secure.as_ref(), &actor, &endpoint);
+    let (cache, originals) = state.read(|store| {
+        (
+            store.historical_content_rosters.clone(),
+            store.encrypted_originals_for(realm.as_str()),
+        )
+    });
+    let mut roots = BTreeMap::new();
+    for original in originals {
+        if original.realm_id != *realm || original.scope_ref.realm_id_opt() != Some(realm) {
+            continue;
+        }
+        for slot in original.event_content_envelopes()? {
+            let arkret_models_crypto::EncryptedEnvelopeEncryptionContext::EpochContent {
+                root_ref,
+                ..
+            } = &slot.envelope.encryption_context;
+            if cache.epoch(root_ref, &account).is_none()
+                && let Some(root) = vault.cached_root(root_ref)?
+            {
+                roots.insert(root_ref.clone(), root.root_context);
+            }
+        }
+    }
+    let mut prepared = 0;
+    for (root, context) in roots {
+        let roster = match read_public_epoch(source, state, &context).await {
+            Ok(roster) => roster,
+            Err(error) => {
+                tracing::warn!(%error, "retained public historical attribution remains pending");
+                continue;
+            }
+        };
+        source.check_session()?;
+        anyhow::ensure!(
+            state.read(|store| store.active_authority().as_ref() == Some(&account)
+                && !store.current_reset_required()),
+            "retained historical reader changed"
+        );
+        cache.install(root, source, roster)?;
+        prepared += 1;
+    }
+    Ok(prepared)
 }
 
 pub(crate) async fn prepare_accepted_page_for_http(

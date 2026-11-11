@@ -268,6 +268,39 @@ pub(crate) async fn retain_received_epoch_root(
     Ok(())
 }
 
+fn observe_material_gate(root: &arkret_sdk::Hash, gate: &'static str, passed: bool) {
+    #[cfg(any(
+        feature = "spec-conformance",
+        all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
+    ))]
+    {
+        use std::collections::BTreeSet;
+        use std::sync::{Mutex, OnceLock};
+        static SEEN: OnceLock<Mutex<BTreeSet<(String, &'static str, bool)>>> = OnceLock::new();
+        let mut seen = SEEN
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if !seen.insert((root.to_string(), gate, passed)) {
+            return;
+        }
+        if seen.len() > 4096 {
+            seen.pop_first();
+        }
+        tracing::warn!(
+            phase = "original_content_material",
+            gate,
+            passed,
+            "public original content material boundary"
+        );
+    }
+    #[cfg(not(any(
+        feature = "spec-conformance",
+        all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
+    )))]
+    let _ = (root, gate, passed);
+}
+
 /// The caller supplies an original already accepted through its own Station.
 /// Prefer a public exact-epoch proof prepared from a sealed accepted page.
 /// An unrelated current roster must not manufacture old producer provenance.
@@ -286,12 +319,15 @@ pub(crate) fn material_from_accepted_original(
     let vault = garth::mls::content_roots::ContentRootVault::new(secure, &actor, &endpoint);
     let arkret_models_crypto::EncryptedEnvelopeEncryptionContext::EpochContent { root_ref, .. } =
         &envelope.encryption_context;
-    let root = vault.cached_root(root_ref).ok()??;
-    if let Some(material) =
+    let root = vault.cached_root(root_ref).ok().flatten();
+    observe_material_gate(root_ref, "retained_root", root.is_some());
+    let root = root?;
+    let public_material =
         state
             .historical_content_rosters
-            .material(account, event, envelope, &root.root_context)
-    {
+            .material(account, event, envelope, &root.root_context);
+    observe_material_gate(root_ref, "public_epoch", public_material.is_some());
+    if let Some(material) = public_material {
         return Some(material);
     }
     // Only the installed-group fallback needs the current projection's epoch
@@ -312,6 +348,11 @@ pub(crate) fn material_from_accepted_original(
     let secret =
         crate::mls::runtime::load_device_checkpoint_secret(secure, account, device).ok()?;
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
+    observe_material_gate(
+        root_ref,
+        "installed_epoch",
+        group.scope() == &event.scope_ref && group.epoch() == root.root_context.epoch,
+    );
     if group.scope() != &event.scope_ref || group.epoch() != root.root_context.epoch {
         return None;
     }
