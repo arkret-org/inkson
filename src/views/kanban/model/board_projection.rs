@@ -67,9 +67,21 @@ fn patch_touches_calendar_schedule(patch: &Value) -> bool {
     })
 }
 
-/// Strand id a move / reorder / archive / restore op targets.
+/// Strand identity selected by the operation's canonical target carrier.
 fn op_strand_target_id(record: &RawOperationRecord) -> Option<String> {
     let body = op_body(record);
+    if matches!(
+        op_kind(record).as_deref(),
+        Some(event_kind_str::STRAND_UPDATE | event_kind_str::STRAND_TRACKS_UPDATE)
+    ) {
+        if body.is_some_and(|body| body.get("target_ref").is_some())
+            || record.payload.get("target_ref").is_some()
+        {
+            return None;
+        }
+        return json_path_string(body, &["strand_id"])
+            .or_else(|| json_path_string(Some(&record.payload), &["strand_id"]));
+    }
     json_path_string(body, &["strand_id"])
         .or_else(|| json_path_string(body, &["target_ref"]))
         .or_else(|| json_path_string(body, &["object", "id"]))

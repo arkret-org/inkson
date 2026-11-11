@@ -70,7 +70,7 @@ impl RealmRosterPagination {
 
 /// Collect a deduped list of actor IDs that have authored *any*
 /// queued / accepted raw operation that targets the given strand id
-/// (matched against `target_ref`, `strand_id`, or `object.id`). This
+/// (using the canonical target field for the operation kind). This
 /// gives the "who's interacted with this Strand" list shown on the
 /// sidebar's Participants tab even before the server returns a
 /// canonical discussion-roster projection.
@@ -85,11 +85,25 @@ pub(super) fn strand_participant_ids(
     let mut actor_ids: BTreeSet<String> = BTreeSet::new();
     for op in raw_operations {
         let payload = &op.payload;
-        let target = json_path_string(Some(payload), &["body", "target_ref"])
-            .or_else(|| json_path_string(Some(payload), &["body", "strand_id"]))
-            .or_else(|| json_path_string(Some(payload), &["body", "object", "id"]))
-            .or_else(|| json_path_string(Some(payload), &["payload", "target_ref"]))
-            .or_else(|| json_path_string(Some(payload), &["payload", "strand_id"]));
+        let kind = json_path_string(Some(payload), &["kind"])
+            .or_else(|| json_path_string(Some(payload), &["wire_kind"]));
+        let body = payload.get("body").or_else(|| payload.get("payload"));
+        let target = if matches!(
+            kind.as_deref(),
+            Some(
+                arkret_wire::event_kind_str::STRAND_UPDATE
+                    | arkret_wire::event_kind_str::STRAND_TRACKS_UPDATE
+            )
+        ) {
+            if body.is_some_and(|body| body.get("target_ref").is_some()) {
+                continue;
+            }
+            json_path_string(body, &["strand_id"])
+        } else {
+            json_path_string(body, &["strand_id"])
+                .or_else(|| json_path_string(body, &["target_ref"]))
+                .or_else(|| json_path_string(body, &["object", "id"]))
+        };
         if target.as_deref() != Some(strand_id) {
             continue;
         }

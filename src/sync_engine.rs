@@ -5107,7 +5107,7 @@ mod tests {
             sdk_realm_id(),
             arkret_sdk::EventKind::StrandUpdate.as_str(),
             json!({
-                "target_ref": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
+                "strand_id": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
                 "patch": {
                     "synthesis": {"$op": "set", "value": "bob synthesis"}
                 }

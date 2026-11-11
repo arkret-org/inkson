@@ -2882,7 +2882,7 @@ mod tests {
             (
                 "ak.strand.update".to_owned(),
                 json!({
-                    "target_ref": strand_id,
+                    "strand_id": strand_id,
                     "patch": {"metadata": {"op": "set", "value": {"title": "Renamed"}}}
                 }),
             ),

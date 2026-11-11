@@ -686,7 +686,7 @@ fn locally_accepted_rsvp_does_not_supply_missing_schedule_current() {
             "event_id": schedule_event_id,
             "write_state": "synced",
             "body": {
-                "target_ref": TEST_CALENDAR_STRAND_ID,
+                "strand_id": TEST_CALENDAR_STRAND_ID,
                 "patch": {"metadata.fields.calendar": {"$op": "set", "value": {"start": "2026-06-20T09:00:00"}}}
             }
         }),

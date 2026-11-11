@@ -142,7 +142,7 @@ mod tests {
         let payload = intent
             .typed_payload::<arkret_sdk::event_spec::StrandUpdate>()
             .unwrap();
-        assert_eq!(payload.target_ref.as_str(), write.chat);
+        assert_eq!(payload.strand_id.as_str(), write.chat);
         assert_eq!(
             payload.expected_state_digest.as_ref().unwrap(),
             write.view.chat_state_digests.values().next().unwrap()

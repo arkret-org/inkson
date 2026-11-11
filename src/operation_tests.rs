@@ -540,8 +540,8 @@ fn strand_update_patch_uses_canonical_payload_patch() {
     .build("node");
     assert_eq!(op.kind().as_str(), "ak.strand.update");
     assert_eq!(op.local_target_ref(), Some(strand_id));
-    assert_eq!(op.payload()["target_ref"], strand_id);
-    assert!(!op.payload().contains_key("strand_id"));
+    assert_eq!(op.payload()["strand_id"], strand_id);
+    assert!(!op.payload().contains_key("target_ref"));
     assert_eq!(
         op.payload()["patch"]["metadata.title"]["value"],
         "Launch checklist"
@@ -570,8 +570,8 @@ fn strand_update_builders_match_registered_object_patch_schema() {
     for event in &events {
         assert_eq!(event.kind().as_str(), "ak.strand.update");
         assert!(event.payload().contains_key("patch"));
-        assert_eq!(event.payload()["target_ref"], strand_id);
-        assert!(!event.payload().contains_key("strand_id"));
+        assert_eq!(event.payload()["strand_id"], strand_id);
+        assert!(!event.payload().contains_key("target_ref"));
         assert!(!event.payload().contains_key("fields"));
         assert!(!event.payload().contains_key("position"));
         assert!(!event.payload().contains_key("board_space_id"));
@@ -636,22 +636,14 @@ fn object_patch_family_builders_match_registered_payload_schema() {
 
     for event in &events {
         assert!(event.payload().contains_key("patch"), "{}", event.kind());
-        if event.kind() == "ak.space.update" {
-            assert_eq!(event.payload()["space_id"], space_id);
-            assert!(
-                !event.payload().contains_key("target_ref"),
-                "{}",
-                event.kind()
-            );
-        } else {
-            // Everything else — including `ak.strand.tracks.update` —
-            // single-sources the target in the signed payload.
-            assert!(
-                event.payload().contains_key("target_ref"),
-                "{}",
-                event.kind()
-            );
-        }
+        let (field, target) = match event.kind().as_str() {
+            "ak.space.update" => ("space_id", space_id),
+            "ak.morph.update" => ("morph_id", morph_id),
+            "ak.strand.tracks.update" => ("strand_id", strand_id),
+            kind => panic!("unexpected patch kind: {kind}"),
+        };
+        assert_eq!(event.payload()[field], target);
+        assert!(!event.payload().contains_key("target_ref"));
         assert_registered_payload_valid(event);
     }
 }

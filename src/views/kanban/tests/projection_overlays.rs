@@ -1273,7 +1273,7 @@ fn remote_strand_update_events_overlay_detail_fields_on_projection() {
         "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
         "payload": {
-            "target_ref": strand_id,
+            "strand_id": strand_id,
             "patch": {
                 "metadata.summary": { "$op": "set", "value": "new summary" },
                 "tracks.synthesis.content": {
@@ -1340,7 +1340,7 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
         "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
         "payload": {
-            "target_ref": strand_id,
+            "strand_id": strand_id,
             "patch": {
                 "tracks.synthesis.encrypted_content": { "$op": "set", "value": envelope }
             }
@@ -1400,7 +1400,7 @@ fn non_spec_strand_patch_paths_are_ignored_by_the_local_overlay() {
         "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
         "payload": {
-            "target_ref": strand_id,
+            "strand_id": strand_id,
             "patch": {
                 "title": { "$op": "set", "value": "forbidden title" },
                 "summary": { "$op": "set", "value": "forbidden summary" },

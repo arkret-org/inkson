@@ -144,11 +144,9 @@ pub(super) fn strand_object_patch_payload(
 
 /// `ak.strand.tracks.update` body.
 ///
-/// The registered contract derives the `ak.component.strand.tracks.v1` cell
-/// subject from `payload.target_ref` and applies `payload.patch`, so this is
-/// the `object_patch_payload` shape, not the SDK
-/// `StrandTracksUpdatePayload`'s `{strand_id, patch}` — a `strand_id`-keyed
-/// body has no derivable cell write and would be rejected at admission.
+/// The dedicated configuration payload names its Strand with `strand_id`
+/// and applies `patch` to registered track configuration paths. It shares
+/// the SDK's closed Strand patch carrier while retaining its own schema gate.
 pub(super) fn strand_tracks_update_payload(
     strand_id: &str,
     patch: arkret_sdk::Patch,

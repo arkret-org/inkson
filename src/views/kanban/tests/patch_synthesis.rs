@@ -249,6 +249,19 @@ fn local_card_update_overlay_replays_queued_summary_and_content_on_top_of_projec
             },
         }),
     };
+    for keep_new_field in [false, true] {
+        let mut retired = queued.clone();
+        let body = retired.payload["body"].as_object_mut().unwrap();
+        let strand_id = body["strand_id"].clone();
+        if !keep_new_field {
+            body.remove("strand_id");
+        }
+        body.insert("target_ref".to_owned(), strand_id);
+        let untouched = overlay_local_card_update_records(columns.clone(), &[retired], None);
+        assert_eq!(untouched[0].cards[0].title, "old title");
+        assert_eq!(untouched[0].cards[0].description_body, "old description");
+        assert_eq!(untouched[0].cards[0].synthesis, "old synthesis");
+    }
     let overlaid = overlay_local_card_update_records(columns, &[queued], None);
     let card = &overlaid[0].cards[0];
     assert_eq!(card.title, "new title");
@@ -304,7 +317,7 @@ fn authored_card_update_uses_the_closed_typed_patch_without_causal_coordinates()
     .unwrap();
 
     assert_eq!(
-        operation.payload()["target_ref"],
+        operation.payload()["strand_id"],
         "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ"
     );
     assert_eq!(
@@ -516,7 +529,7 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
             "created_at": "2026-05-22T10:00:00.000Z",
             "realm_id": TEST_REALM_ID,
             "payload": {
-                "target_ref": strand_id,
+                "strand_id": strand_id,
                 "patch": { "tracks.synthesis.content": content_patch_value("alice synthesis") }
             }
         }),
@@ -527,7 +540,7 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
             "created_at": "2026-05-22T11:00:00.000Z",
             "realm_id": TEST_REALM_ID,
             "payload": {
-                "target_ref": strand_id,
+                "strand_id": strand_id,
                 "patch": {
                     "tracks.synthesis.content": content_patch_value("alice synthesis\n\n---\n\nbob synthesis")
                 }
@@ -588,7 +601,7 @@ fn engine_ingest_dedupes_resent_strand_update_by_canonical_event_id() {
         "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "payload": {
-            "target_ref": "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
+            "strand_id": "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
             "patch": { "tracks.synthesis.content": content_patch_value("alice synthesis") }
         }
     });
@@ -872,7 +885,7 @@ fn strand_participant_ids_filters_by_target_strand_and_pulls_unique_actors() {
             payload: json!({
                 "kind": "ak.message.create",
                 "body": {
-                    "target_ref": "ak:strand:AOh8dxjVYDgM4sgWMvKYvKA-rHBR4-IIEc7fiwGJ7P1w",
+                    "strand_id": "ak:strand:AOh8dxjVYDgM4sgWMvKYvKA-rHBR4-IIEc7fiwGJ7P1w",
                     // Canonical actor key only; forbidden `sender`
                     // fields are hard-rejected.
                     "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
@@ -910,6 +923,25 @@ fn strand_participant_ids_filters_by_target_strand_and_pulls_unique_actors() {
         ]
     );
     assert!(strand_participant_ids(&ops, "").is_empty());
+    for kind in ["ak.strand.update", "ak.strand.tracks.update"] {
+        for keep_new_field in [false, true] {
+            let mut retired = ops[0].clone();
+            retired.payload["kind"] = json!(kind);
+            let body = retired.payload["body"].as_object_mut().unwrap();
+            let strand_id = body["strand_id"].clone();
+            if !keep_new_field {
+                body.remove("strand_id");
+            }
+            body.insert("target_ref".to_owned(), strand_id);
+            assert!(
+                strand_participant_ids(
+                    &[retired],
+                    "ak:strand:AOh8dxjVYDgM4sgWMvKYvKA-rHBR4-IIEc7fiwGJ7P1w"
+                )
+                .is_empty()
+            );
+        }
+    }
 }
 
 /// Canonical Synthesis round-trip: the editor emits a ContentBlock at the

@@ -29,7 +29,7 @@ pub fn account_profile_update(
         account_id.principal_id.as_str(),
         account_id.station_id.clone(),
         arkret_models_collaboration::events_payloads::ActorProfileUpdatePayload {
-            target_ref: profile_id,
+            actor_profile_id: profile_id,
             patch,
             expected_state_digest: None,
             expected_revision: None,

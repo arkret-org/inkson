@@ -339,7 +339,7 @@ mod tests {
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             json!({
-                "target_ref": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
+                "strand_id": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
                 "patch": {"title": {"$op": "set", "value": "Updated"}}
             }),
         )
@@ -356,7 +356,7 @@ mod tests {
         assert_eq!(records[0].payload["kind"], "ak.strand.update");
         assert_eq!(records[0].payload["event"], original);
         assert_eq!(
-            records[0].payload["body"]["target_ref"],
+            records[0].payload["body"]["strand_id"],
             "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"
         );
     }

@@ -201,8 +201,10 @@ pub(crate) fn raw_operation_strand_update_target_id(payload: &Value) -> Option<S
         return None;
     }
     let body = payload.get("body").or_else(|| payload.get("payload"))?;
+    if body.get("target_ref").is_some() {
+        return None;
+    }
     json_path_string(Some(body), &["strand_id"])
-        .or_else(|| json_path_string(Some(body), &["target_ref"]))
 }
 
 /// Re-apply locally-queued `ak.strand.update` patches on top of the

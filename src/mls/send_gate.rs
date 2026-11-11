@@ -960,7 +960,7 @@ mod tests {
             let target = if kind == EventKind::SpaceUpdate {
                 "space_id"
             } else {
-                "target_ref"
+                "strand_id"
             };
             let id = if kind == EventKind::SpaceUpdate {
                 SPACE
@@ -1004,7 +1004,7 @@ mod tests {
             let target = if kind == EventKind::SpaceUpdate {
                 "space_id"
             } else {
-                "target_ref"
+                "strand_id"
             };
             let id = if kind == EventKind::SpaceUpdate {
                 SPACE

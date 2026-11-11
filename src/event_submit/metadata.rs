@@ -270,7 +270,7 @@ impl EventSubmitter {
                 let entries = state.realm_current_state_entries(realm.as_str());
                 let mut values = entries.iter().filter_map(|entry| {
                     let arkret_sdk::CurrentState::Value { selector, value, .. } = entry;
-                    matches!(selector, arkret_sdk::CurrentSelector::Strand { strand_id } if strand_id == &payload.target_ref)
+                    matches!(selector, arkret_sdk::CurrentSelector::Strand { strand_id } if strand_id == &payload.strand_id)
                         .then_some(value)
                 });
                 let current = values.next().cloned();
@@ -280,7 +280,7 @@ impl EventSubmitter {
             let current: arkret_sdk::Strand = serde_json::from_value(current)?;
             validate_strand_metadata_patch(
                 &current,
-                open(payload.target_ref.as_str(), true)?,
+                open(payload.strand_id.as_str(), true)?,
                 &payload.patch,
             )?;
         }
@@ -390,7 +390,7 @@ async fn seal_metadata(
             let mut payload = intent.typed_payload::<event_spec::StrandUpdate>()?;
             payload.patch = seal_patch(
                 payload.patch,
-                payload.target_ref.as_str(),
+                payload.strand_id.as_str(),
                 true,
                 &mut open,
                 &mut seal,
@@ -833,7 +833,7 @@ mod tests {
             arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x55; 32]);
         let strand_id = arkret_sdk::StrandId::from_event_id(&event_id);
         let payload: arkret_sdk::StrandPatchPayload = serde_json::from_value(serde_json::json!({
-            "target_ref": strand_id,
+            "strand_id": strand_id,
             "patch": {
                 "schema_refs": {"$op":"set", "value":["ak.schema.calendar_event.v1"]},
                 "metadata.fields.calendar": {"$op":"set", "value": {
