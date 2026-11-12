@@ -429,7 +429,7 @@ fn build_realm_preview_policy_event_matches_event_schema() {
                 "audiences": ["link_token_holder"],
                 "fields": ["title", "summary", "join_rule", "history_access"],
                 "token": {
-                    "required": true,
+                    "token_required": true,
                     "ttl_seconds": 600,
                     "target_digest_binding_required": true
                 }

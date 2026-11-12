@@ -670,8 +670,16 @@ pub fn prepare_agent_key_authorize_pairing(
             authorized_event_ref: authorization.authorized_event_ref.clone(),
         })
         .collect();
-    let agent_key_id = NonEmptyString::new(request.verification_method.as_str().to_owned())
-        .map_err(anyhow::Error::msg)?;
+    let verification_method = request.verification_method.as_str();
+    let selector = if arkret_wire::validate_bounded_non_typed_identifier(verification_method, 256)
+        .is_ok()
+    {
+        verification_method.to_owned()
+    } else {
+        arkret_signatures::agent::agent_runtime_public_key_digest(&request.public_key)?.to_string()
+    };
+    let agent_key_id = arkret_wire::AgentKeyId::new(selector)?;
+    let agent_key_id = NonEmptyString::new(agent_key_id.as_str()).map_err(anyhow::Error::msg)?;
     let payload = AgentKeyAuthorizePayload {
         agent_id: request.agent_id.clone(),
         key_id: agent_key_id.clone(),

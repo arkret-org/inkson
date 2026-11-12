@@ -112,6 +112,17 @@ fn relationship_from_slug(slug: &str) -> Option<RealmOrganizationRelationship> {
     }
 }
 
+fn revocation_statement_id(is_revoke: bool, value: String) -> anyhow::Result<Option<String>> {
+    if !is_revoke {
+        return Ok(None);
+    }
+    if value.is_empty() {
+        anyhow::bail!("revoke requires the prior statement id");
+    }
+    arkret_wire::validate_bounded_non_typed_identifier(&value, 256).map_err(anyhow::Error::msg)?;
+    Ok(Some(value))
+}
+
 /// Map a control-scope slug onto the SDK enum.
 fn control_scope_from_slug(slug: &str) -> Option<RealmOrganizationControlScope> {
     match slug {
@@ -515,13 +526,14 @@ impl OrganizationPage {
                     return;
                 }
                 let is_revoke = revoke_mode.get();
-                let revokes_id = revokes_statement_id.get().trim().to_owned();
-                if is_revoke && revokes_id.is_empty() {
-                    status_msg.revise(|value| {
-                        *value = "revoke requires the prior statement id".to_owned();
-                    });
-                    return;
-                }
+                let revokes_id =
+                    match revocation_statement_id(is_revoke, revokes_statement_id.get()) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            status_msg.revise(|value| *value = error.to_string());
+                            return;
+                        }
+                    };
                 // Resolve the organization control verification
                 // method id + signing key from local storage.
                 let did_key_id = organization.did_key_id.clone();
@@ -562,7 +574,7 @@ impl OrganizationPage {
                     status: status_value,
                     control_scopes: scopes.clone(),
                     issued_at,
-                    revokes_statement_id: is_revoke.then(|| revokes_id.clone()),
+                    revokes_statement_id: revokes_id.clone(),
                 };
                 // Sign the organization-side statement proof with
                 // the organization control key (NOT the login /
@@ -593,7 +605,7 @@ impl OrganizationPage {
                     scopes,
                     issued_at,
                     authorization,
-                    is_revoke.then(|| revokes_id.clone()),
+                    revokes_id,
                 ) {
                     Ok(builder) => builder,
                     Err(err) => {
@@ -932,6 +944,75 @@ fn organization_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn revocation_form_preserves_the_literal_through_signing_and_the_event_builder() {
+        use arkret_models_collaboration::events_payloads::{
+            RealmOrganizationPayload, SignatureMaterial,
+        };
+        use base64::Engine;
+
+        let realm_id = "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo";
+        let organization_did = Did::new("did:web:org.example").unwrap();
+        let organization_id =
+            arkret_identifiers::project_did_to_core_id(&organization_did).unwrap();
+        let control_key = ed25519_dalek::SigningKey::from_bytes(&[37; 32]);
+        for literal in [" prior ", " ", " État "] {
+            let revokes = revocation_statement_id(true, literal.to_owned()).unwrap();
+            let input = OrganizationStatementInput {
+                statement_id: "current-statement".to_owned(),
+                realm_id: realm_id.to_owned(),
+                organization_id: organization_id.clone(),
+                organization_did: organization_did.clone(),
+                verification_method: format!("{organization_did}#control"),
+                relationship: RealmOrganizationRelationship::Owner,
+                status: RealmOrganizationStatus::Revoked,
+                control_scopes: vec![RealmOrganizationControlScope::OfficialBadge],
+                issued_at: crate::clock::now_utc(),
+                revokes_statement_id: revokes.clone(),
+            };
+            let signed = sign_organization_statement(&input, &control_key).unwrap();
+            let operation = crate::operation::ak_ops::realm_organization_statement(
+                realm_id,
+                "did:web:alice.example",
+                &input.statement_id,
+                &organization_id,
+                input.relationship,
+                input.status,
+                input.control_scopes.clone(),
+                input.issued_at,
+                signed.authorization.clone(),
+                revokes,
+            )
+            .unwrap()
+            .build("node");
+            assert_eq!(operation.payload()["revokes_statement_id"], literal);
+            let built: RealmOrganizationPayload =
+                serde_json::from_value(serde_json::to_value(operation.payload()).unwrap()).unwrap();
+            let signing_bytes = arkret_models_collaboration::events_payloads::realm_organization_statement_signing_bytes(&built).unwrap();
+            assert_eq!(signing_bytes, arkret_models_collaboration::events_payloads::realm_organization_statement_signing_bytes(&signed).unwrap());
+            let SignatureMaterial::NonEmptyString(proof) = &built.authorization.proof else {
+                panic!("detached organization signature")
+            };
+            let signature = ed25519_dalek::Signature::from_slice(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(proof.as_bytes())
+                    .unwrap(),
+            )
+            .unwrap();
+            control_key
+                .verifying_key()
+                .verify_strict(&signing_bytes, &signature)
+                .unwrap();
+        }
+        assert!(revocation_statement_id(true, String::new()).is_err());
+        assert!(revocation_statement_id(true, "ak:statement:invalid".to_owned()).is_err());
+        assert!(revocation_statement_id(true, "🦀".repeat(257)).is_err());
+        assert_eq!(
+            revocation_statement_id(false, "unused".to_owned()).unwrap(),
+            None
+        );
+    }
 
     #[test]
     fn declared_hint_is_not_presented_as_verified() {

@@ -278,3 +278,94 @@ fn link_target(credential: &RealmInviteLinkToken) -> arkret_sdk::RealmJoinTarget
         realm_invite_link_id: Some(credential.realm_invite_link_id.clone()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn share_url_round_trips_the_sdk_credential_and_rejects_wrong_realm_or_corruption() {
+        let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
+            [41; 32],
+            "did:web:controller.example",
+            "ak:device:01964137-0000-7000-8000-000000000007",
+        ));
+        let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
+        let account = crate::test_support::authority("did:web:controller.example");
+        let realm = RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [33; 32],
+        ));
+        let secret = RealmInviteLinkSecret::from_seed([17; 32]);
+        let operation = crate::operation::TypedOperationBuilder::new_for_actor::<
+            arkret_sdk::event_spec::RealmInviteLinkCreate,
+        >(
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: realm.clone(),
+            },
+            ActorId::account(account.clone()),
+            RealmInviteLinkCreatePayload {
+                public_key: arkret_signatures::realm_invite_link::realm_invite_link_public_key(
+                    &secret,
+                ),
+                expires_at: crate::operation::test_authoring_created_at()
+                    + chrono::Duration::minutes(10),
+                max_use_count: 2,
+            },
+        )
+        .build_sdk_event("inkson")
+        .unwrap();
+        let event = crate::operation::author_for_test(&operation);
+        let mut pending = PendingRealmInviteLink {
+            credential: RealmInviteLinkToken {
+                schema: RealmInviteLinkToken::SCHEMA.into(),
+                realm_id: realm.clone(),
+                realm_invite_link_id: RealmInviteLinkId::from_event_id(&event.event_id),
+                secret_seed: secret,
+                authority_locator_hints: vec![RealmJoinCandidate {
+                    service_kind: RealmJoinCandidateServiceKind::Station,
+                    service_id: account.station_id,
+                    endpoint_url: None,
+                    source: AuthorityLocatorSource::Invite,
+                }],
+            },
+            event,
+            accepted: false,
+        };
+        let landing = "https://invites.example/";
+        assert!(pending.share_url(landing).is_err());
+        pending.accepted = true;
+        let address = pending.share_url(landing).unwrap();
+        let url = url::Url::parse(&address).unwrap();
+        assert!(url.query().is_none());
+        assert!(url.fragment().is_some());
+        let decoded = parse_realm_invite_link(&address).unwrap();
+        assert_eq!(decoded.realm_id, realm);
+        assert_eq!(
+            decoded.realm_invite_link_id,
+            pending.credential.realm_invite_link_id
+        );
+        assert!(decoded.secret_seed.seed_bytes() == pending.credential.secret_seed.seed_bytes());
+        let encoded = pending.credential.encode().unwrap();
+        assert!(decoded.encode().unwrap().as_str() == encoded.as_str());
+
+        let wrong_realm = RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [34; 32],
+        ));
+        assert!(RealmInviteLinkToken::decode(&encoded, &wrong_realm).is_err());
+        let mut wrong_address = arkret_sdk::parse_address(&address).unwrap();
+        wrong_address.realm = arkret_sdk::RealmRef::RealmId(
+            wrong_realm.as_str().trim_start_matches("ak:realm:").into(),
+        );
+        assert!(
+            parse_realm_invite_link(&arkret_sdk::build_https_landing(landing, &wrong_address))
+                .is_err()
+        );
+        let mut corrupted = arkret_sdk::parse_address(&address).unwrap();
+        corrupted.token.as_mut().unwrap().push('!');
+        assert!(
+            parse_realm_invite_link(&arkret_sdk::build_https_landing(landing, &corrupted)).is_err()
+        );
+    }
+}

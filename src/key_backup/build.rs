@@ -321,6 +321,7 @@ fn build_recovery_public_key_backup_body_for_items_and_index_in_series(
             policy_id: arkret_sdk::PolicyId::new(recovery_policy_ref.0.to_owned())?,
             policy_version: recovery_policy_ref.1,
         }),
+        auth_binding: None,
         extra: Default::default(),
     };
     if let Some(previous) = previous_series_tail {

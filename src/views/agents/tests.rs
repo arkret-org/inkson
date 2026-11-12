@@ -634,6 +634,7 @@ mod agent_tests {
             "the Agent event must retain its exact controller account binding"
         );
         assert_eq!(event.payload["agent_id"], agent_actor_id.as_str());
+        assert_eq!(event.payload["key_id"], verification_method.as_str());
         assert_eq!(
             event.payload["verification_method"],
             verification_method.as_str()
@@ -674,6 +675,64 @@ mod agent_tests {
                 .get("evidence_ref")
                 .is_none()
         );
+
+        let prefix = format!("{agent}#");
+        let maximum_vm = format!("{prefix}{}", "r".repeat(256 - prefix.len()));
+        let mut long_selectors = Vec::new();
+        for (candidate_vm, seed) in [
+            (maximum_vm.clone(), 9),
+            (format!("{maximum_vm}a"), 10),
+            (format!("{maximum_vm}b"), 11),
+        ] {
+            let mut candidate = request.clone();
+            candidate.verification_method = arkret_wire::DidUrl::new(&candidate_vm).unwrap();
+            candidate.public_key.kid = arkret_wire::NonEmptyString::new(&candidate_vm).unwrap();
+            candidate.public_key.key =
+                arkret_wire::Base64UrlString::new(arkret_sdk::base64url_encode(
+                    ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+                        .verifying_key()
+                        .to_bytes(),
+                ))
+                .unwrap();
+            candidate.runtime_key_binding_digest =
+                arkret_models_collaboration::agent_scope::agent_runtime_key_binding_digest(
+                    &candidate.agent_id,
+                    &candidate.pairing_request_id,
+                    &candidate.verification_method,
+                    &candidate.public_key,
+                    candidate.runtime_attestation.as_ref(),
+                )
+                .unwrap();
+            let plan =
+                prepare_agent_key_authorize_pairing(controller, service_id, &key_state, &candidate)
+                    .unwrap();
+            let authored = crate::operation::author_intent_for_test(plan.intent().clone());
+            let selector = authored.payload["key_id"].as_str().unwrap();
+            assert!(arkret_wire::AgentKeyId::new(selector).is_ok());
+            assert!(selector.chars().count() <= 256);
+            if candidate_vm.chars().count() == 256 {
+                assert_eq!(selector, candidate_vm);
+            } else {
+                let digest = arkret_signatures::agent::agent_runtime_public_key_digest(
+                    &candidate.public_key,
+                )
+                .unwrap();
+                assert_eq!(selector, digest.as_str());
+                assert_ne!(selector, maximum_vm);
+                long_selectors.push(selector.to_owned());
+            }
+            assert_eq!(authored.payload["verification_method"], candidate_vm);
+            assert_eq!(authored.payload["public_key"]["kid"], candidate_vm);
+            assert_eq!(
+                authored.payload["public_key"],
+                serde_json::to_value(&candidate.public_key).unwrap()
+            );
+            authored
+                .event()
+                .verify_event_id_matches_content_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+                .unwrap();
+        }
+        assert_ne!(long_selectors[0], long_selectors[1]);
 
         let noncanonical_key_state = serde_json::json!({
             "agent_id": agent_actor_id,
