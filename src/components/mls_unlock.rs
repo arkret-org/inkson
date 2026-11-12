@@ -187,16 +187,29 @@ impl UnlockController {
                             .map_err(|err| anyhow::anyhow!("derive recovery key: {err}"))
                         {
                             Ok((recovery_private_key, _)) => match active_policy.as_ref() {
-                                Some(policy) => crate::mls::account_recovery::restore_mls_account_secret_with_recovery_key_from_payload(
-                                    &payload,
-                                    secure_store.as_ref(),
-                                    &authority,
-                                    &actor,
-                                    &recovery_private_key,
-                                    (policy.policy_id.as_str(), policy.version),
-                                )
-                                .await
-                                .map_err(ApiCallError::Failed),
+                                Some(policy) => {
+                                    let secure = secure_store.as_ref();
+                                    let authority = &authority;
+                                    let actor = &actor;
+                                    let payload = &payload;
+                                    let device = &device;
+                                    let recovery_private_key = &recovery_private_key;
+                                    with_authed_api(&base, session.clone(), |api| async move {
+                                    let device_id = arkret_sdk::DeviceId::new(device.clone())?;
+                                    crate::mls::account_recovery::restore_content_root_backups(
+                                        &api, secure, authority, &device_id,
+                                        payload, recovery_private_key, policy,
+                                    ).await?;
+                                    crate::mls::account_recovery::restore_mls_account_secret_with_recovery_key_from_payload(
+                                        payload,
+                                        secure,
+                                        authority,
+                                        actor,
+                                        recovery_private_key,
+                                        (policy.policy_id.as_str(), policy.version),
+                                    ).await
+                                    }).await
+                                },
                                 None => Err(ApiCallError::Failed(anyhow::anyhow!(
                                     "active recovery policy is required"
                                 ))),

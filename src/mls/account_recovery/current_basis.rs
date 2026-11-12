@@ -176,7 +176,7 @@ pub(super) async fn verify_envelope_source(
     authority: &arkret_sdk::AccountId,
     control_realm: &arkret_sdk::RealmId,
     body: &arkret_sdk::KeyBackup,
-) -> Result<()> {
+) -> Result<ed25519_dalek::VerifyingKey> {
     source.check_session()?;
     anyhow::ensure!(
         http.base_url().as_str() == source.session()?.binding().base_url,
@@ -222,9 +222,9 @@ pub(super) async fn verify_envelope_source(
     );
     let payload: arkret_sdk::DeviceAuthorizePayload =
         serde_json::from_value(serde_json::to_value(&original.event.payload)?)?;
-    verify_envelope_authorization(body, authority, authorization, &payload)?;
+    let key = verify_envelope_authorization(body, authority, authorization, &payload)?;
     source.check_session()?;
-    Ok(())
+    Ok(key)
 }
 
 /// The caller has already consumed this authorization's exact native original.
@@ -234,7 +234,7 @@ pub(super) fn verify_envelope_authorization(
     authority: &arkret_sdk::AccountId,
     authorization_event_id: &arkret_sdk::EventId,
     authorization: &arkret_sdk::DeviceAuthorizePayload,
-) -> Result<()> {
+) -> Result<ed25519_dalek::VerifyingKey> {
     body.validate()?;
     anyhow::ensure!(
         body.actor_id == arkret_sdk::ActorId::account(authority.clone())
@@ -291,7 +291,7 @@ pub(super) fn verify_envelope_authorization(
     let signature = ed25519_dalek::Signature::from_slice(&bytes)?;
     key.verify_strict(&body.signing_payload_bytes()?, &signature)
         .map_err(|_| anyhow!("backup envelope signature is invalid"))?;
-    Ok(())
+    Ok(key)
 }
 
 pub(super) fn state_from_payload(
@@ -721,8 +721,12 @@ mod tests {
                 "native founding unit and method history must be read"
             );
             match refusal {
-                "none" => result
-                    .expect("holder-private founding authorization verifies without a public fact"),
+                "none" => assert_eq!(
+                    result.expect(
+                        "holder-private founding authorization verifies without a public fact"
+                    ),
+                    fixture.device_signing_key.verifying_key(),
+                ),
                 "foreign_pcr" => assert!(
                     result
                         .unwrap_err()

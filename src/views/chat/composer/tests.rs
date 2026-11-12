@@ -482,3 +482,119 @@ fn unknown_submission_remains_pending_without_inviting_duplicate_authoring() {
         assert!(!status.get().is_empty());
     }
 }
+
+#[test]
+fn a_late_clear_cannot_edit_the_previous_composer_target() {
+    use glory::render::{Event, Props};
+    let app = glory::App::memory();
+    let strand = |byte| {
+        arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [byte; 32],
+        ))
+        .to_string()
+    };
+    let first = strand(81);
+    let second = strand(82);
+    let selected = app.scope().cage(first.clone());
+    let main = app.scope().cage("keep the main draft".to_owned());
+    let chat = app.scope().cage("the other chat draft".to_owned());
+    let available = app.scope().cage(true);
+    let node = app.scope().cage(None);
+    let edits = app.scope().cage(0_usize);
+    let submits = app.scope().cage(0_usize);
+    let repaint = app.scope().cage(0_u64);
+    app.mount(crate::presentation::widgets::reactive(repaint, {
+        let first = first.clone();
+        move |scope, _| {
+            let draft = if selected.get_untracked() == first {
+                main
+            } else {
+                chat
+            };
+            bound_composer_input(
+                scope,
+                ComposerInputProps {
+                    selected_channel: selected,
+                    bound_channel: selected.get_untracked(),
+                    draft,
+                    storage_status: "saved".into(),
+                    available,
+                    node_ref: node,
+                },
+                move |value| {
+                    edits.revise(|count| *count += 1);
+                    draft.revise(|draft| *draft = value);
+                },
+                move || {
+                    submits.revise(|count| *count += 1);
+                },
+            )
+        }
+    }))
+    .unwrap();
+    app.flush().unwrap();
+    let old = node.get_untracked().unwrap();
+    let revision = match &app.tree().node(old).unwrap().descriptor.view().props {
+        Props::Input(input) => input.revision,
+        _ => panic!("the real composer Input is required"),
+    };
+    // Selection has changed, while the previous component still owns its
+    // node. The queued clear must not erase that component's original draft.
+    selected.revise(|value| *value = second);
+    app.dispatch(
+        old,
+        Event::ValueChanged {
+            value: String::new(),
+            composing: false,
+            revision,
+        },
+    )
+    .unwrap();
+    assert_eq!(main.get_untracked(), "keep the main draft");
+    assert_eq!(edits.get_untracked(), 0);
+    app.dispatch(
+        old,
+        Event::Keyboard {
+            from: old,
+            command: glory::render::KeyboardCommand::Submit,
+        },
+    )
+    .unwrap();
+    assert_eq!(submits.get_untracked(), 0);
+    app.flush().unwrap();
+    assert!(
+        matches!(&app.tree().node(old).unwrap().descriptor.view().props,
+        Props::Input(input) if !input.enabled)
+    );
+
+    repaint.revise(|revision| *revision += 1);
+    app.flush().unwrap();
+    let current = node.get_untracked().unwrap();
+    assert_ne!(old, current);
+    let revision = match &app.tree().node(current).unwrap().descriptor.view().props {
+        Props::Input(input) => input.revision,
+        _ => panic!("the replacement must mount the actual Input"),
+    };
+    app.dispatch(
+        current,
+        Event::ValueChanged {
+            value: String::new(),
+            composing: false,
+            revision,
+        },
+    )
+    .unwrap();
+    assert_eq!(chat.get_untracked(), "");
+    assert_eq!(main.get_untracked(), "keep the main draft");
+    assert_eq!(edits.get_untracked(), 1);
+    app.dispatch(
+        current,
+        Event::Keyboard {
+            from: current,
+            command: glory::render::KeyboardCommand::Submit,
+        },
+    )
+    .unwrap();
+    assert_eq!(submits.get_untracked(), 1);
+}

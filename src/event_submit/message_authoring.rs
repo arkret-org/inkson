@@ -78,6 +78,27 @@ fn classify_presubmit_failure(error: &anyhow::Error) -> MessageAuthoringFailure 
     }
 }
 
+// Retained native evidence permits this holder to freeze a local signed
+// intent while offline. It is not a current write grant: the submit path and
+// accepting Station still recheck their live gates. The shared directory
+// restore preserves known revocation, generation and session watermarks.
+fn restore_retained_message_authority(
+    account: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    signer: &crate::event_signer::InksonEventSigner,
+    epoch: u64,
+    native: &crate::state::PersistedDeviceAuthoringAuthority,
+) -> bool {
+    crate::identity::device_directory::local_signer_matches_device_projection(
+        signer,
+        account,
+        device,
+        &native.device_projection,
+    ) && crate::identity::device_directory::restore_persisted_device_authoring_authority(
+        epoch, account, device, native,
+    )
+}
+
 impl EventSubmitter {
     pub(crate) async fn prepare_message_encryption_intent(
         &self,
@@ -193,19 +214,47 @@ impl EventSubmitter {
         let prepared = self.prepare_authoring_intent(intent).await?;
         check()?;
         let suite = self.digest_suite_for_intent(&prepared)?;
-        let proof_context = self.event_proof_context(suite).await?;
-        check()?;
         let directory_epoch = crate::identity::device_directory::cache_epoch();
-        let native = crate::identity::device_directory::authenticated_device_authoring_authority(
-            &self.http,
-            &authority,
-            &device,
-            &fence.signer,
-        )
-        .await?
-        .ok_or_else(|| {
-            anyhow::anyhow!("encrypted message producer has no current native authoring authority")
-        })?;
+        let retained = self
+            .state_store
+            .as_ref()
+            .and_then(|store| {
+                store.read(|state| {
+                    (state.active_authority().as_ref() == Some(&authority))
+                        .then(|| {
+                            state.with_unoverlaid_account_fields(|cached| {
+                                cached.device_authoring_authority.clone()
+                            })
+                        })
+                        .flatten()
+                })
+            })
+            .filter(|native| {
+                restore_retained_message_authority(
+                    &authority,
+                    &device,
+                    &fence.signer,
+                    directory_epoch,
+                    native,
+                )
+            });
+        let from_retained = retained.is_some();
+        let native = if let Some(retained) = retained {
+            retained
+        } else {
+            crate::identity::device_directory::authenticated_device_authoring_authority(
+                &self.http,
+                &authority,
+                &device,
+                &fence.signer,
+            )
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "encrypted message producer has no verified native authoring authority"
+                )
+            })?
+        };
         check()?;
         anyhow::ensure!(
             crate::identity::device_directory::cache_epoch() == directory_epoch
@@ -217,6 +266,12 @@ impl EventSubmitter {
                 ),
             "encrypted message native authoring authority changed during resolution"
         );
+        if !from_retained && let Some(store) = self.state_store.as_ref() {
+            store.write(|state| state.set_device_authoring_authority(Some(native.clone())));
+            check()?;
+        }
+        let proof_context = self.event_proof_context(suite).await?;
+        check()?;
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let store = self
             .state_store
@@ -356,6 +411,68 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_encrypted_authoring_reuses_retained_native_identity_without_a_new_lookup() {
+        let account = crate::test_support::authority_at_station(
+            "ak:did_core:web:offline-author.example",
+            "ak:did_core:web:offline-station.example",
+        );
+        let device =
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000093").unwrap();
+        let _scope =
+            crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((&account, &device)));
+        let signer = crate::event_signer::build_ed25519_device_signer(
+            [93; 32],
+            "did:web:offline-author.example",
+            device.as_str(),
+        );
+        let now = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
+        let native: crate::state::PersistedDeviceAuthoringAuthority = serde_json::from_value(serde_json::json!({
+            "account_id":account,"device_id":device,
+            "device_projection":{
+                "device_signing_key_did":format!("did:key:{}",signer.public_key_multibase().unwrap()),
+                "hpke_key":"hpke-test",
+                "device_authorize_event_id":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[93;32]),
+                "authorized_generation_ref":9,"device_status":"active",
+                "authorization_window":{"not_before":now-chrono::Duration::hours(1),"expires_at":null},
+                "attested_at":now-chrono::Duration::minutes(10),"expires_at":now-chrono::Duration::minutes(5)
+            },
+            "authoring_generation":{"authority_model":"accepted_device","authority_principal_id":account.principal_id,"generation_ref":"9"}
+        })).unwrap();
+        let epoch = crate::identity::device_directory::cache_epoch();
+        assert!(
+            restore_retained_message_authority(&account, &device, &signer, epoch, &native),
+            "lookup TTL is not the accepted Device authorization window"
+        );
+        let wrong_key = crate::event_signer::build_ed25519_device_signer(
+            [94; 32],
+            "did:web:offline-author.example",
+            device.as_str(),
+        );
+        assert!(!restore_retained_message_authority(
+            &account, &device, &wrong_key, epoch, &native
+        ));
+        let other = arkret_sdk::AccountId::new(
+            account.principal_id.clone(),
+            "ak:did_core:web:other-station.example".parse().unwrap(),
+        );
+        assert!(!restore_retained_message_authority(
+            &other, &device, &signer, epoch, &native
+        ));
+        let mut revoked = native.clone();
+        revoked.device_projection.device_status = arkret_models_crypto::DeviceStatus::Revoked;
+        let mut expired = native.clone();
+        expired.device_projection.authorization_window.expires_at =
+            Some(now - chrono::Duration::seconds(1));
+        let mut replaced = native.clone();
+        replaced.device_projection.authorized_generation_ref += 1;
+        for invalid in [revoked, expired, replaced] {
+            assert!(!restore_retained_message_authority(
+                &account, &device, &signer, epoch, &invalid
+            ));
+        }
+    }
 
     fn problem_failure(problem: arkret_sdk::Problem) -> MessageAuthoringFailure {
         classify_submit_failure(&anyhow::Error::new(arkret_sdk::http_client::Error::Api {

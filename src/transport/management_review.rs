@@ -288,7 +288,10 @@ async fn did_bytes_bounded(url: &str, limit: usize) -> anyhow::Result<Option<Vec
     );
     #[cfg(not(target_arch = "wasm32"))]
     let client = {
-        let guard = if cfg!(debug_assertions) {
+        let guard = if cfg!(any(
+            debug_assertions,
+            feature = "wasm-localstorage-secrets-test"
+        )) {
             arkret_egress_reqwest::EgressGuard::local_development()
         } else {
             arkret_egress_reqwest::EgressGuard::public_https()
@@ -306,18 +309,8 @@ async fn did_bytes_bounded(url: &str, limit: usize) -> anyhow::Result<Option<Vec
     };
     #[cfg(target_arch = "wasm32")]
     let client = {
-        let host = parsed
-            .host_str()
-            .ok_or_else(|| anyhow::anyhow!("DID host is absent"))?;
         anyhow::ensure!(
-            parsed.scheme() == "https"
-                && (arkret_sdk::identity::host_is_safe_for_outbound(host)
-                    || (cfg!(debug_assertions)
-                        && (host == "localhost"
-                            || host.ends_with(".localhost")
-                            || host
-                                .parse::<std::net::IpAddr>()
-                                .is_ok_and(|ip| ip.is_loopback())))),
+            crate::media::http_fetch::url_host_is_safe(url),
             "DID history requires an allowed HTTPS host"
         );
         reqwest::Client::new()

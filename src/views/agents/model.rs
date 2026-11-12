@@ -203,7 +203,7 @@ impl AgentServiceScopePreset {
                 "Submit approved durable Events for governing Station acceptance."
             }
             Self::SecureMessaging => {
-                "Read authorized conversation metadata, publish and consume MLS key packages, verify encrypted conversation membership, receive encrypted messages, and send encrypted live presence."
+                "Read authorized conversation metadata and original encryption declarations, publish and consume MLS key packages, verify encrypted conversation membership, receive encrypted messages, and send encrypted live presence."
             }
             Self::ResolveResources => "Fetch event resources referenced by allowed payloads.",
         }
@@ -225,6 +225,7 @@ impl AgentServiceScopePreset {
             Self::SubmitEvents => &[ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1],
             Self::SecureMessaging => &[
                 ServiceOperationId::SELF_SIGNER_KEYS_READ_RESOLVE_V1,
+                ServiceOperationId::SELF_COMMITTED_EVENT_RESOURCE_GET_V1,
                 ServiceOperationId::SELF_KEYS_KEYPACKAGES_COMMAND_CONSUME_V1,
                 ServiceOperationId::SELF_KEYS_KEYPACKAGES_READ_CLAIM_V1,
                 ServiceOperationId::SELF_MLS_READ_GROUP_STATE_MATERIAL_V1,

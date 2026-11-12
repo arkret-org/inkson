@@ -23,6 +23,135 @@ pub(super) fn context(
     )
 }
 #[test]
+fn late_secure_draft_hydration_updates_the_installed_pool_without_rebinding() {
+    use crate::secure_key_store::SecureKeyStore as _;
+    let secure = std::sync::Arc::new(crate::secure_key_store::MemorySecureKeyStore::default());
+    let _secure = crate::secure_key_store::DefaultSecureKeyStoreTestGuard::replace(secure.clone());
+    let directory = tempfile::tempdir().unwrap();
+    let app = glory::App::memory();
+    let context = context(app.scope(), directory.path());
+    let account = crate::test_support::AccountFixture::new("did:web:alice.example").build();
+    context
+        .state_store
+        .write(|store| store.switch_active_account(&account))
+        .unwrap();
+    context
+        .active_account
+        .revise(|active| *active = Some(account.clone()));
+    let target = ComposerTarget {
+        authority: account.authority.clone(),
+        device_id: account.device_id.clone(),
+        realm_id: arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [73; 32],
+        ))
+        .to_string(),
+        strand_id: arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [74; 32],
+        ))
+        .to_string(),
+    };
+    let state = composer_state(&context, target.clone()).unwrap();
+    // Another durable write owns the worker; hydration may queue this draft,
+    // but may not claim it is saved before the real writer acknowledges it.
+    context.chat_state.running.revise(|running| *running = true);
+    app.settle(glory::App::DEFAULT_SETTLE_PASSES).unwrap();
+    assert_eq!(
+        context.state_store.read(|store| store.active_authority()),
+        Some(account.authority.clone())
+    );
+    assert!(composer_session_matches(
+        &context,
+        &target,
+        context.session_generation.get_untracked()
+    ));
+    assert!(state.draft.get_untracked().is_empty());
+    let mut backing = LocalStateStore::with_path(directory.path().join("backing.json"));
+    backing.switch_active_account(&account).unwrap();
+    let (key, json) = backing
+        .prepare_composer_draft_write(
+            &target.authority,
+            &target.device_id,
+            &target.realm_id,
+            &target.strand_id,
+            "late retained main draft".into(),
+        )
+        .unwrap();
+    secure.store_secret(&key, json.as_deref().unwrap()).unwrap();
+    context
+        .state_store
+        .write(|store| store.hydrate_e2ee_plaintext_cache_with_secure_store(secure.as_ref()))
+        .unwrap();
+    context
+        .state_revision
+        .revise(|revision| *revision = revision.wrapping_add(1));
+    app.settle(glory::App::DEFAULT_SETTLE_PASSES).unwrap();
+    assert_eq!(state.draft.get_untracked(), "late retained main draft");
+    assert!(state.draft_saved.get_untracked().is_empty());
+    assert_eq!(state.draft_storage.get_untracked(), "saving");
+    assert_eq!(
+        context
+            .chat_state
+            .pending
+            .get_untracked()
+            .get(&target)
+            .unwrap()
+            .1,
+        "late retained main draft",
+    );
+    state.draft_edited.revise(|edited| *edited = true);
+    state.draft.revise(String::clear);
+    context
+        .state_revision
+        .revise(|revision| *revision = revision.wrapping_add(1));
+    app.settle(glory::App::DEFAULT_SETTLE_PASSES).unwrap();
+    assert!(
+        state.draft.get_untracked().is_empty(),
+        "a user clear owns the view"
+    );
+}
+
+#[test]
+fn pooled_empty_composer_accepts_late_private_hydration_without_replacing_user_edits() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = glory::App::memory();
+    let context = context(app.scope(), directory.path());
+    let authority = crate::test_support::authority("ak:did_core:web:alice.example");
+    let device =
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001").unwrap();
+    let target = ComposerTarget {
+        authority,
+        device_id: device,
+        realm_id: "late-realm".into(),
+        strand_id: "main-chat".into(),
+    };
+    let state = composer_state(&context, target).unwrap();
+    assert!(state.draft.get_untracked().is_empty());
+    assert!(restore_untouched_composer_draft(
+        state,
+        "retained main draft"
+    ));
+    assert_eq!(state.draft.get_untracked(), "retained main draft");
+    assert!(!restore_untouched_composer_draft(state, "older draft"));
+    state.draft.revise(|draft| draft.clear());
+    state.draft_saved.revise(|draft| draft.clear());
+    state.draft_edited.revise(|edited| *edited = true);
+    assert!(!restore_untouched_composer_draft(
+        state,
+        "must not revive an explicit clear"
+    ));
+    state.draft_edited.revise(|edited| *edited = false);
+    state.pending_drafts.revise(|pending| {
+        pending.insert("pending-send".into(), "owned pending body".into());
+    });
+    assert!(!restore_untouched_composer_draft(
+        state,
+        "must not replace a pending send"
+    ));
+}
+
+#[test]
 fn production_controller_callback_keeps_owned_state_without_context_hooks() {
     let dir = tempfile::tempdir().unwrap();
     let app = glory::ui::App::memory();
@@ -261,6 +390,10 @@ fn realm_default_refresh_preserves_explicit_circle_selection_and_pinned_targets(
     let circle_composer = original
         .for_strand(&context, &authority, &device, &realm, &circle_strand)
         .unwrap();
+    assert_eq!(
+        circle_composer.draft_strand_id.get_untracked(),
+        circle_strand
+    );
     circle_composer
         .draft
         .revise(|draft| *draft = "unsent Circle body".into());

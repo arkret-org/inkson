@@ -16,6 +16,99 @@ struct JoinBasis {
     agent_join: arkret_sdk::EventId,
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct AuthorityInputKey {
+    generation: u64,
+    holder: (String, arkret_sdk::AccountId, arkret_sdk::DeviceId, String),
+    realm: String,
+    agent: String,
+}
+
+impl AuthorityInputKey {
+    fn capture(context: &InksonContext, realm: &str, agent: &str) -> Option<Self> {
+        let account = context.active_account.get_untracked()?;
+        Some(Self {
+            generation: context.session_generation.get_untracked(),
+            holder: (
+                account.profile_id,
+                account.authority,
+                account.device_id,
+                account.server_url.to_string(),
+            ),
+            realm: realm.to_owned(),
+            agent: agent.to_owned(),
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AuthorityInputs {
+    key: Cage<AuthorityInputKey>,
+    basis: Cage<Option<JoinBasis>>,
+    strand: Cage<String>,
+    selected: Cage<BTreeSet<String>>,
+    current: Cage<Option<AuthorityView>>,
+    pending: Cage<bool>,
+    message: Cage<String>,
+    refresh: Cage<u64>,
+}
+
+impl AuthorityInputs {
+    fn new(scope: &Scope, key: AuthorityInputKey) -> Self {
+        Self {
+            key: scope.cage(key),
+            basis: scope.cage(None),
+            strand: scope.cage(String::new()),
+            selected: scope.cage(BTreeSet::new()),
+            current: scope.cage(None),
+            pending: scope.cage(false),
+            message: scope.cage(String::new()),
+            refresh: scope.cage(0),
+        }
+    }
+
+    fn bind_basis(self, basis: Option<JoinBasis>) {
+        if self.basis.get_untracked() != basis {
+            self.strand.revise(String::clear);
+            self.selected.revise(BTreeSet::clear);
+            self.basis.revise(|current| *current = basis);
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct AuthorityInputPool {
+    owner: glory::ui::WeakScope,
+    entries: Cage<std::collections::HashMap<AuthorityInputKey, AuthorityInputs>>,
+}
+
+impl AuthorityInputPool {
+    pub(super) fn new(scope: &Scope) -> Self {
+        Self {
+            owner: scope.downgrade(),
+            entries: scope.cage(std::collections::HashMap::new()),
+        }
+    }
+
+    fn inputs(&self, context: &InksonContext, realm: &str, agent: &str) -> Option<AuthorityInputs> {
+        let owner = self.owner.upgrade()?;
+        let key = AuthorityInputKey::capture(context, realm, agent)?;
+        if let Some(inputs) = self.entries.get_untracked().get(&key).copied() {
+            return Some(inputs);
+        }
+        // Roster rows can be replaced independently of an explicit edit or
+        // pending command. Their exact holder's inputs belong to the page.
+        let inputs = AuthorityInputs::new(&owner, key.clone());
+        self.entries.revise(|entries| {
+            entries.retain(|other, _| {
+                other.generation == key.generation && other.holder == key.holder
+            });
+            entries.insert(key, inputs);
+        });
+        Some(inputs)
+    }
+}
+
 #[derive(Clone, Debug)]
 struct AuthorityView {
     basis: Option<JoinBasis>,
@@ -623,6 +716,7 @@ struct AuthorityEditor {
     owner: glory::ui::WeakScope,
     realm: String,
     agent: String,
+    input_key: Cage<AuthorityInputKey>,
     current: Cage<Option<AuthorityView>>,
     message: Cage<String>,
     pending: Cage<bool>,
@@ -632,7 +726,10 @@ struct AuthorityEditor {
 }
 impl AuthorityEditor {
     fn grant(&self) {
-        if self.pending.get_untracked() {
+        if self.pending.get_untracked()
+            || AuthorityInputKey::capture(&self.context, &self.realm, &self.agent).as_ref()
+                != Some(&self.input_key.get_untracked())
+        {
             return;
         }
         let Some(account) = self
@@ -669,15 +766,19 @@ impl AuthorityEditor {
         message.revise(|value| {
             *value = "正在核对成员关系并签发新授权…".into();
         });
+        let fence = crate::transport::auth::AuthoringSessionFence::capture();
         spawn(&owner, async move {
             let result =
                 crate::transport::auth::with_authed_sdk_client(&base, token, |http| async move {
+                    let fence = fence?;
+                    fence.check()?;
                     let realm = arkret_sdk::RealmId::new(realm)?;
                     let agent = arkret_sdk::AccountId::new(
                         arkret_sdk::DidCoreId::new(agent)?,
                         account.station_id.clone(),
                     );
                     let fresh = load(task_context.clone(), &http, &realm, &account, &agent).await?;
+                    fence.check()?;
                     let basis = fresh
                         .basis
                         .ok_or_else(|| anyhow::anyhow!(fresh.join_status))?;
@@ -705,7 +806,9 @@ impl AuthorityEditor {
                     )?
                     .build_sdk_event("inkson")?;
                     let submitter = crate::app::runtime_adapter::event_submitter(http.clone());
+                    fence.check()?;
                     let accepted = submitter.submit_sdk_event(&event).await?;
+                    fence.check()?;
                     anyhow::ensure!(
                         accepted.is_committed(),
                         "授权未接纳：{:?}",
@@ -781,18 +884,23 @@ pub(super) fn authority(
     context: Rc<InksonContext>,
     realm: String,
     agent: String,
+    inputs: AuthorityInputPool,
 ) -> View {
+    let Some(draft) = inputs.inputs(&context, &realm, &agent) else {
+        return empty();
+    };
     let state = AuthorityEditor {
         context: context.clone(),
-        owner: scope.downgrade(),
+        owner: inputs.owner.clone(),
         realm: realm.clone(),
         agent: agent.clone(),
-        current: scope.cage(None),
-        message: scope.cage(String::new()),
-        pending: scope.cage(false),
-        selected: scope.cage(BTreeSet::new()),
-        strand: scope.cage(String::new()),
-        refresh: scope.cage(0),
+        input_key: draft.key,
+        current: draft.current,
+        message: draft.message,
+        pending: draft.pending,
+        selected: draft.selected,
+        strand: draft.strand,
+        refresh: draft.refresh,
     };
     let refresh = state.refresh;
     let current = state.current;
@@ -826,6 +934,7 @@ pub(super) fn authority(
     });
     scope.effect(move || match resource.data.get() {
         Some(Ok(view)) => {
+            draft.bind_basis(view.basis.clone());
             message.revise(|value| {
                 *value = view.join_status.clone();
             });
@@ -1208,4 +1317,172 @@ fn scope_preview(
         "recovery.panel.loading",
         |_, summary| paragraph("muted", summary),
     )
+}
+
+#[cfg(test)]
+mod input_lifetime_tests {
+    use std::cell::RefCell;
+
+    use super::*;
+
+    fn nodes(app: &glory::App, class: &str) -> Vec<glory::render::NodeId> {
+        let tree = app.tree();
+        let mut pending = tree.roots().to_vec();
+        let mut found = Vec::new();
+        while let Some(id) = pending.pop() {
+            let node = tree.node(id).unwrap();
+            if node
+                .descriptor
+                .view()
+                .classes
+                .iter()
+                .any(|value| value == class)
+            {
+                found.push(id);
+            }
+            pending.extend(node.children.iter().rev().copied());
+        }
+        found
+    }
+
+    #[test]
+    fn authority_inputs_survive_parent_replacement_and_fence_join_and_holder_changes() {
+        let _secure = crate::secure_key_store::DefaultSecureKeyStoreTestGuard::replace(
+            std::sync::Arc::new(crate::secure_key_store::MemorySecureKeyStore::default()),
+        );
+        let (app, context, _directory) = crate::views::settings::restored_surface_tests::harness();
+        let account = crate::test_support::AccountFixture::new("did:web:alice.example").build();
+        context
+            .active_account
+            .revise(|value| *value = Some(account.clone()));
+        let event =
+            |byte| arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [byte; 32]);
+        let realm = arkret_sdk::RealmId::from_event_id(&event(81)).to_string();
+        let target = arkret_sdk::StrandId::from_event_id(&event(82)).to_string();
+        let agent = arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap();
+        // These values bind form inputs only, never admission or authorization.
+        let basis = app.scope().cage(JoinBasis {
+            controller: account.authority.clone(),
+            agent: arkret_sdk::AccountId::new(agent.clone(), account.authority.station_id.clone()),
+            controller_join: event(83),
+            agent_join: event(84),
+        });
+        let pool = AuthorityInputPool::new(app.scope());
+        let repaint = app.scope().cage(0_u64);
+        let observed = Rc::new(RefCell::new(None::<AuthorityInputs>));
+        app.mount(reactive(repaint, {
+            let context = context.clone();
+            let observed = observed.clone();
+            let target = target.clone();
+            let pool = pool.clone();
+            move |scope, _| {
+                let inputs = pool.inputs(&context, &realm, agent.as_str()).unwrap();
+                inputs.bind_basis(Some(basis.get_untracked()));
+                *observed.borrow_mut() = Some(inputs);
+                choice(
+                    scope,
+                    context.clone(),
+                    "authority-input-fixture",
+                    "Scope",
+                    inputs.strand,
+                    vec![(target.clone(), "Target Chat".into())],
+                    scope.bond(move || !inputs.pending.get()),
+                    move |value| inputs.strand.revise(|selected| *selected = value),
+                )
+            }
+        }))
+        .unwrap();
+        app.flush().unwrap();
+        let first = nodes(&app, "native-choice-trigger")[0];
+        assert!(app.dispatch(first, glory::render::Event::Activate).unwrap());
+        app.flush().unwrap();
+        let option = nodes(&app, "sapid-select-option")[0];
+        assert!(
+            app.dispatch(option, glory::render::Event::Activate)
+                .unwrap()
+        );
+        app.flush().unwrap();
+        let inputs = observed.borrow().unwrap();
+        assert_eq!(inputs.strand.get_untracked(), target);
+        inputs.selected.revise(|values| {
+            values.insert("ak.message.create".into());
+        });
+        inputs.pending.revise(|value| *value = true);
+        inputs
+            .message
+            .revise(|value| *value = "publishing the original selection".into());
+        context.active_account.revise(|active| {
+            active.as_mut().unwrap().resolution.version_id = "fresh-resolution".into();
+        });
+        repaint.revise(|revision| *revision += 1);
+        app.flush().unwrap();
+        let second = nodes(&app, "native-choice-trigger")[0];
+        assert_ne!(
+            first, second,
+            "the parent actually replaced the input control"
+        );
+        let retained = observed.borrow().unwrap();
+        assert_eq!(
+            retained.strand.get_untracked(),
+            target,
+            "a same-holder roster refresh must keep the user's exact Strand"
+        );
+        assert!(
+            retained
+                .selected
+                .get_untracked()
+                .contains("ak.message.create")
+        );
+        assert!(retained.pending.get_untracked());
+        assert_eq!(
+            retained.message.get_untracked(),
+            "publishing the original selection"
+        );
+        {
+            let tree = app.tree();
+            let glory::render::Props::Button(button) =
+                &tree.node(second).unwrap().descriptor.view().props
+            else {
+                panic!("the Select trigger is a real button")
+            };
+            assert!(
+                !button.enabled,
+                "a replacement cannot admit a duplicate pending edit"
+            );
+        }
+        let sibling = pool
+            .inputs(
+                &context,
+                &arkret_sdk::RealmId::from_event_id(&event(86)).to_string(),
+                "ak:did_core:web:another-agent.example",
+            )
+            .unwrap();
+        assert!(sibling.strand.get_untracked().is_empty());
+        assert!(!sibling.pending.get_untracked());
+        basis.revise(|value| value.agent_join = event(85));
+        repaint.revise(|revision| *revision += 1);
+        app.flush().unwrap();
+        let replaced = observed.borrow().unwrap();
+        assert!(replaced.strand.get_untracked().is_empty());
+        assert!(replaced.selected.get_untracked().is_empty());
+        replaced.strand.revise(|value| *value = target.clone());
+        context.session_generation.revise(|value| *value += 1);
+        repaint.revise(|revision| *revision += 1);
+        app.flush().unwrap();
+        assert!(observed.borrow().unwrap().strand.get_untracked().is_empty());
+        assert!(!observed.borrow().unwrap().pending.get_untracked());
+        observed
+            .borrow()
+            .unwrap()
+            .strand
+            .revise(|value| *value = target.clone());
+        context.active_account.revise(|value| {
+            value.as_mut().unwrap().device_id = "ak:device:01964137-0000-7000-8000-000000000002"
+                .parse()
+                .unwrap();
+        });
+        repaint.revise(|revision| *revision += 1);
+        app.flush().unwrap();
+        assert!(observed.borrow().unwrap().strand.get_untracked().is_empty());
+    }
 }

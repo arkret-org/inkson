@@ -921,6 +921,65 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
+    async fn failed_keypackage_publication_preserves_private_keys_without_usable_inventory() {
+        use base64::Engine as _;
+
+        use crate::secure_key_store::SecureKeyStore as _;
+
+        let account = crate::test_support::authority("did:web:keypackage-failure.example");
+        let device =
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000002".to_owned())
+                .unwrap();
+        let store = crate::secure_key_store::MemorySecureKeyStore::new();
+        let mut retained: std::collections::BTreeMap<String, String> = Default::default();
+        for _ in 0..2 {
+            let result = publish_fresh_local_mls_key_package_batch(
+                "invalid-station-url",
+                "unavailable-session",
+                &account,
+                &device,
+                &store,
+                2,
+            )
+            .await;
+            assert!(result.is_err());
+            let keys = store.list_secret_keys(None).unwrap();
+            assert!(keys.len() >= retained.len() + 2);
+            for (key, original) in &retained {
+                assert_eq!(store.get_secret(key).unwrap().as_ref(), Some(original));
+            }
+            for key in &keys {
+                let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(store.get_secret(key).unwrap().unwrap())
+                    .unwrap();
+                arkret_sdk::ArkretMlsIdentity::restore_from_private_state(
+                    arkret_sdk::ActorId::account(account.clone()),
+                    arkret_sdk::MlsEndpointIdentity::HumanDevice {
+                        principal_id: account.principal_id.clone(),
+                        device_id: device.clone(),
+                    },
+                    &bytes,
+                )
+                .unwrap();
+            }
+            retained = keys
+                .into_iter()
+                .map(|key| {
+                    let original = store.get_secret(&key).unwrap().unwrap();
+                    (key, original)
+                })
+                .collect();
+            assert!(
+                crate::mls::runtime::load_mls_key_package_inventory(&store, &account, &device,)
+                    .unwrap()
+                    .entries
+                    .is_empty()
+            );
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
     async fn busy_keypackage_maintenance_cannot_report_publication_success() {
         let authority = crate::test_support::authority_at_station(
             "ak:did_core:web:lease-test.example",

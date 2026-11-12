@@ -1,4 +1,4 @@
-mod http_fetch;
+pub(crate) mod http_fetch;
 pub mod rtc;
 pub mod service_route;
 

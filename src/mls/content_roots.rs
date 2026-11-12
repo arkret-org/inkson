@@ -20,6 +20,11 @@ pub(crate) async fn prepare_material(
         "content actual signer differs from the active Account"
     );
     let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+        device_id: active.device_id.clone(),
+    };
+    let vault =
+        garth::mls::content_roots::ContentRootVault::new(secure.as_ref(), &actor, &endpoint);
     let (group, current, producer) = state.read(|state| -> anyhow::Result<_> {
         let current = state
             .current_mls_group_for_scope(intent.scope_ref())
@@ -46,13 +51,30 @@ pub(crate) async fn prepare_material(
             producer,
         ))
     })?;
-    let context = resolve_root_context(
-        &api.sdk_http_client()?,
-        &group,
-        &current.genesis_event_ref,
-        &current.current_mls_commit_event_ref,
-    )
-    .await?;
+    let retained = vault
+        .root_for_group_state(intent.scope_ref(), &current.current_mls_commit_event_ref)
+        .await?;
+    let retained_context = if let Some(root) = retained {
+        if vault.published_backup_refs(&root).await?.is_some() {
+            validate_retained_authoring_root(&group, &current, &root)?;
+            Some(root.root_context)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let context = if let Some(context) = retained_context {
+        context
+    } else {
+        resolve_root_context(
+            &api.sdk_http_client()?,
+            &group,
+            &current.genesis_event_ref,
+            &current.current_mls_commit_event_ref,
+        )
+        .await?
+    };
     let entry = export_epoch_root(&group, &context)?;
     let root = entry.root_base64url.clone();
     let root_ref = entry.root_ref.clone();
@@ -87,11 +109,6 @@ pub(crate) async fn prepare_material(
         blob_refs,
         backup_refs: backups,
     };
-    let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
-        device_id: active.device_id.clone(),
-    };
-    let vault =
-        garth::mls::content_roots::ContentRootVault::new(secure.as_ref(), &actor, &endpoint);
     if let Some(content) =
         arkret_event_draft::content_block_plaintext(intent.kind(), path, plaintext)?
     {
@@ -190,6 +207,28 @@ pub(crate) async fn prepare_material(
         outer_event: intent.pre_encryption_outer_event()?,
         protection,
     })
+}
+
+// A retained read root alone never restores authoring. The caller has already
+// restored the active Device's installed private checkpoint and exact local
+// endpoint; its acknowledged root must agree with that RFC epoch and current.
+fn validate_retained_authoring_root(
+    group: &arkret_sdk::ArkretMlsGroup,
+    current: &arkret_wire::MlsGroupValue,
+    root: &arkret_models_crypto::ContentRootBackupEntry,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        group.is_active()
+            && root.root_context.effective_scope == current.effective_scope
+            && root.root_context.genesis_event_ref == current.genesis_event_ref
+            && root.root_context.group_state_ref == current.current_mls_commit_event_ref
+            && root.root_context.epoch == current.epoch
+            && root.root_context.cipher_suite == current.cipher_suite.as_str()
+            && current.current_key_access_revision == current.covered_key_access_revision
+            && export_epoch_root(group, &root.root_context)? == *root,
+        "acknowledged content root differs from the active installed group"
+    );
+    Ok(())
 }
 
 // The caller independently verifies the native author and original public leaf.
@@ -399,38 +438,42 @@ pub(crate) async fn resolve_root_context(
         account_id: source.session()?.account_id().clone(),
     };
     let principal = source.current_principal(&principal_request).await?;
-    let (strategy, strategy_ref) =
-        if principal.value()?.principal_control_realm_id == *group.scope().realm_id() {
-            let pcr =
-                garth::own_station_results::read_own_station_human_pcr_genesis(&source, principal)
-                    .await?;
-            let original = pcr.genesis()?;
-            (
-                original
-                    .event
-                    .as_realm_create()?
-                    .object
-                    .initial_encryption_backup_strategy,
-                original.event.event_id.clone(),
-            )
-        } else {
-            let strategy = crate::transport::own_station_results::genesis_response(
-                &source,
-                group.scope().realm_id(),
-            )
-            .await?;
-            let arkret_sdk::CommittedEventView::Full(strategy) = strategy.value()? else {
-                anyhow::bail!("content strategy original is withheld");
-            };
-            (
-                strategy
-                    .event
-                    .as_realm_create()?
-                    .object
-                    .initial_encryption_backup_strategy,
-                strategy.event.event_id.clone(),
-            )
+    let (strategy, strategy_ref) = if principal.value()?.principal_control_realm_id
+        == *group.scope().realm_id()
+    {
+        let pcr =
+            garth::own_station_results::read_own_station_human_pcr_genesis(&source, principal)
+                .await?;
+        let original = pcr.genesis()?;
+        (
+            original
+                .event
+                .as_realm_create()?
+                .object
+                .initial_encryption_backup_strategy,
+            original.event.event_id.clone(),
+        )
+    } else {
+        // A joined member replica need not hold the prejoin original.
+        // The registered authority bundle carries that exact public
+        // original independently of the business-history read floor.
+        let request = arkret_sdk::RealmAuthorityBundleRequestBody {
+            realm_id: group.scope().realm_id().clone(),
+            nonce: arkret_sdk::Base64UrlString::new(crate::random::base64url_token(
+                32,
+                "content strategy nonce unavailable",
+            )?)
+            .map_err(anyhow::Error::msg)?,
         };
+        let bundle = garth::AuthorityClient::new(http.clone())
+            .resolve_authority(&request)
+            .await?;
+        source.check_session()?;
+        let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
+        let freshness =
+            arkret_identity::RealmAuthorityFreshness::new(crate::clock::now_utc(), request.nonce);
+        content_strategy_from_authority(group.scope().realm_id(), &bundle, &freshness, &keys)?
+    };
     let context = arkret_models_crypto::ContentRootContext {
         effective_scope: group.scope().clone(),
         genesis_event_ref: genesis.clone(),
@@ -445,11 +488,103 @@ pub(crate) async fn resolve_root_context(
     Ok(context)
 }
 
+fn content_strategy_from_authority(
+    realm: &arkret_sdk::RealmId,
+    bundle: &arkret_sdk::RealmAuthorityBundle,
+    freshness: &arkret_identity::RealmAuthorityFreshness,
+    keys: &arkret_identity::RealmAuthorityKeyMap,
+) -> anyhow::Result<(arkret_sdk::EncryptionBackupStrategy, arkret_sdk::EventId)> {
+    let authority = arkret_identity::verify_realm_authority_bundle(bundle, freshness, keys)?;
+    anyhow::ensure!(
+        authority.realm_id() == realm
+            && matches!(
+                arkret_sdk::GenesisGovernance::from_genesis(&bundle.genesis_event)?,
+                arkret_sdk::GenesisGovernance::Collaboration
+                    | arkret_sdk::GenesisGovernance::DirectConversation(_)
+            ),
+        "content strategy authority differs from the shared Realm"
+    );
+    Ok((
+        bundle
+            .genesis_event
+            .as_realm_create()?
+            .object
+            .initial_encryption_backup_strategy,
+        bundle.genesis_event.event_id.clone(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use garth::mls::content_roots::ContentRootVault;
 
     use super::*;
+
+    #[test]
+    fn content_strategy_uses_signed_authority_without_prejoin_business_history() {
+        let seed = arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [96; 32],
+        ));
+        let (bundle, keys, business_rows) =
+            crate::test_support::committed_event::verified_realm_fixture_as(
+                seed.clone(),
+                vec![],
+                "alice.example",
+                "ak:device:0196419b-0000-7000-8000-000000000001",
+            );
+        assert!(business_rows.is_empty());
+        let freshness = arkret_identity::RealmAuthorityFreshness::new(
+            crate::test_support::committed_event::fixture_time(100),
+            bundle.current_assertion.nonce.clone(),
+        );
+        let strategy =
+            content_strategy_from_authority(&bundle.realm_id, &bundle, &freshness, &keys).unwrap();
+        assert_eq!(strategy.1, bundle.genesis_event.event_id);
+        assert_eq!(
+            strategy.0,
+            bundle
+                .genesis_event
+                .as_realm_create()
+                .unwrap()
+                .object
+                .initial_encryption_backup_strategy
+        );
+        assert!(content_strategy_from_authority(&seed, &bundle, &freshness, &keys).is_err());
+        assert!(
+            content_strategy_from_authority(
+                &bundle.realm_id,
+                &bundle,
+                &freshness,
+                &arkret_identity::RealmAuthorityKeyMap::new(),
+            )
+            .is_err()
+        );
+        let wrong_nonce = arkret_identity::RealmAuthorityFreshness::new(
+            freshness.now,
+            arkret_sdk::Base64UrlString::new(arkret_sdk::canonical::base64url_encode([97; 32]))
+                .unwrap(),
+        );
+        assert!(
+            content_strategy_from_authority(&bundle.realm_id, &bundle, &wrong_nonce, &keys)
+                .is_err()
+        );
+        let mut altered = bundle.clone();
+        altered
+            .genesis_event
+            .payload
+            .insert("unsigned_strategy".into(), serde_json::json!(true));
+        assert!(
+            content_strategy_from_authority(&bundle.realm_id, &altered, &freshness, &keys).is_err()
+        );
+        let expired = arkret_identity::RealmAuthorityFreshness::new(
+            bundle.current_assertion.expires_at,
+            bundle.current_assertion.nonce.clone(),
+        );
+        assert!(
+            content_strategy_from_authority(&bundle.realm_id, &bundle, &expired, &keys).is_err()
+        );
+    }
 
     fn fixture() -> (
         arkret_sdk::ArkretMlsGroup,
@@ -478,6 +613,42 @@ mod tests {
         let material =
             crate::test_support::content::material(&group, "ak.message.create", &reference);
         (group, material, account, device)
+    }
+
+    #[test]
+    fn acknowledged_root_preparation_requires_the_exact_active_installed_epoch() {
+        let (group, material, ..) = fixture();
+        let root = export_epoch_root(&group, &material.content_context.root_context).unwrap();
+        let current = arkret_wire::MlsGroupValue {
+            effective_scope: root.root_context.effective_scope.clone(),
+            genesis_event_ref: root.root_context.genesis_event_ref.clone(),
+            cipher_suite: root.root_context.cipher_suite.clone().try_into().unwrap(),
+            current_mls_commit_event_ref: root.root_context.group_state_ref.clone(),
+            epoch: root.root_context.epoch,
+            current_key_access_revision: 1,
+            covered_key_access_revision: 1,
+            public_tree_ref: arkret_sdk::BlobRef::new(format!(
+                "ak:blob:{}",
+                arkret_sdk::canonical::sha256_digest(b"public tree selector fixture")
+            ))
+            .unwrap(),
+        };
+        validate_retained_authoring_root(&group, &current, &root).unwrap();
+        let mut different_epoch = current.clone();
+        different_epoch.epoch += 1;
+        let mut different_genesis = current.clone();
+        different_genesis.genesis_event_ref =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x82; 32]);
+        let mut different_ref = current.clone();
+        different_ref.current_mls_commit_event_ref = different_genesis.genesis_event_ref.clone();
+        let mut uncovered = current.clone();
+        uncovered.current_key_access_revision += 1;
+        for different in [different_epoch, different_genesis, different_ref, uncovered] {
+            assert!(validate_retained_authoring_root(&group, &different, &root).is_err());
+        }
+        let mut substituted = root.clone();
+        substituted.root_base64url = arkret_models_crypto::ContentRootSecret::new([0x83; 32]);
+        assert!(validate_retained_authoring_root(&group, &current, &substituted).is_err());
     }
 
     #[test]

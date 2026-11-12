@@ -863,7 +863,7 @@ fn panel_view_projects_the_configured_capability_ceiling_onto_the_preset_rows() 
         .filter(|(_, on)| *on)
         .map(|(preset, _)| *preset)
         .collect();
-    assert_eq!(services, AgentServiceScopePreset::DEFAULTS.to_vec());
+    assert_eq!(services, AgentServiceScopePreset::ALL.to_vec());
 
     // With nothing selected every row must read off, not stay stuck on the
     // previous Agent's ceiling.

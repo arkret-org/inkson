@@ -656,7 +656,8 @@ impl LocalStateStore {
             .entry(original.realm_id.to_string())
             .or_default()
             .insert(original.event_id.clone(), serialized);
-        let _ = self.flush();
+        // These fields are excluded from account records. Their durable
+        // writer is the protected cache, independently of account deltas.
         self.persist_e2ee_plaintext_cache_if_ready();
     }
 
@@ -721,7 +722,6 @@ impl LocalStateStore {
                 payload_digest.to_owned(),
                 base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(plaintext),
             );
-        let _ = self.flush();
         self.persist_e2ee_plaintext_cache_if_ready();
     }
 

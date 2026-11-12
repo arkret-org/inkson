@@ -44,6 +44,7 @@ struct PendingComposerDraft {
 
 impl PendingComposerDraft {
     fn new(controller: ChatController, operation: &str, body: &str) -> Self {
+        controller.draft_edited.revise(|edited| *edited = true);
         let pending = controller.pending_drafts;
         pending.revise(|value| value.insert(operation.to_owned(), body.to_owned()));
         Self {

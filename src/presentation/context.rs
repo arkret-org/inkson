@@ -43,6 +43,7 @@ pub struct InksonContext {
     pub read_receipt_hub: crate::views::read_receipts::ReadReceiptHub,
     pub hosted_sidecar: Cage<Option<crate::sidecar::HostedSidecarState>>,
     pub chat_state: crate::views::chat::ChatStatePool,
+    pub(crate) creator_retry_state: crate::components::mls_creator_retry::CreatorRetryState,
     pub kanban_state: crate::views::kanban::KanbanStatePool,
     pub route: Cage<Route>,
     pub workspace_navigation: super::workspace_navigation::WorkspaceNavigation,
@@ -198,6 +199,9 @@ impl InksonContext {
             read_receipt_hub: crate::views::read_receipts::ReadReceiptHub::new(scope),
             hosted_sidecar: scope.cage(None),
             chat_state: crate::views::chat::ChatStatePool::new(scope),
+            creator_retry_state: crate::components::mls_creator_retry::CreatorRetryState::new(
+                scope,
+            ),
             kanban_state: crate::views::kanban::KanbanStatePool::new(scope),
             workspace_navigation: super::workspace_navigation::WorkspaceNavigation::new(
                 scope, &route,
@@ -333,6 +337,7 @@ impl InksonContext {
             images.retire();
         }
         self.chat_state.retire_session();
+        self.creator_retry_state.retire_session();
         self.kanban_state.retire_session();
         self.call_signal_hub.reset();
         self.message_stream_hub.reset();
