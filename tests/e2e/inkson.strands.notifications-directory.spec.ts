@@ -408,12 +408,12 @@ test("notification feed controls and local mute feedback follow the active langu
     if (
       path === "/_arkret/self/events" ||
       path.endsWith("/realm-joins/prepare") ||
-      (path.startsWith("/_arkret/self/account_data/") && request.method() === "PUT")
+      (path.startsWith("/_arkret/self/account-data/") && request.method() === "PUT")
     ) {
       writes.push({ path, body: request.postDataJSON() });
     }
   });
-  const uiStatePath = "/_arkret/self/account_data/ak.client.ui_state";
+  const uiStatePath = "/_arkret/self/account-data/ak.client.ui_state";
   const languageWrites: string[] = [];
   const selectLanguage = async (language: "en" | "zh") => {
     const languageChoice = page.getByRole("button", {

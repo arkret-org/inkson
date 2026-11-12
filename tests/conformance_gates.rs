@@ -431,7 +431,7 @@ fn build_realm_preview_policy_event_matches_event_schema() {
                 "token": {
                     "required": true,
                     "ttl_seconds": 600,
-                    "bind_target_digest": true
+                    "target_digest_binding_required": true
                 }
             }
         }))

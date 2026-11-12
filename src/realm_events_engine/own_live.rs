@@ -960,19 +960,19 @@ async fn install_live_cut<F: Fn() -> bool>(
     .await
     .map_err(crate::state::current_index::current_stage_error)?;
     guard().map_err(crate::state::current_index::current_stage_error)?;
-    let material_changed = match crate::mls::historical_content::prepare_retained_realm(
+    let material = projector
+        .state_store
+        .read(|store| store.historical_content_rosters.clone());
+    let material_revision = material.revision();
+    if let Err(error) = crate::mls::historical_content::prepare_retained_realm(
         client,
         &projector.state_store,
         realm,
     )
     .await
     {
-        Ok(count) => count > 0,
-        Err(error) => {
-            tracing::warn!(%error, "retained live historical attribution remains pending");
-            false
-        }
-    };
+        tracing::warn!(%error, "retained live historical attribution remains pending");
+    }
     guard().map_err(crate::state::current_index::current_stage_error)?;
     for page in pages {
         if let Err(error) = crate::mls::historical_content::prepare_accepted_page(
@@ -998,7 +998,7 @@ async fn install_live_cut<F: Fn() -> bool>(
     Ok(InstalledLiveCut {
         changed,
         current_changed,
-        material_changed,
+        material_changed: material.revision() != material_revision,
         generation: published_generation,
     })
 }

@@ -36,7 +36,7 @@ for (const [index, install] of MOCK_INSTALLS.entries()) {
 
 test("account data preserves opaque bytes, CAS conflicts, tombstone high water and recreation", async () => {
   const captured = captureRouteHandler(); await mockArkretApi(captured.page as never);
-  const address = `https://local.host/_arkret/self/account_data/${BLOCKLIST_KEY}`;
+  const address = `https://local.host/_arkret/self/account-data/${BLOCKLIST_KEY}`;
   const send = (method: string, postData?: any) => driveOnce(captured.handler(), { method, url: address, postData });
   const unset = await send("GET");
   expect(unset?.status).toBe(404); expect((unset?.body as any).current_revision).toBe(0);
@@ -64,7 +64,7 @@ test("account data preserves opaque bytes, CAS conflicts, tombstone high water a
 
 test("account-data writes reject legacy fields, changed signatures and Station-only keys without mutation", async () => {
   const captured = captureRouteHandler(); await mockArkretApi(captured.page as never);
-  const address = `https://local.host/_arkret/self/account_data/${BLOCKLIST_KEY}`;
+  const address = `https://local.host/_arkret/self/account-data/${BLOCKLIST_KEY}`;
   const valid = accountDataRequest(0);
   for (const invalid of [{ ...valid, expected_server_revision: 0 }, (() => {
     const copy = structuredClone(valid); copy.set_event.event.payload.expected_server_revision = 10; return copy;
@@ -74,7 +74,7 @@ test("account-data writes reject legacy fields, changed signatures and Station-o
       onFulfill: () => { emitted += 1; } })).rejects.toThrow(); expect(emitted).toBe(0);
   }
   const forbidden = await driveOnce(captured.handler(), { method: "PUT",
-    url: "https://local.host/_arkret/self/account_data/ak.account.invite_delivery",
+    url: "https://local.host/_arkret/self/account-data/ak.account.invite_delivery",
     postData: accountDataRequest(0, false, "ak.account.invite_delivery") });
   expect(forbidden?.status).toBe(403);
   const current = await driveOnce(captured.handler(), { method: "GET", url: address });

@@ -1415,6 +1415,11 @@ impl InksonAccountProjector {
             // cache failure must not turn it into an uncommitted frame.
             tracing::warn!(%error, "current product view remains pending");
         }
+        let historical_content = self
+            .ctx
+            .state_store
+            .read(|store| store.historical_content_rosters.clone());
+        let historical_revision = historical_content.revision();
         for page in verified.pages() {
             crate::mls::historical_content::prepare_accepted_page_for_http(
                 self.transport.http().http(),
@@ -1434,7 +1439,11 @@ impl InksonAccountProjector {
                 Ok::<_, String>(())
             })
             .map_err(garth::Error::Storage)?;
-        if changed || frame.realm_list.is_some() || frame.realm_list_changes.is_some() {
+        if changed
+            || frame.realm_list.is_some()
+            || frame.realm_list_changes.is_some()
+            || historical_content.revision() != historical_revision
+        {
             self.ctx
                 .realm_live_epoch
                 .update(|epoch| *epoch = epoch.wrapping_add(1));
@@ -1878,6 +1887,11 @@ impl InksonAccountProjector {
                     return Err(garth::Error::AuthorityCutBehind);
                 }
                 let mut history = crate::realm_events_engine::AccountRecoveryHistory::default();
+                let historical_content = self
+                    .ctx
+                    .state_store
+                    .read(|store| store.historical_content_rosters.clone());
+                let historical_revision = historical_content.revision();
                 for proof in &verified {
                     for page in proof.own_pages() {
                         crate::mls::historical_content::prepare_accepted_page_for_http(
@@ -1905,6 +1919,18 @@ impl InksonAccountProjector {
                     history.retain(proof)?;
                 }
                 *self.recovery_history.lock().await = Some((generation, history));
+                if historical_content.revision() != historical_revision
+                    && self.fence()
+                    && self
+                        .ctx
+                        .state_store
+                        .read(LocalStateStore::current_generation)
+                        == generation
+                {
+                    self.ctx
+                        .realm_live_epoch
+                        .update(|epoch| *epoch = epoch.wrapping_add(1));
+                }
                 return Err(error);
             }
             for (index, (frame, proof)) in batch.frames.iter().zip(verified.iter()).enumerate() {

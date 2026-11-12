@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use arkret_event_draft::EventContentEnvelopesExt as _;
 use arkret_models_crypto::{ContentRootContext, EventContentMaterial};
@@ -22,19 +23,16 @@ type SharedEpoch = Arc<PublicEpoch>;
 type SharedEpoch = std::rc::Rc<PublicEpoch>;
 type EpochMap = BTreeMap<Hash, SharedEpoch>;
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Default)]
-pub(crate) struct HistoricalContentRosters(Arc<Mutex<EpochMap>>);
-
-/// Browser session providers stay on their owning thread. The shared store
-/// carries only this lifetime identity; it never makes a !Send source Send.
-#[cfg(target_arch = "wasm32")]
-#[derive(Clone, Default)]
-pub(crate) struct HistoricalContentRosters(Arc<()>);
+pub(crate) struct HistoricalContentRosters {
+    #[cfg(not(target_arch = "wasm32"))]
+    epochs: Arc<Mutex<EpochMap>>,
+    revision: Arc<AtomicU64>,
+}
 
 #[cfg(target_arch = "wasm32")]
 struct BrowserEpochs {
-    owner: std::sync::Weak<()>,
+    owner: std::sync::Weak<AtomicU64>,
     epochs: EpochMap,
 }
 
@@ -52,6 +50,21 @@ impl std::fmt::Debug for HistoricalContentRosters {
 }
 
 impl HistoricalContentRosters {
+    /// A process-local presentation input, independent of durable Account and
+    /// current-state revisions. Public attribution can arrive after either.
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Acquire)
+    }
+
+    fn note_install(&self) {
+        self.revision.fetch_add(1, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn advance_projection_revision_for_test(&self) {
+        self.note_install();
+    }
+
     fn install(
         &self,
         root: Hash,
@@ -68,13 +81,14 @@ impl HistoricalContentRosters {
                     roster,
                 }),
             );
+            self.note_install();
         })
         .ok_or_else(|| anyhow::anyhow!("historical roster cache unavailable"))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn with_epochs<T>(&self, action: impl FnOnce(&mut EpochMap) -> T) -> Option<T> {
-        let mut epochs = self.0.lock().ok()?;
+        let mut epochs = self.epochs.lock().ok()?;
         Some(action(&mut epochs))
     }
 
@@ -83,15 +97,17 @@ impl HistoricalContentRosters {
         BROWSER_EPOCHS.with(|all| {
             let mut all = all.try_borrow_mut().ok()?;
             all.retain(|_, cache| cache.owner.strong_count() > 0);
-            let key = Arc::as_ptr(&self.0) as usize;
+            // Browser sources stay on their owning thread. The shared store
+            // carries only the revision/lifetime, never a !Send source.
+            let key = Arc::as_ptr(&self.revision) as usize;
             let cache = all.entry(key).or_insert_with(|| BrowserEpochs {
-                owner: Arc::downgrade(&self.0),
+                owner: Arc::downgrade(&self.revision),
                 epochs: BTreeMap::new(),
             });
             // The Weak lifetime prevents pointer reuse from reviving an old
             // owner's proofs, including after an account's cache is dropped.
             let owner = cache.owner.upgrade()?;
-            if !Arc::ptr_eq(&owner, &self.0) {
+            if !Arc::ptr_eq(&owner, &self.revision) {
                 return None;
             }
             Some(action(&mut cache.epochs))
@@ -197,9 +213,9 @@ pub(crate) async fn prepare_retained_realm(
     source: &OwnStationStateClient,
     state: &crate::runtime::input::StateStoreHandle,
     realm: &arkret_sdk::RealmId,
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<()> {
     let Some(active) = crate::secure_key_store::active_device_seed_scope() else {
-        return Ok(0);
+        return Ok(());
     };
     anyhow::ensure!(
         source.session()?.account_id() == &active.authority,
@@ -236,7 +252,6 @@ pub(crate) async fn prepare_retained_realm(
             }
         }
     }
-    let mut prepared = 0;
     for (root, context) in roots {
         let roster = match read_public_epoch(source, state, &context).await {
             Ok(roster) => roster,
@@ -252,9 +267,8 @@ pub(crate) async fn prepare_retained_realm(
             "retained historical reader changed"
         );
         cache.install(root, source, roster)?;
-        prepared += 1;
     }
-    Ok(prepared)
+    Ok(())
 }
 
 pub(crate) async fn prepare_accepted_page_for_http(

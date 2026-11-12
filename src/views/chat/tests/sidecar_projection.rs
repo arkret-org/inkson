@@ -209,6 +209,59 @@ fn current_view_only_changes_invalidate_the_timeline_without_cursor_noise() {
 }
 
 #[test]
+fn historical_attribution_only_changes_invalidate_the_live_timeline() {
+    use super::super::sidecar_projection::PROJECTION_BUILDS;
+    use super::super::timeline_projection::ORDINARY_BUILDS;
+    ORDINARY_BUILDS.with(|count| count.set(0));
+    PROJECTION_BUILDS.with(|count| count.set(0));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("state.json");
+    let control = ProjectionControl {
+        path: path.clone(),
+        signals: Rc::new(RefCell::new(None)),
+    };
+    let mut dom = projection_harness(control.clone());
+    let signals = control.signals.borrow().as_ref().unwrap().clone();
+    let before_state = signals.store.read(|store| store.load());
+    let before_current = signals.store.read(|store| store.current_product_view());
+    let before_builds = ORDINARY_BUILDS.with(|count| count.get());
+    let before_sidecar_builds = PROJECTION_BUILDS.with(|count| count.get());
+    let proof_publication = signals
+        .store
+        .read(|store| store.historical_content_rosters.clone());
+    // Exercise the presentation notification independently of SDK proof
+    // verification. No roster, authority or decryptable material is fabricated.
+    proof_publication.advance_projection_revision_for_test();
+    assert_eq!(signals.store.read(|store| store.load()), before_state);
+    assert_eq!(
+        signals.store.read(|store| store.current_product_view()),
+        before_current
+    );
+    signals.realm_epoch.revise(|epoch| *epoch += 1);
+    dom.flush();
+    assert!(ORDINARY_BUILDS.with(|count| count.get()) > before_builds);
+    assert!(PROJECTION_BUILDS.with(|count| count.get()) > before_sidecar_builds);
+    let after_publication = ORDINARY_BUILDS.with(|count| count.get());
+    let after_sidecar_publication = PROJECTION_BUILDS.with(|count| count.get());
+    for _ in 0..20 {
+        signals.realm_epoch.revise(|epoch| *epoch += 1);
+        dom.flush();
+    }
+    assert_eq!(ORDINARY_BUILDS.with(|count| count.get()), after_publication);
+    assert_eq!(
+        PROJECTION_BUILDS.with(|count| count.get()),
+        after_sidecar_publication
+    );
+    assert_eq!(
+        LocalStateStore::with_path(path)
+            .historical_content_rosters
+            .revision(),
+        0,
+        "proof revisions are process-local, never a durable storage generation"
+    );
+}
+
+#[test]
 fn sidecar_projection_ignores_ui_repaints_but_invalidates_security_inputs() {
     use super::super::sidecar_projection::PROJECTION_BUILDS;
     PROJECTION_BUILDS.with(|count| count.set(0));

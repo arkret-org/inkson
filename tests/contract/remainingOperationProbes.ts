@@ -85,7 +85,7 @@ export async function additionalOperationProbe(operation: MockOperation, handler
     request.url += `?did=${encodeURIComponent(CURRENT_PRINCIPAL_DID)}`; return request;
   }
   if (id.startsWith("ak.self.account_data.")) {
-    const address = `https://local.host/_arkret/self/account_data/${encodeURIComponent(BLOCKLIST_KEY)}`;
+    const address = `https://local.host/_arkret/self/account-data/${encodeURIComponent(BLOCKLIST_KEY)}`;
     const current = await driveOnce(handler, { method: "GET", url: address });
     let revision = Number((current?.body as any)?.revision ?? (current?.body as any)?.current_revision ?? 0);
     if (id === "ak.self.account_data.resource.replace.v1") {

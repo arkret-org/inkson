@@ -520,7 +520,6 @@ async fn creator_own_station_cut(
     arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAuthority,
 )> {
     use arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAuthority;
-    static NEXT_QUERY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let client = crate::transport::own_station_results::client_for_http(http).await?;
     let response = client
         .snapshot_head(intent.effective_scope().realm_id())
@@ -550,22 +549,7 @@ async fn creator_own_station_cut(
     let genesis: arkret_sdk::RealmGenesis =
         serde_json::from_value(genesis.clone()).map_err(protocol)?;
     let session = response.session();
-    // Keep the checked increment compatible with the declared Rust 1.98 MSRV.
-    let mut previous = NEXT_QUERY.load(std::sync::atomic::Ordering::SeqCst);
-    let sequence = loop {
-        let next = previous
-            .checked_add(1)
-            .ok_or_else(|| protocol("creator read sequence exhausted"))?;
-        match NEXT_QUERY.compare_exchange_weak(
-            previous,
-            next,
-            std::sync::atomic::Ordering::SeqCst,
-            std::sync::atomic::Ordering::SeqCst,
-        ) {
-            Ok(_) => break next,
-            Err(actual) => previous = actual,
-        }
-    };
+    let sequence = garth::mls::creator::next_creator_read_sequence()?;
     let cut = MlsCreatorBootstrapAuthority::own_station(
         snapshot.clone(),
         genesis,

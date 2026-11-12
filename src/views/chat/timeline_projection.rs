@@ -4,6 +4,7 @@ use super::*;
 pub(super) struct TimelineProjectionBasis {
     state: ClientLocalState,
     current: Option<crate::current_projection::RealmCurrentView>,
+    historical_content_revision: u64,
 }
 
 #[cfg(test)]
@@ -91,6 +92,7 @@ pub(super) fn timeline_projection_basis(
             TimelineProjectionBasis {
                 state,
                 current: store.current_product_view(),
+                historical_content_revision: store.historical_content_rosters.revision(),
             }
         })
     };

@@ -64,7 +64,7 @@ pub(crate) fn page(
     let share = scope.cage(String::new());
     let landing = scope.cage("https://arkret.org".to_owned());
     let days = scope.cage("7".to_owned());
-    let max_uses = scope.cage("1".to_owned());
+    let max_use_count = scope.cage("1".to_owned());
     let views = scope.cage(Vec::<arkret_sdk::RealmInviteLinkView>::new());
     let previous_generation = scope.cage(context.session_generation.get_untracked());
     let cleanup_input = input;
@@ -132,7 +132,7 @@ pub(crate) fn page(
             context.clone(),
             "realm-invite-link-max-uses",
             "Maximum different accounts",
-            max_uses,
+            max_use_count,
             Purpose::Text,
         ));
         children.push(input_field(
@@ -173,7 +173,7 @@ pub(crate) fn page(
                         message.revise(|value| *value = "Choose valid positive limits".into());
                         return;
                     };
-                    let Ok(uses) = max_uses.get_untracked().parse::<u32>() else {
+                    let Ok(uses) = max_use_count.get_untracked().parse::<u32>() else {
                         message.revise(|value| *value = "Choose valid positive limits".into());
                         return;
                     };
@@ -362,10 +362,10 @@ pub(crate) fn page(
                         "{} — {}/{}; expires {}; {:?} (as of {})",
                         view.realm_invite_link_id,
                         view.use_count,
-                        view.max_uses,
+                        view.max_use_count,
                         view.expires_at,
                         view.status,
-                        view.as_of
+                        view.evaluated_at
                     );
                     stack(
                         "realm-invite-link-row",

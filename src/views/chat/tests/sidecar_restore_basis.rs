@@ -118,6 +118,17 @@ fn restore_ignores_cursor_noise_and_revalidates_content_current_account_and_devi
     settle(&mut dom);
     let after_current = RESTORE_LOOKUPS.with(|count| count.get());
     assert!(after_current > after_content);
+    let proof_publication = signals
+        .store
+        .read(|store| store.historical_content_rosters.clone());
+    proof_publication.advance_projection_revision_for_test();
+    signals.realm_epoch.revise(|value| *value = 2);
+    settle(&mut dom);
+    let after_attribution = RESTORE_LOOKUPS.with(|count| count.get());
+    assert!(after_attribution > after_current);
+    signals.realm_epoch.revise(|value| *value = 3);
+    settle(&mut dom);
+    assert_eq!(RESTORE_LOOKUPS.with(|count| count.get()), after_attribution);
     signals.authority.revise(|value| {
         *value = crate::test_support::authority_at_station(
             "ak:did_core:webvh:zBob",
@@ -126,7 +137,7 @@ fn restore_ignores_cursor_noise_and_revalidates_content_current_account_and_devi
     });
     settle(&mut dom);
     let after_account = RESTORE_LOOKUPS.with(|count| count.get());
-    assert!(after_account > after_current);
+    assert!(after_account > after_attribution);
     signals.device.revise(|value| {
         *value =
             arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000002").unwrap()

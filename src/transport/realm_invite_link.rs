@@ -80,10 +80,10 @@ impl super::TransportClient {
         account: &AccountId,
         realm: &RealmId,
         lifetime_seconds: u32,
-        max_uses: u32,
+        max_use_count: u32,
     ) -> anyhow::Result<PendingRealmInviteLink> {
         anyhow::ensure!(
-            max_uses > 0 && lifetime_seconds >= 60,
+            max_use_count > 0 && lifetime_seconds >= 60,
             "Choose a positive use allowance and a lifetime of at least one minute"
         );
         let mut seed = zeroize::Zeroizing::new([0u8; 32]);
@@ -94,7 +94,7 @@ impl super::TransportClient {
             public_key: arkret_signatures::realm_invite_link::realm_invite_link_public_key(&secret),
             expires_at: crate::clock::now_utc_millis()
                 + chrono::Duration::seconds(i64::from(lifetime_seconds)),
-            max_uses,
+            max_use_count,
         };
         let operation = crate::operation::TypedOperationBuilder::new_for_actor::<
             arkret_sdk::event_spec::RealmInviteLinkCreate,

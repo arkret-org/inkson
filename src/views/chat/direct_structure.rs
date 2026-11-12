@@ -607,7 +607,7 @@ async fn save_agent_reply(
         });
         anyhow::ensure!(permitted, "Direct Conversation ownership is pending");
         anyhow::ensure!(
-            existing.agent_id == agent.principal_id.as_str(),
+            existing.agent_id == agent.principal_id,
             "Participation belongs to another Agent"
         );
         let entry = existing
@@ -626,7 +626,7 @@ async fn save_agent_reply(
             .await?;
         fence.check()?;
         anyhow::ensure!(
-            accepted.agent_id == agent.principal_id.as_str()
+            accepted.agent_id == agent.principal_id
                 && accepted
                     .participation_entries
                     .iter()

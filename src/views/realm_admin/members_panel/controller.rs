@@ -219,8 +219,9 @@ pub(super) fn spawn_set_agent_realm_behavior(
                     let (mention_policy, selection) =
                         mention_state_from_entries(&outcome.participation_entries, &realm);
                     owned_agents.revise(|rows| {
-                        if let Some(row) =
-                            rows.iter_mut().find(|row| row.agent_id == outcome.agent_id)
+                        if let Some(row) = rows
+                            .iter_mut()
+                            .find(|row| row.agent_id == outcome.agent_id.as_str())
                         {
                             row.mention_policy = mention_policy;
                             row.selection = selection;

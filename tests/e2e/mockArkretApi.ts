@@ -4030,7 +4030,7 @@ export async function mockArkretApi(
     }
 
     if (
-      url.pathname === "/_arkret/self/device_messages" &&
+      url.pathname === "/_arkret/self/device-messages" &&
       route.request().method() === "GET"
     ) {
       return json(route, {
@@ -4043,7 +4043,7 @@ export async function mockArkretApi(
     }
 
     if (
-      url.pathname === "/_arkret/self/device_messages" &&
+      url.pathname === "/_arkret/self/device-messages" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
@@ -4061,7 +4061,7 @@ export async function mockArkretApi(
     }
 
     if (
-      url.pathname === "/_arkret/self/device_messages/ack" &&
+      url.pathname === "/_arkret/self/device-messages/ack" &&
       route.request().method() === "POST"
     ) {
       return json(route, { pruned_count: 0 });
