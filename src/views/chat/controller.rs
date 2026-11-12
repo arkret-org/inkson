@@ -400,8 +400,10 @@ pub(super) struct ChatController {
     pub selected_channel: Cage<String>,
     pub messages: Cage<Vec<ChatMessage>>,
     pub draft: Cage<String>,
+    pub draft_strand_id: Cage<String>,
     pub draft_storage: Cage<&'static str>,
     pub draft_saved: Cage<String>,
+    pub draft_edited: Cage<bool>,
     pub pending_drafts: Cage<std::collections::BTreeMap<String, String>>,
     pub typing_throttle: crate::perf::TypingThrottle,
     pub compose_dragover: Cage<bool>,
@@ -647,8 +649,10 @@ impl ChatController {
             },
         )?;
         self.draft = composer.draft;
+        self.draft_strand_id = composer.strand_id;
         self.draft_storage = composer.draft_storage;
         self.draft_saved = composer.draft_saved;
+        self.draft_edited = composer.draft_edited;
         self.pending_drafts = composer.pending_drafts;
         self.reply_to_message = composer.reply_to_message;
         self.editing_message = composer.editing_message;
@@ -705,6 +709,7 @@ impl ChatController {
     }
 
     pub fn update_draft(self, draft: String) {
+        self.draft_edited.revise(|edited| *edited = true);
         {
             let next_value = draft;
             self.draft.revise(|value| *value = next_value);
@@ -2642,10 +2647,12 @@ pub(super) struct StrandCreateDraft {
 /// send failures and uploads retain the original target's signals after a switch.
 #[derive(Clone, Copy)]
 pub(super) struct ComposerState {
+    pub(super) strand_id: Cage<String>,
     pub(super) session_generation: u64,
     pub(super) draft: Cage<String>,
     pub(super) draft_storage: Cage<&'static str>,
     pub(super) draft_saved: Cage<String>,
+    pub(super) draft_edited: Cage<bool>,
     pub(super) pending_drafts: Cage<std::collections::BTreeMap<String, String>>,
     pub(super) reply_to_message: Cage<Option<String>>,
     pub(super) editing_message: Cage<Option<String>>,
@@ -2689,6 +2696,54 @@ fn composer_session_matches(
             })
 }
 
+// A target can enter the pool before protected storage hydration completes.
+// Reconcile only an untouched empty view; an edit, explicit saved clear or
+// pending submission continues to own its current draft.
+fn restore_untouched_composer_draft(state: ComposerState, stored: &str) -> bool {
+    if stored.is_empty()
+        || state.draft_edited.get_untracked()
+        || !state.draft.get_untracked().is_empty()
+        || !state.draft_saved.get_untracked().is_empty()
+        || !state.pending_drafts.get_untracked().is_empty()
+        || !matches!(state.draft_storage.get_untracked(), "memory" | "saved")
+    {
+        return false;
+    }
+    state.draft.revise(|draft| *draft = stored.to_owned());
+    // Retained state is not a durable acknowledgement. The ordinary composer
+    // writer must still capture and await this exact recovered value.
+    state.draft_storage.revise(|status| *status = "memory");
+    true
+}
+
+fn restore_hydrated_composer_draft(
+    context: &crate::presentation::InksonContext,
+    target: &ComposerTarget,
+    state: ComposerState,
+    generation: u64,
+) {
+    if !composer_session_matches(context, target, generation) {
+        return;
+    }
+    let stored = context.state_store.read(|store| {
+        (store.active_authority().as_ref() == Some(&target.authority))
+            .then(|| {
+                store.with_unoverlaid_account_fields(|cached| {
+                    cached
+                        .composer_drafts
+                        .get(target.device_id.as_str())
+                        .and_then(|realms| realms.get(&target.realm_id))
+                        .and_then(|strands| strands.get(&target.strand_id))
+                        .cloned()
+                })
+            })
+            .flatten()
+    });
+    if let Some(stored) = stored {
+        restore_untouched_composer_draft(state, &stored);
+    }
+}
+
 fn composer_state(
     context: &Rc<crate::presentation::InksonContext>,
     target: ComposerTarget,
@@ -2706,9 +2761,10 @@ fn composer_state(
         if state.session_generation != generation {
             state.session_generation = generation;
             context.chat_state.drafts.revise(|drafts| {
-                drafts.insert(target, state);
+                drafts.insert(target.clone(), state);
             });
         }
+        restore_hydrated_composer_draft(context, &target, state, generation);
         return Ok(state);
     }
     let restored = if composer_session_matches(context, &target, generation) {
@@ -2737,6 +2793,7 @@ fn composer_state(
         None
     };
     let state = ComposerState {
+        strand_id: scope.cage(target.strand_id.clone()),
         session_generation: context.session_generation.get_untracked(),
         draft: scope.cage(restored.clone().unwrap_or_default()),
         draft_storage: scope.cage(if restored.is_some() {
@@ -2745,6 +2802,7 @@ fn composer_state(
             "memory"
         }),
         draft_saved: scope.cage(restored.unwrap_or_default()),
+        draft_edited: scope.cage(false),
         pending_drafts: scope.cage(std::collections::BTreeMap::new()),
         reply_to_message: scope.cage(None),
         editing_message: scope.cage(None),
@@ -2783,6 +2841,9 @@ pub(super) fn install_composer_persistence(
             return;
         };
         let pool = &context.chat_state;
+        // Protected fields can hydrate after a target entered the pool. A
+        // store wake must reconcile that existing view without a route rebind.
+        let _ = context.state_revision.get();
         let generation = context.session_generation.get();
         let account = context.active_account.get();
         for (target, state) in pool.drafts.get() {
@@ -2793,6 +2854,7 @@ pub(super) fn install_composer_persistence(
             {
                 continue;
             }
+            restore_hydrated_composer_draft(&context, &target, state, generation);
             let draft = state.draft.get();
             let inflight = state.pending_drafts.get();
             let durable = if draft.is_empty() {
@@ -3008,8 +3070,10 @@ pub(super) fn chat_controller_for_initial_target(
         selected_channel,
         messages: scope.cage((Vec::<ChatMessage>::new)()),
         draft: composer.draft,
+        draft_strand_id: composer.strand_id,
         draft_storage: composer.draft_storage,
         draft_saved: composer.draft_saved,
+        draft_edited: composer.draft_edited,
         pending_drafts: composer.pending_drafts,
         typing_throttle: crate::perf::typing_throttle(scope, 3_000, 4_000),
         compose_dragover: composer.compose_dragover,

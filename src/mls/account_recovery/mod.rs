@@ -8,7 +8,7 @@
 mod backup_body;
 mod content_roots;
 mod current_basis;
-pub(crate) use content_roots::ensure_content_root_backup;
+pub(crate) use content_roots::{ensure_content_root_backup, restore_content_root_backups};
 mod recovery_transaction;
 mod restore;
 mod rotation_transaction;

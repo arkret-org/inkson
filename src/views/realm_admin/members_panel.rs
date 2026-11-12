@@ -227,6 +227,7 @@ struct MembersPage {
     visible: Cage<usize>,
     block: Cage<Option<String>>,
     agent_pending: Cage<BTreeSet<String>>,
+    authority_inputs: owned_authority::AuthorityInputPool,
 }
 impl MembersPage {
     fn new(scope: &Scope, context: Rc<InksonContext>, realm: String) -> Self {
@@ -258,6 +259,7 @@ impl MembersPage {
             visible: scope.cage(MEMBER_PAGE_SIZE),
             block: scope.cage(None),
             agent_pending: scope.cage(BTreeSet::new()),
+            authority_inputs: owned_authority::AuthorityInputPool::new(scope),
         }
     }
     fn write_context(&self) -> RealmWriteContext {
@@ -1115,6 +1117,7 @@ fn owned_agent(scope: &Scope, state: &MembersPage, agent: MemberAgentRow) -> Vie
         context.clone(),
         state.realm.clone(),
         id.clone(),
+        state.authority_inputs.clone(),
     ));
     line(
         "member-self-agent-row",

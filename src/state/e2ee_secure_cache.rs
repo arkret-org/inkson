@@ -911,6 +911,14 @@ impl LocalStateStore {
             !realm.is_empty() && !strand.is_empty(),
             "composer target is missing"
         );
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        tracing::warn!(
+            stage = "composer_draft_write",
+            realm_id = realm,
+            strand_id = strand,
+            draft_is_empty = draft.is_empty(),
+            "composer draft target persistence observed"
+        );
         // Empty strings are explicit clears. Keeping the entry prevents a late
         // secure-cache hydration from resurrecting text already sent or erased.
         self.cached
@@ -1582,7 +1590,7 @@ struct CachePersistLane {
     // Retains the lease only until a recovery really commits. Snapshot repair
     // provenance lives in the account registry, independently of UI scopes.
     recovery: Option<CacheClearRecovery>,
-    newest_capture: u64,
+    newest_enqueued_capture: u64,
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -1632,7 +1640,7 @@ impl CachePersistQueue {
     ) -> bool {
         let lane = self.lanes.entry(key).or_default();
         if let Some(provenance) = &provenance {
-            if provenance.sequence != 0 && provenance.sequence < lane.newest_capture {
+            if provenance.sequence != 0 && provenance.sequence < lane.newest_enqueued_capture {
                 if let Some(reply) = reply {
                     let _ = reply.send(Err(
                         "secure-cache snapshot was superseded by a newer capture".into(),
@@ -1640,7 +1648,7 @@ impl CachePersistQueue {
                 }
                 return false;
             }
-            lane.newest_capture = lane.newest_capture.max(provenance.sequence);
+            lane.newest_enqueued_capture = lane.newest_enqueued_capture.max(provenance.sequence);
             if lane
                 .pending
                 .back()
@@ -1738,14 +1746,9 @@ impl CachePersistQueue {
                 lane.recovery = None;
             }
             if let Some(provenance) = &next.provenance {
-                if provenance.sequence != 0 && provenance.sequence < lane.newest_capture {
-                    for reply in next.replies {
-                        let _ = reply.send(Err(
-                            "secure-cache snapshot was superseded by a newer capture".into(),
-                        ));
-                    }
-                    continue;
-                }
+                // Admission rejects a late older capture. Once admitted, each
+                // authored snapshot keeps its FIFO position and exact receipt,
+                // even while a held clear lets newer background captures queue.
                 match provenance.reconcile(key, &next.json) {
                     Ok(json) => next.json = json,
                     Err(error) => {
@@ -2001,7 +2004,16 @@ mod cache_persist_tests {
         state.switch_test_account("did:web:alice.example");
         let original = original_for_cache_lifecycle();
         let realm = original.realm_id.to_string();
-        state.retain_encrypted_original(&original);
+        super::super::FULL_STATE_READ_COPIES.with(|count| count.set(0));
+        for index in 0..64 {
+            state.retain_encrypted_original(&original);
+            state.retain_decrypted_content(&realm, &format!("payload-{index}"), b"local content");
+        }
+        assert_eq!(
+            super::super::FULL_STATE_READ_COPIES.with(|count| count.get()),
+            0,
+            "protected presentation writes must not enqueue ordinary account transactions"
+        );
         assert_eq!(
             state.encrypted_originals_for(&realm),
             vec![original.clone()]
@@ -2044,6 +2056,10 @@ mod cache_persist_tests {
         cold.switch_test_account("did:web:alice.example");
         cold.hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
             .unwrap();
+        assert_eq!(
+            cold.mls_decrypted_plaintext_for(&realm, "payload-63"),
+            Some(b"local content".to_vec())
+        );
         assert_eq!(
             cold.encrypted_original(&realm, &original.event_id),
             Some(original.clone())
@@ -2318,6 +2334,111 @@ mod cache_persist_tests {
         cold.hydrate_e2ee_plaintext_cache_with_secure_store(store)
             .unwrap();
         cold
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn cache_capture_order_keeps_admitted_draft_before_later_background_after_failed_clear() {
+        use crate::secure_key_store::SecureKeyStore as _;
+        let (mut state, store, device) = recovery_fixture("capture-fifo-clear", 1);
+        let authority = state.active_authority().unwrap();
+        let pending = state
+            .prepare_e2ee_plaintext_cache_clear_with_secure_store(
+                &E2eePlaintextCacheClearScope::All,
+                &store,
+            )
+            .unwrap()
+            .unwrap();
+        let key = pending.key.clone();
+        let mut queue = CachePersistQueue::default();
+        let cleared = queued_clear(&mut queue, &pending);
+        let clearing = queue.take_next(&key).unwrap().unwrap();
+        let draft = state
+            .prepare_composer_draft_write_captured(
+                &authority,
+                &device,
+                "realm-a",
+                "chat-b",
+                "new B".into(),
+            )
+            .unwrap();
+        let mut saved = queued_capture(&mut queue, draft);
+        state.save_private_plaintext("realm-a", "chat-b", "body", "later body");
+        let background = state
+            .capture_e2ee_plaintext_cache_secure_write()
+            .unwrap()
+            .unwrap();
+        queue.enqueue_captured(
+            background.key,
+            background.json,
+            None,
+            false,
+            Some(background.provenance),
+        );
+        let failed = store.store_secret_durable(&key, &clearing).await;
+        assert!(failed.is_err());
+        queue.complete(&key, failed.map_err(|error| error.to_string()));
+        assert!(cleared.await.unwrap().is_err());
+        let authored = queue.take_next(&key).unwrap().unwrap();
+        assert!(
+            matches!(
+                saved.try_recv(),
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+            ),
+            "a later background capture must not reject a previously admitted draft"
+        );
+        store.store_secret_durable(&key, &authored).await.unwrap();
+        queue.complete(&key, Ok(()));
+        saved.await.unwrap().unwrap();
+        assert_eq!(
+            cold_reader(&state, &store).composer_draft(&device, "realm-a", "chat-b"),
+            "new B"
+        );
+        commit_next(&mut queue, &key, &store).await.unwrap();
+        let mut cold = cold_reader(&state, &store);
+        assert_eq!(cold.composer_draft(&device, "realm-a", "chat-a"), "old A");
+        assert_eq!(cold.composer_draft(&device, "realm-a", "chat-b"), "new B");
+        assert_eq!(
+            cold.composer_draft(&device, "realm-other", "chat-c"),
+            "untouched C"
+        );
+        assert_eq!(
+            cold.private_plaintext_for("realm-a", "chat-b", "body"),
+            Some("later body".into())
+        );
+        assert!(queue.take_next(&key).is_none());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn cache_capture_order_still_rejects_a_late_older_admission() {
+        let (mut state, store, device) = recovery_fixture("capture-late-admission", 0);
+        let authority = state.active_authority().unwrap();
+        let older = state
+            .capture_e2ee_plaintext_cache_secure_write()
+            .unwrap()
+            .unwrap();
+        let newer = state
+            .prepare_composer_draft_write_captured(
+                &authority,
+                &device,
+                "realm-a",
+                "chat-a",
+                "new A".into(),
+            )
+            .unwrap();
+        let key = newer.key.clone();
+        let mut queue = CachePersistQueue::default();
+        let saved = queued_capture(&mut queue, newer);
+        let rejected = queued_capture(&mut queue, older);
+        assert!(rejected.await.unwrap().is_err());
+        commit_next(&mut queue, &key, &store).await.unwrap();
+        saved.await.unwrap().unwrap();
+        assert_eq!(
+            cold_reader(&state, &store).composer_draft(&device, "realm-a", "chat-a"),
+            "new A"
+        );
+        assert!(queue.take_next(&key).is_none());
     }
 
     #[cfg(not(target_arch = "wasm32"))]

@@ -392,7 +392,7 @@ pub fn page(scope: &Scope, app: Rc<InksonContext>, route: Route) -> View {
         let realm = realm.clone();
         scope.bond(move || {
             let _ = app.state_revision.get();
-            send.get().gate.is_some()
+            send.get().accepts_submission_intent()
                 && app.state_store.read(|store| {
                     store.station_realm_digest_suite(&realm).is_some()
                         && !store.realm_detail_invalidated(&realm)

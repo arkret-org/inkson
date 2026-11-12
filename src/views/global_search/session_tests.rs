@@ -5,6 +5,34 @@ use super::*;
 use crate::state::current_index::search::tests::authorized_store;
 
 #[tokio::test(flavor = "current_thread")]
+async fn accepted_search_source_remains_readable_after_cold_account_reopen() {
+    let (directory, store, account, original) = authorized_store().await;
+    drop(store);
+    let mut cold = LocalStateStore::with_path(directory.path().join("holder.json"));
+    cold.switch_active_account(&account).unwrap();
+    let (view, _) = search_local(
+        SearchSource::Borrowed(&cold),
+        &account.authority,
+        &account.device_id,
+        "needle",
+        &[],
+        Some(&["message"]),
+        100,
+    )
+    .await
+    .unwrap();
+    assert_eq!(view.results.len(), 1);
+    assert_eq!(
+        view.results[0]["event_id"],
+        original.event.event_id.as_str()
+    );
+    assert_eq!(
+        view.results[0]["content"]["body"],
+        original.event.payload["content"]["body"]
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn unrelated_presentation_revisions_keep_results_and_the_pending_search_owner() {
     let (_directory, store, account, _) = authorized_store().await;
     let (mut dom, harness) = mount(store, account);

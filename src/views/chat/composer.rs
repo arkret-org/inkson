@@ -537,12 +537,70 @@ fn attachment_file_control(
     )
 }
 
+struct ComposerInputProps {
+    selected_channel: Cage<String>,
+    bound_channel: String,
+    draft: Cage<String>,
+    storage_status: Vary<&'static str>,
+    available: Cage<bool>,
+    node_ref: Cage<Option<glory::render::NodeId>>,
+}
+
+fn bound_composer_input(
+    scope: &Scope,
+    props: ComposerInputProps,
+    change: impl FnMut(String) + 'static,
+    mut submit: impl FnMut() + 'static,
+) -> View {
+    let ComposerInputProps {
+        selected_channel,
+        bound_channel: bound,
+        draft,
+        storage_status,
+        available,
+        node_ref,
+    } = props;
+    let target_is_bound = arkret_sdk::StrandId::new(bound.clone()).is_ok();
+    let target_class = format!(
+        "chat-input chat-target-{}",
+        super::message_row::presentation_key(&bound)
+    );
+    // The selected target can change before this component is retired. Read
+    // that live ownership condition inside the control's event admission too.
+    let enabled =
+        scope.bond(move || target_is_bound && available.get() && selected_channel.get() == bound);
+    Box::new(
+        sapid::text_field()
+            .unstyled()
+            .name("Message")
+            .class(scope.bond(move || format!("{target_class} is-draft-{}", storage_status.get())))
+            .multiline(true)
+            .enabled(enabled)
+            .node_ref(node_ref)
+            .value(draft)
+            .on_value_change(change)
+            .on(glory::render::EventKind::Keyboard, move |event| {
+                if enabled.get_untracked()
+                    && matches!(
+                        event,
+                        glory::render::Event::Keyboard {
+                            command: glory::render::KeyboardCommand::Submit,
+                            ..
+                        }
+                    )
+                {
+                    submit();
+                }
+            }),
+    )
+}
+
 pub(super) fn chat_composer(
     scope: &Scope,
     app: Rc<crate::presentation::InksonContext>,
     controller: ChatController,
     context: Bond<ChatComposerContext>,
-    _available: Cage<bool>,
+    available: Cage<bool>,
 ) -> View {
     use super::native::{block, button};
     use crate::presentation::widgets::{empty, line, paragraph, plain, reactive_distinct};
@@ -651,7 +709,15 @@ pub(super) fn chat_composer(
         }
     });
     let send_app = app.clone();
+    let send_target = controller.draft_strand_id.get_untracked();
+    let send_target_bound = arkret_sdk::StrandId::new(send_target.clone()).is_ok();
     let send: Rc<dyn Fn(bool)> = Rc::new(move |secure| {
+        if !send_target_bound
+            || !available.get_untracked()
+            || controller.selected_channel.get_untracked() != send_target
+        {
+            return;
+        }
         let current = preview.get_untracked();
         if secure {
             if current.secure_enabled {
@@ -663,39 +729,26 @@ pub(super) fn chat_composer(
     });
     let keyboard_send = send.clone();
     let change_app = app.clone();
-    // This component belongs to its original target. A later selection mounts
-    // the bound composer instead of enabling an input about to be retired.
-    let target_is_bound =
-        arkret_sdk::StrandId::new(controller.selected_channel.get_untracked()).is_ok();
-    let input = Box::new(
-        sapid::text_field()
-            .unstyled()
-            .name("Message")
-            .class("chat-input")
-            .multiline(true)
-            .enabled(target_is_bound)
-            .node_ref(input_node)
-            .value(controller.draft)
-            .on_value_change(move |value| {
-                edit_draft(
-                    change_app.clone(),
-                    controller,
-                    &context.get_untracked(),
-                    value,
-                )
-            })
-            .on(glory::render::EventKind::Keyboard, move |event| {
-                if matches!(
-                    event,
-                    glory::render::Event::Keyboard {
-                        command: glory::render::KeyboardCommand::Submit,
-                        ..
-                    }
-                ) {
-                    keyboard_send(!preview.get_untracked().plaintext);
-                }
-            }),
-    ) as View;
+    let input = bound_composer_input(
+        scope,
+        ComposerInputProps {
+            selected_channel: controller.selected_channel,
+            bound_channel: controller.draft_strand_id.get_untracked(),
+            draft: controller.draft,
+            storage_status: scope.bond(move || controller.draft_storage_status()).into(),
+            available,
+            node_ref: input_node,
+        },
+        move |value| {
+            edit_draft(
+                change_app.clone(),
+                controller,
+                &context.get_untracked(),
+                value,
+            )
+        },
+        move || keyboard_send(!preview.get_untracked().plaintext),
+    );
     let hint_context = context;
     let hint = reactive_distinct(
         scope.bond(move || controller.draft.get().is_empty()),
@@ -780,7 +833,7 @@ pub(super) fn chat_composer(
         controller,
         context,
         preview,
-        _available,
+        available,
         true,
     ));
     #[cfg(not(target_arch = "wasm32"))]
@@ -1198,7 +1251,7 @@ pub(super) fn chat_composer(
         controller,
         context,
         preview,
-        _available,
+        available,
         false,
     );
     #[cfg(not(target_arch = "wasm32"))]

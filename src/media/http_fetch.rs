@@ -1,18 +1,29 @@
 //! Bounded HTTP reads for service route discovery.
 
 use arkret_sdk::Did;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 use arkret_sdk::identity::host_is_safe_for_outbound;
 use arkret_sdk::identity::{
     DID_WEB_MAX_DOCUMENT_BYTES, DidWebDocumentHttpResponse, DidWebResolver,
 };
 
 #[cfg(target_arch = "wasm32")]
-fn url_host_is_safe(url: &str) -> bool {
+pub(crate) fn url_host_is_safe(url: &str) -> bool {
+    url_host_is_safe_with_local(
+        url,
+        cfg!(any(
+            debug_assertions,
+            feature = "wasm-localstorage-secrets-test"
+        )),
+    )
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn url_host_is_safe_with_local(url: &str, local_development: bool) -> bool {
     let Ok(parsed) = url::Url::parse(url) else {
         return false;
     };
-    if parsed.scheme() != "https" {
+    if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() {
         return false;
     }
     let Some(host) = parsed.host_str() else {
@@ -22,15 +33,59 @@ fn url_host_is_safe(url: &str) -> bool {
     if host.to_ascii_lowercase().ends_with(".local") {
         return false;
     }
-    host_is_safe_for_outbound(host)
-        || (cfg!(any(
-            debug_assertions,
-            feature = "wasm-localstorage-secrets-test"
-        )) && (host == "localhost"
-            || host.ends_with(".localhost")
-            || host
-                .parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| ip.is_loopback())))
+    let loopback = match parsed.host() {
+        Some(url::Host::Domain(host)) => host == "localhost" || host.ends_with(".localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+    host_is_safe_for_outbound(host) || local_development && loopback
+}
+
+#[cfg(test)]
+mod tests {
+    use super::url_host_is_safe_with_local;
+
+    #[test]
+    fn browser_did_egress_allows_loopback_only_in_explicit_local_mode() {
+        for url in [
+            "https://localhost/did.jsonl",
+            "https://coauth.localhost/did.jsonl",
+            "https://127.0.0.1/did.jsonl",
+            "https://[::1]/did.jsonl",
+        ] {
+            assert!(!url_host_is_safe_with_local(url, false), "{url}");
+            assert!(url_host_is_safe_with_local(url, true), "{url}");
+        }
+        for local in [false, true] {
+            assert!(url_host_is_safe_with_local(
+                "https://identity.example/did.jsonl",
+                local
+            ));
+            for url in [
+                "https://10.0.0.1/did.jsonl",
+                "https://169.254.169.254/did.jsonl",
+                "https://[fd00::1]/did.jsonl",
+                "https://host.local/did.jsonl",
+            ] {
+                assert!(!url_host_is_safe_with_local(url, local), "{url}");
+            }
+        }
+    }
+
+    #[test]
+    fn browser_did_egress_requires_credential_free_https_in_both_modes() {
+        for local in [false, true] {
+            for url in [
+                "http://identity.example/did.jsonl",
+                "http://localhost/did.jsonl",
+                "https://user@identity.example/did.jsonl",
+                "https://user:password@localhost/did.jsonl",
+            ] {
+                assert!(!url_host_is_safe_with_local(url, local), "{url}");
+            }
+        }
+    }
 }
 
 /// Fetch `url` over `http` with an enforced response-size ceiling and a JSON

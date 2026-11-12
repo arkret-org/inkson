@@ -19,7 +19,11 @@ pub(crate) fn retain_accepted_page_encrypted_originals(
             let arkret_sdk::CommittedEventView::Full(full) = row else {
                 return None;
             };
-            has_encrypted_presentation_content(&full.event).then_some(&full.event)
+            full.event
+                .event_content_envelopes()
+                .ok()
+                .filter(|slots| !slots.is_empty())
+                .map(|_| &full.event)
         })
         .collect::<Vec<_>>();
     if originals.is_empty() {
@@ -48,36 +52,6 @@ pub(crate) fn retain_accepted_page_encrypted_originals(
     Ok(())
 }
 
-fn has_encrypted_presentation_content(event: &arkret_sdk::Event) -> bool {
-    matches!(
-        event.kind,
-        arkret_sdk::EventKind::SpaceCreate
-            | arkret_sdk::EventKind::SpaceUpdate
-            | arkret_sdk::EventKind::StrandCreate
-            | arkret_sdk::EventKind::StrandUpdate
-            | arkret_sdk::EventKind::RsvpSet
-    ) && event
-        .event_content_envelopes()
-        .is_ok_and(|envelopes| !envelopes.is_empty())
-}
-
-fn presentation_envelope(event: &arkret_sdk::Event) -> Option<arkret_sdk::EncryptedEnvelope> {
-    let body = serde_json::to_value(&event.payload).ok()?;
-    let value = match event.kind {
-        arkret_sdk::EventKind::SpaceCreate | arkret_sdk::EventKind::StrandCreate => {
-            body.pointer("/object/encrypted_metadata")?
-        }
-        arkret_sdk::EventKind::SpaceUpdate | arkret_sdk::EventKind::StrandUpdate => {
-            body.pointer("/patch/encrypted_metadata/value")?
-        }
-        arkret_sdk::EventKind::RsvpSet => body.pointer("/entry/encrypted_response")?,
-        _ => return None,
-    };
-    let envelope: arkret_sdk::EncryptedEnvelope = serde_json::from_value(value.clone()).ok()?;
-    envelope.validate().ok()?;
-    Some(envelope)
-}
-
 /// Retain presentation content from its accepted original and exact frozen encryption
 /// header. Reading content never consumes an MLS application message key.
 fn retain_accepted_encrypted_original(
@@ -87,7 +61,10 @@ fn retain_accepted_encrypted_original(
     device: &arkret_sdk::DeviceId,
     secure: &dyn crate::secure_key_store::SecureKeyStore,
 ) {
-    if !has_encrypted_presentation_content(event) {
+    let Ok(carriers) = event.event_content_envelopes() else {
+        return;
+    };
+    if carriers.is_empty() {
         return;
     }
     let Ok(original) = serde_json::to_value(event) else {
@@ -102,26 +79,30 @@ fn retain_accepted_encrypted_original(
         return;
     };
     store.retain_encrypted_original(event);
-    let Some(envelope) = presentation_envelope(event) else {
-        return;
-    };
-    let Some(payload) = crate::mls::runtime::encrypted_payload_from_verified_original(
-        store, secure, account, device, event, &envelope, &sender,
-    ) else {
-        return;
-    };
-    // The runtime opens the retained content root without changing MLS state.
-    // Missing root material leaves the presentation pending, retaining its original.
-    let _ = crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
-        store,
-        secure,
-        event.realm_id.as_str(),
-        account,
-        device,
-        &payload,
-        &event.scope_ref,
-        &sender,
-    );
+    for carrier in carriers {
+        let Some(payload) = crate::mls::runtime::encrypted_payload_from_verified_original(
+            store,
+            secure,
+            account,
+            device,
+            event,
+            &carrier.envelope,
+            &sender,
+        ) else {
+            continue;
+        };
+        // Missing root material keeps the original pending for a later read.
+        let _ = crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
+            store,
+            secure,
+            event.realm_id.as_str(),
+            account,
+            device,
+            &payload,
+            &event.scope_ref,
+            &sender,
+        );
+    }
 }
 
 /// A fixture models the already verified sealed-page boundary separately
@@ -234,9 +215,10 @@ pub(crate) fn open_metadata_with_secure_store(
                 Some(arkret_sdk::StrandId::from_event_id(&original.event_id).to_string())
             }
             arkret_sdk::EventKind::SpaceUpdate => original
-                .as_space_update()
-                .ok()
-                .map(|payload| payload.space_id.to_string()),
+                .payload
+                .get("space_id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
             arkret_sdk::EventKind::StrandUpdate => original
                 .as_strand_update()
                 .ok()

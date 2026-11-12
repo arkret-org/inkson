@@ -4,6 +4,108 @@ use arkret_models_crypto::{ContentRootBackupEntry, RecoveryMethod};
 use arkret_sdk::{AccountId, BackupId, MlsWelcomeRecipientEndpoint};
 use garth::mls::content_roots::ContentRootVault;
 
+/// Import history keys from this holder's complete current backup series.
+/// Membership, authorized original reads and fresh MLS state remain separate.
+pub(crate) async fn restore_content_root_backups(
+    api: &crate::transport::TransportClient,
+    secure: &dyn crate::secure_key_store::SecureKeyStore,
+    account: &AccountId,
+    device: &arkret_sdk::DeviceId,
+    material: &serde_json::Value,
+    recovery_private_key: &[u8],
+    policy: &arkret_sdk::RecoveryPolicySummary,
+) -> anyhow::Result<usize> {
+    super::restore::validate_backup_account(material, account, account.principal_id.as_str())?;
+    super::restore::verify_active_backup_series(material, "secret_storage")?;
+    anyhow::ensure!(
+        policy.account_id == *account,
+        "root recovery policy belongs to another Account"
+    );
+    policy.validate_shape()?;
+    let policy = policy.policy.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("root recovery policy omitted its recipient configuration")
+    })?;
+    policy.validate_shape()?;
+    let state = super::current_basis::state_from_payload(material)?;
+    let basis = super::current_basis::ConfirmedBackupBasis::read(
+        api,
+        account,
+        &state.control_realm_id,
+        device.as_str(),
+        Some(&state),
+    )
+    .await?;
+    let http = api.sdk_http_client()?;
+    let source = crate::transport::own_station_results::client_for_http(&http).await?;
+    let actor = arkret_sdk::ActorId::account(account.clone());
+    let endpoint = MlsWelcomeRecipientEndpoint::Device {
+        device_id: device.clone(),
+    };
+    let vault = ContentRootVault::new(secure, &actor, &endpoint);
+    let policy_ref = arkret_models_crypto::RecoveryPolicyRef {
+        policy_id: policy.policy_id.clone(),
+        policy_version: policy.version,
+    };
+    let mut required = std::collections::BTreeSet::new();
+    let mut restored = std::collections::BTreeSet::new();
+    for body in crate::mls::runtime::all_secret_storage_backups(material) {
+        let backup: arkret_sdk::KeyBackup = serde_json::from_value(body)?;
+        backup.validate()?;
+        let roots = backup
+            .contents
+            .iter()
+            .filter_map(|item| item.root_ref.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        if roots.is_empty() {
+            continue;
+        }
+        required.extend(roots);
+        if backup.encryption.recipient_method
+            != arkret_sdk::KeyBackupRecipientMethod::RecoveryPublicKey
+            || backup.recovery_policy_ref.as_ref() != Some(&policy_ref)
+        {
+            continue;
+        }
+        backup.validate_recovery_recipient(policy, backup.created_at)?;
+        let key = super::current_basis::verify_envelope_source(
+            &http,
+            &source,
+            account,
+            &state.control_realm_id,
+            &backup,
+        )
+        .await?;
+        basis.check()?;
+        let signature = ed25519_dalek::Signature::from_slice(&arkret_sdk::base64url_decode(
+            backup.signature_proof.signature.as_str(),
+        )?)?;
+        let plaintext = arkret_crypto::content_history::open_content_root_backup(
+            &backup,
+            recovery_private_key,
+            |bytes, _proof| {
+                key.verify_strict(bytes, &signature)
+                    .map_err(|error| arkret_crypto::Error::Protocol(error.to_string()))
+            },
+        )?;
+        for item in plaintext.items {
+            if let arkret_models_crypto::SecretStorageEntry::ContentRoot(root) = item {
+                basis.check()?;
+                source.check_session()?;
+                vault.retain_root(&root).await?;
+                basis.check()?;
+                restored.insert(root.root_ref);
+            }
+        }
+    }
+    anyhow::ensure!(
+        required.is_subset(&restored),
+        "current recovery recipients do not cover every retained content root"
+    );
+    basis.check()?;
+    source.check_session()?;
+    Ok(restored.len())
+}
+
 fn root_backup_operation(
     root: &arkret_sdk::Hash,
     policy: &arkret_models_crypto::RecoveryPolicyRef,
@@ -24,12 +126,20 @@ pub(crate) async fn ensure_content_root_backup(
     root: &ContentRootBackupEntry,
 ) -> anyhow::Result<Vec<BackupId>> {
     let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
+    anyhow::ensure!(
+        fence.belongs_to_account(account) && fence.signer.device_id() == Some(device.as_str()),
+        "root publication belongs to another active Account or Device"
+    );
     let actor = arkret_sdk::ActorId::account(account.clone());
     let endpoint = MlsWelcomeRecipientEndpoint::Device {
         device_id: device.clone(),
     };
     let vault = ContentRootVault::new(secure, &actor, &endpoint);
     vault.retain_root(root).await?;
+    if let Some(backups) = vault.published_backup_refs(root).await? {
+        fence.check()?;
+        return Ok(backups);
+    }
     let policy = crate::recovery_flow::fetch_active_recovery_policy(api)
         .await?
         .ok_or_else(|| anyhow::anyhow!("content root requires an accepted recovery policy"))?;
@@ -219,8 +329,14 @@ pub(crate) async fn ensure_content_root_backup(
             "frozen backup differs from its complete root publication intent"
         );
         fence.check()?;
-        api.put_key_backup(frozen.backup_id.as_str(), frozen.clone())
+        let accepted = api
+            .put_key_backup(frozen.backup_id.as_str(), frozen.clone())
             .await?;
+        anyhow::ensure!(
+            accepted.backup_id == frozen.backup_id
+                && accepted.ciphertext_digest == frozen.ciphertext_digest,
+            "native root PUT acknowledgement differs from its exact envelope"
+        );
         fence.check()?;
         let list = api.list_key_backups().await?;
         super::upload::ensure_initial_active_series(
@@ -233,11 +349,13 @@ pub(crate) async fn ensure_content_root_backup(
             frozen.series_id.as_str(),
         )
         .await?;
-        backups.push(frozen.backup_id);
+        backups.push((frozen, accepted));
     }
-    backups.sort();
-    backups.dedup();
-    Ok(backups)
+    fence.check()?;
+    vault
+        .retain_backup_publication(root, &backups)
+        .await
+        .map_err(Into::into)
 }
 
 #[cfg(test)]
