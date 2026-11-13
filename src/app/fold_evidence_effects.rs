@@ -193,8 +193,14 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
                 }
             };
             timeline_context.state_store.read(|store| {
-                ordinary_timeline_evidence(store, &account.authority, &realm, event.as_ref())
-                    .to_string()
+                ordinary_timeline_evidence(
+                    store,
+                    &account.authority,
+                    &account.device_id,
+                    &realm,
+                    event.as_ref(),
+                )
+                .to_string()
             })
         });
     let cut_scope = scope.downgrade();
@@ -313,6 +319,7 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
 fn ordinary_timeline_evidence(
     store: &crate::state::LocalStateStore,
     account: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
     realm: &arkret_sdk::RealmId,
     event: Option<&arkret_sdk::EventId>,
 ) -> serde_json::Value {
@@ -361,10 +368,102 @@ fn ordinary_timeline_evidence(
                     .and_then(serde_json::Value::as_str)
             })
             .and_then(|value| arkret_sdk::StrandId::new(value.to_owned()).ok());
+        let original = candidates.iter().find_map(|candidate| {
+            serde_json::from_value::<arkret_sdk::Event>((*candidate).clone()).ok()
+        });
+        let envelope = original.as_ref().and_then(|original| {
+            original
+                .payload
+                .get("encrypted_content")
+                .cloned()
+                .and_then(|value| {
+                    serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(value).ok()
+                })
+        });
+        let mut material = serde_json::json!({
+            "original_decodes":original.is_some(), "encrypted_envelope_decodes":envelope.is_some(),
+            "protected_original_retained":event.is_some_and(|event| store.encrypted_original(realm.as_str(), event).is_some()),
+            "accepted_original_retained":state.verified_poll_inputs.iter().any(|input| event == Some(&input.event.event_id)),
+        });
+        if let (Some(original), Some(envelope)) = (&original, &envelope) {
+            let secure = crate::secure_key_store::default_secure_key_store("inkson");
+            let actor = arkret_sdk::ActorId::account(account.clone());
+            let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+                device_id: device.clone(),
+            };
+            let vault = garth::mls::content_roots::ContentRootVault::new(
+                secure.as_ref(),
+                &actor,
+                &endpoint,
+            );
+            let arkret_sdk::EncryptedEnvelopeEncryptionContext::EpochContent { root_ref, .. } =
+                &envelope.encryption_context;
+            let root = vault.cached_root(root_ref).ok().flatten();
+            let public_epoch = root.as_ref().is_some_and(|root| {
+                store
+                    .historical_content_rosters
+                    .material(account, original, envelope, &root.root_context)
+                    .is_some()
+            });
+            let snapshot = store.mls_checkpoint_for_scope(&original.scope_ref);
+            let epoch_reference =
+                original
+                    .scope_ref
+                    .canonical_mls_group_id()
+                    .ok()
+                    .and_then(|group| {
+                        store
+                            .mls_group_state_ref_for_scope(
+                                &original.scope_ref,
+                                group.as_str(),
+                                envelope.encryption_context.epoch(),
+                            )
+                            .ok()
+                    });
+            let sender = arkret_sdk::mls_basic_credential_identity(original.actual_signer()).ok();
+            material["root_cached"] = root.is_some().into();
+            material["public_epoch_ready"] = public_epoch.into();
+            material["checkpoint_present"] = snapshot.is_some().into();
+            material["checkpoint_epoch_matches"] = snapshot
+                .is_some_and(|snapshot| snapshot.epoch == envelope.encryption_context.epoch())
+                .into();
+            material["epoch_reference_matches"] = epoch_reference
+                .is_some_and(|reference| {
+                    reference.as_str() == envelope.encryption_context.group_state_ref().as_str()
+                })
+                .into();
+            let payload = sender.as_ref().and_then(|sender| {
+                crate::mls::runtime::encrypted_payload_from_verified_original(
+                    store,
+                    secure.as_ref(),
+                    account,
+                    device,
+                    original,
+                    envelope,
+                    sender,
+                )
+            });
+            material["header_reconstructs"] = payload.is_some().into();
+            material["aead_opens"] = payload
+                .as_ref()
+                .zip(root.as_ref())
+                .is_some_and(|(payload, root)| {
+                    arkret_crypto::content_history::open_content(
+                        &root.root_base64url,
+                        &payload.pre_encryption_header,
+                        &payload.ciphertext,
+                    )
+                    .map(|plaintext| {
+                        let _plaintext = zeroize::Zeroizing::new(plaintext);
+                    })
+                    .is_ok()
+                })
+                .into();
+        }
         exact.push(serde_json::json!({
             "top_level_signed":record.payload.get("producer_proof").is_some_and(serde_json::Value::is_object),
             "nested_signed":record.payload.get("event").and_then(|value| value.get("producer_proof")).is_some_and(serde_json::Value::is_object),
-            "proof_verdict":proof,"strand_id":strand,
+            "proof_verdict":proof,"strand_id":strand,"material":material,
         }));
     }
     let stream = arkret_sdk::CommitStreamRef::Realm {
@@ -415,6 +514,7 @@ mod timeline_evidence_tests {
         let evidence = ordinary_timeline_evidence(
             &store,
             &account.authority,
+            &account.device_id,
             &bundle.realm_id,
             Some(&event.event_id),
         );
@@ -437,7 +537,13 @@ mod timeline_evidence_tests {
             account.authority.station_id.clone(),
         );
         assert_eq!(
-            ordinary_timeline_evidence(&store, &other, &bundle.realm_id, Some(&event.event_id)),
+            ordinary_timeline_evidence(
+                &store,
+                &other,
+                &account.device_id,
+                &bundle.realm_id,
+                Some(&event.event_id)
+            ),
             serde_json::json!({"error":"account_mismatch"})
         );
     }
