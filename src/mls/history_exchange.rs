@@ -132,14 +132,7 @@ pub(crate) async fn reconcile(
     let scope = ScopeRef::Realm {
         realm_id: realm.clone(),
     };
-    if let Some(expired) = vault.request(&scope).await?
-        && expired.has_private_key()
-        && expired.event().as_mls_history_request()?.expires_at <= crate::clock::now_utc()
-    {
-        vault
-            .consume_request(&scope, &expired.event().event_id)
-            .await?;
-    }
+    pending::expire_request(&vault, &scope, crate::clock::now_utc()).await?;
     let (cache, originals) = state.read(|store| {
         (
             store.historical_content_rosters.clone(),
@@ -190,15 +183,6 @@ pub(crate) async fn reconcile(
             }
         }
     }
-    if let Some(pending) = vault.request(&scope).await?
-        && pending.has_private_key()
-        && (!missing
-            || pending.event().as_mls_history_request()?.expires_at <= crate::clock::now_utc())
-    {
-        vault
-            .consume_request(&scope, &pending.event().event_id)
-            .await?;
-    }
     if !missing && cache.controls().is_empty() {
         return Ok(());
     }
@@ -224,7 +208,16 @@ pub(crate) async fn reconcile(
         .map_err(anyhow::Error::msg)?;
     current_endpoint(source, &recipient).await?;
     if missing && let Some(cut) = cut {
-        let old = vault.request(&scope).await?;
+        let mut old = vault.request(&scope).await?;
+        if let Some(previous) = &old
+            && previous.has_private_key()
+            && previous.event().as_mls_history_request()?.recipient != recipient
+        {
+            vault
+                .consume_request(&scope, &previous.event().event_id)
+                .await?;
+            old = None;
+        }
         let valid = old.as_ref().is_some_and(|old| {
             old.has_private_key()
                 && old.event().as_mls_history_request().is_ok_and(|request| {
@@ -507,7 +500,7 @@ pub(crate) async fn reconcile(
             _ => {}
         }
     }
-    pending::complete_covered_window(source, state, &vault, &scope, &originals).await?;
+    pending::expire_request(&vault, &scope, crate::clock::now_utc()).await?;
     require_reader(source, state)?;
     Ok(())
 }

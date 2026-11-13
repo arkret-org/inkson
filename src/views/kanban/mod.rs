@@ -235,6 +235,7 @@ pub fn page(scope: &Scope, app: Rc<InksonContext>, route: Route) -> View {
         let selected = controller.selected_board;
         scope.bond(move || {
             let _ = app.state_revision.get();
+            let _ = app.realm_live_epoch.get();
             let active = app.active_account.get();
             let board = selected.get();
             app.state_store.read(|store| {
@@ -271,6 +272,7 @@ pub fn page(scope: &Scope, app: Rc<InksonContext>, route: Route) -> View {
         let app = app.clone();
         scope.bond(move || {
             let _ = app.state_revision.get();
+            let _ = app.realm_live_epoch.get();
             let active = app.active_account.get();
             let inventory = current_inventory.get();
             app.state_store.read(|decrypt_store| {
