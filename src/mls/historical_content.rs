@@ -28,6 +28,7 @@ pub(crate) struct HistoricalContentRosters {
     #[cfg(not(target_arch = "wasm32"))]
     epochs: Arc<Mutex<EpochMap>>,
     revision: Arc<AtomicU64>,
+    content_key_revision: Arc<AtomicU64>,
     controls: Arc<std::sync::Mutex<BTreeMap<arkret_sdk::EventId, arkret_sdk::CommittedEventRef>>>,
 }
 
@@ -76,7 +77,12 @@ impl HistoricalContentRosters {
     }
 
     pub(crate) fn note_keys_changed(&self) {
+        self.content_key_revision.fetch_add(1, Ordering::Release);
         self.note_install();
+    }
+
+    pub(crate) fn content_key_revision(&self) -> u64 {
+        self.content_key_revision.load(Ordering::Acquire)
     }
     /// A process-local presentation input, independent of durable Account and
     /// current-state revisions. Public attribution can arrive after either.

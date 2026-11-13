@@ -494,8 +494,14 @@ pub(crate) async fn reconcile(
                         current_endpoint(source, &recipient).await? == before,
                         "history native recipient changed across selected-key verification"
                     );
+                    let known = vault
+                        .read_key(source_event_ref, content_path)
+                        .await?
+                        .is_some();
                     vault.retain_key(&retained).await?;
-                    cache.note_keys_changed();
+                    if !known {
+                        cache.note_keys_changed();
+                    }
                 }
             }
             _ => {}

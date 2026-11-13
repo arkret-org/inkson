@@ -321,6 +321,22 @@ impl TextIntegrity {
     }
 }
 
+fn observe_history_key_revision(
+    scope: &Scope,
+    live_epoch: Cage<u64>,
+    read: impl Fn() -> u64 + 'static,
+) -> Cage<u64> {
+    let revision = scope.cage(read());
+    scope.effect(move || {
+        let _ = live_epoch.get();
+        let next = read();
+        if revision.get_untracked() != next {
+            revision.revise(|value| *value = next);
+        }
+    });
+    revision
+}
+
 fn verified_attachment(
     scope: &Scope,
     context: Rc<crate::presentation::InksonContext>,
@@ -331,7 +347,14 @@ fn verified_attachment(
     let request_context = context.clone();
     let request_source = source.clone();
     let request_descriptor = descriptor.clone();
+    let key_context = context.clone();
+    let key_revision = observe_history_key_revision(scope, context.realm_live_epoch, move || {
+        key_context
+            .state_store
+            .read(|store| store.historical_content_rosters.content_key_revision())
+    });
     let loaded = resource(scope, move || {
+        let _ = key_revision.get();
         let generation = request_context.session_generation.get();
         let account = request_context.active_account.get();
         let _ = request_context.token.get();
@@ -862,6 +885,55 @@ async fn save_artifact(
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod reader_tests {
     use super::*;
+    #[test]
+    fn historical_attachment_retries_for_new_keys_without_reloading_for_public_proof_updates() {
+        use std::cell::Cell;
+        let executor = Rc::new(glory::core::executor::Executor::new(256));
+        let app = glory::App::with_host(executor.clone(), glory::render::memory::Memory::new);
+        let pulse = app.scope().cage(0_u64);
+        let cache = crate::mls::historical_content::HistoricalContentRosters::default();
+        let observed = cache.clone();
+        let revision = observe_history_key_revision(app.scope(), pulse, move || {
+            observed.content_key_revision()
+        });
+        let calls = Rc::new(Cell::new(0_u64));
+        let requested = calls.clone();
+        let loaded = crate::presentation::widgets::resource(app.scope(), move || {
+            let revision = revision.get();
+            requested.set(requested.get() + 1);
+            async move {
+                if revision == 0 {
+                    Err("key pending".to_owned())
+                } else {
+                    Ok(revision)
+                }
+            }
+        });
+        let settle = || {
+            for _ in 0..64 {
+                executor.poll_one();
+                app.flush().unwrap();
+            }
+        };
+        settle();
+        assert_eq!(
+            loaded.data.get_untracked(),
+            Some(Err("key pending".to_owned()))
+        );
+        assert_eq!(calls.get(), 1);
+        cache.advance_projection_revision_for_test();
+        pulse.revise(|value| *value += 1);
+        settle();
+        assert_eq!(calls.get(), 1);
+        cache.note_keys_changed();
+        pulse.revise(|value| *value += 1);
+        settle();
+        assert_eq!(loaded.data.get_untracked(), Some(Ok(1)));
+        assert_eq!(calls.get(), 2);
+        pulse.revise(|value| *value += 1);
+        settle();
+        assert_eq!(calls.get(), 2);
+    }
     async fn settle(
         app: &glory::ui::App,
         executor: &glory::core::executor::Executor,
