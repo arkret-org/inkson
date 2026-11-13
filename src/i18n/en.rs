@@ -4180,8 +4180,8 @@ fn setup_policy_hint_strings(dict: &mut TranslationDict) {
         "Invite-only discovery paired with public join usually means the discovery model is underspecified.",
     );
     dict.set(
-        "setup.mls_activation.requires_since_join",
-        "MLS Genesis requires current history access to be Since join. Choose that policy or create without MLS for now.",
+        "setup.mls_activation.requires_registered_history",
+        "Choose a valid history access policy before starting MLS encryption.",
     );
 }
 

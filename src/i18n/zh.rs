@@ -3565,8 +3565,8 @@ fn setup_policy_hint_strings(dict: &mut TranslationDict) {
         "仅限邀请的发现策略配上公开加入，通常说明发现模型没有想清楚。",
     );
     dict.set(
-        "setup.mls_activation.requires_since_join",
-        "MLS Genesis 要求当前历史范围为“加入后”；请选择该策略，或暂不启动 MLS。",
+        "setup.mls_activation.requires_registered_history",
+        "启动 MLS 加密前，请选择有效的历史访问策略。",
     );
 }
 

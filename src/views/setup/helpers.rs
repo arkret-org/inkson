@@ -46,14 +46,18 @@ pub(super) fn mls_activation_requested(selection: &str) -> bool {
     selection == "after_create"
 }
 
-/// The governing Station can accept the first MLS Genesis only while the
-/// current Realm history policy is `since_join`.
+/// Both registered history policies permit MLS Genesis (realm-and-space §2.3).
+/// Historical decryption material remains a separate admission/delivery gate.
 pub(super) fn mls_activation_history_hint(
     activation_requested: bool,
     history_access: &str,
 ) -> Option<&'static str> {
-    (activation_requested && history_access != "since_join")
-        .then_some("setup.mls_activation.requires_since_join")
+    (activation_requested
+        && !matches!(
+            history_access,
+            "since_join" | "all_history_for_current_members"
+        ))
+    .then_some("setup.mls_activation.requires_registered_history")
 }
 
 #[cfg(test)]
@@ -69,9 +73,17 @@ mod tests {
     }
 
     #[test]
-    fn mls_start_requires_current_since_join_without_exporter_fallback() {
-        assert!(mls_activation_history_hint(true, "all_history_for_current_members").is_some());
+    fn mls_start_accepts_both_registered_history_policies() {
+        assert!(mls_activation_history_hint(true, "all_history_for_current_members").is_none());
         assert!(mls_activation_history_hint(true, "since_join").is_none());
         assert!(mls_activation_history_hint(false, "all_history_for_current_members").is_none());
+    }
+
+    #[test]
+    fn mls_start_rejects_missing_or_unregistered_history_policy() {
+        for history in ["", "shared", "world_readable"] {
+            assert!(mls_activation_history_hint(true, history).is_some());
+            assert!(mls_activation_history_hint(false, history).is_none());
+        }
     }
 }
