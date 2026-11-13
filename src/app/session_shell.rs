@@ -684,7 +684,6 @@ fn mobile_drawer(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) 
 }
 
 #[cfg(test)]
-#[path = "mobile_drawer_tests.rs"]
 mod mobile_drawer_tests;
 fn connection_status_region(scope: &Scope, context: Rc<InksonContext>) -> View {
     let cursor = context.sync_cursor;

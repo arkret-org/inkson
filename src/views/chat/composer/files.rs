@@ -3,7 +3,6 @@ use std::future::Future;
 use std::pin::Pin;
 
 #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
-#[path = "attachment_lifetime_fixture.rs"]
 mod attachment_lifetime_fixture;
 
 #[derive(Clone)]

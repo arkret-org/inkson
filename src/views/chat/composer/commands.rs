@@ -18,7 +18,6 @@
 use super::*;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "commands_context_tests.rs"]
 mod context_tests;
 
 /// Keep the submitted text recoverable until the original target receives a

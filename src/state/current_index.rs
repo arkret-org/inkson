@@ -35,7 +35,6 @@ pub(crate) mod search;
 // The browser regressions of this index are an integration test target, which
 // cannot reach a crate-private type; this is their only entry point.
 #[cfg(target_arch = "wasm32")]
-#[path = "current_index/wasm_harness.rs"]
 pub mod wasm_harness;
 
 pub(crate) const CURRENT_PREFIX: &str = "inkson.current.v1/";

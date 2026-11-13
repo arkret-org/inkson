@@ -2,7 +2,7 @@
 //! label/route/availability helpers, the private-data preference load/persist
 //! pair, and the route→surface resolution used by the router reconcile. Moved
 //! out of `app.rs` (move only); re-exported from the parent so
-//! inline call sites and `app_tests.rs` `use super::*` resolve unchanged.
+//! inline call sites and `app/tests.rs` `use super::*` resolve unchanged.
 //!
 //! The `Document` surface (Board/Document toggle + `/document` routes + morph
 //! editor) was removed; `Board` is now the only per-Realm surface.

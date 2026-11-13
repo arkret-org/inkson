@@ -11,7 +11,6 @@ use crate::routes::Route;
 use crate::state::LocalStateStore;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "glory_root/selection_tests.rs"]
 mod selection_tests;
 
 pub fn root(scope: &Scope) -> View {

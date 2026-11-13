@@ -3,7 +3,6 @@ use super::*;
 use crate::attachments::{AttachmentObject, PreparedAttachment};
 
 #[cfg(test)]
-#[path = "attachments_tests.rs"]
 mod tests;
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -1510,11 +1510,9 @@ fn block_modal(_scope: &Scope, state: &MembersPage) -> View {
     })
 }
 #[cfg(test)]
-#[path = "members_panel/tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "members_panel/surface_tests.rs"]
 mod surface_tests;
 
 #[cfg(test)]

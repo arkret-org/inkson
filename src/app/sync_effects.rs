@@ -312,5 +312,4 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "sync_effects_tests.rs"]
 mod tests;

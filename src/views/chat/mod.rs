@@ -1061,11 +1061,9 @@ impl SourceRoutedSidecarMessageOutcome {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "tests/native_harness.rs"]
 mod native_harness;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "tests/sidecar_accepted_readback.rs"]
 mod sidecar_accepted_readback_tests;
 
 /// Accepted sends share the cache writer with draft and receive updates. The
@@ -1555,7 +1553,6 @@ fn check_sidecar_close_authoring(
 }
 
 #[cfg(test)]
-#[path = "tests/sidecar_close_fence.rs"]
 mod sidecar_close_fence_tests;
 
 async fn drive_sidecar_completion_closes(

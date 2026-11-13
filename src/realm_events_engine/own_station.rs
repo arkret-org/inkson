@@ -197,7 +197,6 @@ fn require_accepted_sidecar_event(
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "own_station_readback_tests.rs"]
 mod accepted_readback_tests;
 
 pub(super) async fn account_frame(

@@ -661,7 +661,6 @@ fn accept_response(
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "sidecar_fold/tests_mls.rs"]
 mod mls_tests;
 
 fn accept_control(

@@ -1,6 +1,5 @@
 //! Sidebar projections and bounded commands over the real account runtime.
 #[cfg(test)]
-#[path = "sidebar_button_tests.rs"]
 mod button_admission_tests;
 
 use std::collections::{BTreeMap, BTreeSet};

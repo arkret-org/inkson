@@ -1217,7 +1217,7 @@ mod tests {
     // window — three wire members that no longer exist. The successor judgement
     // ("the scope has an accepted `ak.mls.genesis`") is
     // `LocalStateStore::realm_projection_is_mls_encrypted`, covered positively
-    // and negatively in `src/local_state_tests/projections.rs`.
+    // and negatively in `src/state/tests/projections.rs`.
 
     #[test]
     fn is_realm_or_space_projection_id_matches_realm_and_space_prefixes() {

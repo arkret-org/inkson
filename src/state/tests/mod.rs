@@ -1,7 +1,7 @@
 //! Structural split of the former monolithic `local_state_tests.rs`.
 //!
-//! This module is mounted from `local_state.rs` as the private `tests`
-//! submodule of `local_state` (via `#[cfg(test)] #[path = ...] mod tests;`),
+//! This module is mounted from `state/mod.rs` as the private `tests`
+//! submodule of `local_state` (via `#[cfg(test)] mod tests;`),
 //! so `super` here still resolves to the `local_state` module. The
 //! `pub(super) use super::*;` below re-exports every visible `local_state`
 //! item (its public types and the `pub(crate)` `storage_util` helpers)

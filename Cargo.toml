@@ -116,7 +116,7 @@ required-features = ["app"]
 
 [[bin]]
 name = "inkson-wire"
-path = "src/bin/inkson-wire.rs"
+path = "src/bin/inkson-wire/main.rs"
 required-features = ["spec-conformance"]
 
 [dependencies]

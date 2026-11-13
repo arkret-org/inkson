@@ -456,5 +456,4 @@ pub(super) fn build_agent_admin_view(
 }
 
 #[cfg(test)]
-#[path = "model_tests.rs"]
 mod tests;

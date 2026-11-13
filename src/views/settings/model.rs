@@ -143,5 +143,4 @@ pub(super) fn session_identity_labels(
 }
 
 #[cfg(test)]
-#[path = "model_tests.rs"]
 mod tests;

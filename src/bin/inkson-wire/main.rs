@@ -4,10 +4,8 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-#[path = "inkson-wire/realm_fixture.rs"]
 mod realm_fixture;
 
-#[path = "inkson-wire/operation_fixture.rs"]
 mod operation_fixture;
 
 #[derive(Debug, Deserialize)]
@@ -44,11 +42,9 @@ struct MockServiceAuthority {
     verification_method: arkret_sdk::DidUrl,
 }
 
-#[path = "inkson-wire/contact_fixture.rs"]
 mod contact_fixture;
 
 #[cfg(not(target_arch = "wasm32"))]
-#[path = "inkson-wire/native_search.rs"]
 mod native_search;
 
 // Debug builds of the typed contact ceremony exceed Windows' small default

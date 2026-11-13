@@ -206,7 +206,6 @@ pub(crate) fn realm_id(value: &str) -> arkret_sdk::RealmId {
 }
 
 #[cfg(test)]
-#[path = "test_support/committed_event.rs"]
 pub(crate) mod committed_event;
 
 /// Resolvable DID for a principal given in either accepted form.

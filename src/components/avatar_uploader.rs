@@ -306,7 +306,6 @@ pub fn image_file_picker_labeled_with_state(
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "avatar_uploader/image_read_tests.rs"]
 mod image_read_tests;
 #[cfg(not(target_arch = "wasm32"))]
 pub fn image_file_picker_labeled_with_state(

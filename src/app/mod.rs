@@ -21,7 +21,6 @@ use crate::state::{ClientLocalState, LocalStateStore, PersistedSessionGrant};
 use crate::transport::TransportClient;
 use crate::views::ConnectionState;
 use crate::views::helpers::{persist_config, short_protocol_id};
-#[path = "../bootstrap.rs"]
 mod bootstrap;
 pub(crate) use bootstrap::*;
 mod theme;
@@ -142,5 +141,4 @@ fn read_bootstrap_snapshot(
 }
 
 #[cfg(test)]
-#[path = "../app_tests.rs"]
 mod tests;

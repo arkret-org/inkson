@@ -520,5 +520,4 @@ pub(super) fn sidecar_restore(
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "tests/sidecar_restore_basis.rs"]
 mod restore_basis_tests;

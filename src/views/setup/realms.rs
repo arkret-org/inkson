@@ -13,7 +13,6 @@ use crate::routes::Route;
 use crate::transport::auth::authed_api_ready;
 use crate::views::settings::widgets::*;
 
-#[path = "realms/presentation.rs"]
 mod presentation;
 #[derive(Clone)]
 struct BootstrapProgressStrings {

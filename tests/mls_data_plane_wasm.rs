@@ -56,6 +56,70 @@ fn actor(principal_did: &str) -> arkret_sdk::ActorId {
     ))
 }
 
+fn blob_ref(bytes: &[u8]) -> arkret_sdk::BlobRef {
+    arkret_sdk::BlobRef::new(format!(
+        "ak:blob:{}",
+        arkret_sdk::canonical::sha256_digest(bytes)
+    ))
+    .unwrap()
+}
+
+/// Local MLS cryptographic material, not a claim of native backup publication.
+fn content_material(
+    group: &ArkretMlsGroup,
+    state: &AcceptedGroupState,
+) -> arkret_models_crypto::EventContentMaterial {
+    use arkret_models_crypto::{
+        ContentContext, ContentEncryptionAlgorithm, ContentProtection, ContentPurpose,
+        ContentRootContext, EventContentMaterial,
+    };
+    let root_context = ContentRootContext {
+        effective_scope: group.scope().clone(),
+        genesis_event_ref: state.genesis_event_ref.clone(),
+        epoch: group.epoch(),
+        group_state_ref: state.current_event_ref.clone(),
+        cipher_suite: group.group_ciphersuite_canonical_id().unwrap().to_owned(),
+        encryption_backup_strategy: arkret_sdk::EncryptionBackupStrategy::EpochContentRoots,
+        backup_strategy_ref: EventId::from_digest(
+            group.scope().realm_id().digest_suite_code().digest_suite(),
+            group.scope().realm_id().digest_bytes(),
+        ),
+    };
+    assert_eq!(root_context.epoch, state.epoch);
+    let root = group.export_content_root(&root_context).unwrap();
+    let root_ref = arkret_crypto::content_history::content_root_ref(&root, &root_context).unwrap();
+    let content_context = ContentContext {
+        root_context,
+        root_ref: root_ref.clone(),
+        purpose: ContentPurpose::EventBody,
+        encryption_scheme: arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
+        encryption_algorithm: ContentEncryptionAlgorithm::Aes128Gcm,
+        producer: group.local_content_endpoint().unwrap(),
+        content_key_salt: arkret_crypto::content_history::fresh_content_key_salt().unwrap(),
+    };
+    let draft = arkret_sdk::EventContentDraft::<arkret_sdk::event_spec::MessageCreate>::new(
+        group.scope().clone(),
+        group.local_actor_id().clone(),
+        "2026-09-26T00:00:00.000Z".parse().unwrap(),
+    )
+    .unwrap();
+    let key = arkret_crypto::content_history::derive_content_key(&root, &content_context).unwrap();
+    EventContentMaterial {
+        key_commitment: arkret_crypto::content_history::content_key_commitment(
+            &content_context,
+            &key,
+        )
+        .unwrap(),
+        content_context,
+        outer_event: draft.intent().pre_encryption_outer_event().unwrap(),
+        protection: ContentProtection {
+            root_refs: vec![root_ref],
+            blob_refs: vec![],
+            backup_refs: vec![garth::mls::backup_series::fresh_backup_id().unwrap()],
+        },
+    }
+}
+
 fn detached_signature(
     context: arkret_sdk::DetachedSignatureContext,
     seed: u8,
@@ -81,12 +145,15 @@ struct AcceptedGroupState {
     genesis_event_ref: EventId,
     current_event_ref: EventId,
     epoch: u64,
+    public_tree_ref: arkret_sdk::BlobRef,
 }
 
 impl AcceptedGroupState {
-    fn genesis() -> Self {
+    fn genesis(group: &ArkretMlsGroup) -> Self {
         let genesis = EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x51; 32]);
+        let (_, tree) = group.public_group_state_bytes().unwrap();
         Self {
+            public_tree_ref: blob_ref(&tree),
             genesis_event_ref: genesis.clone(),
             current_event_ref: genesis,
             epoch: 0,
@@ -105,11 +172,7 @@ impl AcceptedGroupState {
             epoch: self.epoch,
             current_key_access_revision: 0,
             covered_key_access_revision: 0,
-            public_tree_ref: arkret_sdk::BlobRef::new(format!(
-                "ak:blob:sha256:{}",
-                "33".repeat(32)
-            ))
-            .unwrap(),
+            public_tree_ref: self.public_tree_ref.clone(),
         }
     }
 
@@ -129,20 +192,27 @@ impl AcceptedGroupState {
     /// its `RealmCommit`, then advance the public state past it.
     fn accept(
         &mut self,
-        author: arkret_sdk::ActorId,
+        author_group: &ArkretMlsGroup,
         envelope: &MlsCommitEnvelope,
     ) -> CommittedEventFullView {
         assert_eq!(envelope.epoch, self.epoch + 1);
+        let binding = self.next_binding();
+        let (info, tree) = author_group
+            .pending_public_group_state_bytes(envelope, &binding)
+            .unwrap();
+        let tree_ref = blob_ref(&tree);
         let payload = arkret_sdk::MlsCommitPayload::new(
             self.current_event_ref.clone(),
             0,
             envelope,
-            self.next_binding(),
+            binding,
+            blob_ref(&info),
+            tree_ref.clone(),
         )
         .unwrap();
         let event = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MlsCommit>::new(
             scope(),
-            author,
+            author_group.local_actor_id().clone(),
             payload,
         )
         .unwrap()
@@ -173,6 +243,7 @@ impl AcceptedGroupState {
         accepted.validate_shape().unwrap();
         self.current_event_ref = accepted.event.event_id.clone();
         self.epoch = envelope.epoch;
+        self.public_tree_ref = tree_ref;
         accepted
     }
 }
@@ -306,19 +377,24 @@ impl LocalMlsDevice {
             .unwrap();
     }
 
-    fn encrypt_message(&mut self, message_id: &str, plaintext: &[u8]) -> ClientEncryptedMessage {
+    fn encrypt_message(
+        &mut self,
+        state: &AcceptedGroupState,
+        message_id: &str,
+        plaintext: &[u8],
+    ) -> ClientEncryptedMessage {
         let group = self.group();
         let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
             "1.0",
             "application/vnd.arkret.message+json",
-            arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+            arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
             scope(),
             arkret_wire::event_kind_str::MESSAGE_CREATE,
             group.epoch(),
-            EventId::new("ak:event:ARKEyrg59dN-i97Pleo3vwwRkZomIcqPiuK9PtjzGLdh".to_owned())
-                .unwrap(),
+            state.current_event_ref.clone(),
             group.local_content_sender_domain().unwrap(),
             arkret_sdk::EventContentRoutingContext::None,
+            content_material(group, state),
         )
         .unwrap();
         let encrypted = MessageCrypto::encrypt(group, message_id, header, plaintext).unwrap();
@@ -345,9 +421,8 @@ fn removed_member_cannot_decrypt_new_epoch_and_failures_are_distinct() {
     let mut alice = LocalMlsDevice::new("did:web:alice.example", ALICE_DEVICE);
     let mut bob = LocalMlsDevice::new("did:web:bob.example", BOB_DEVICE);
     let mut carol = LocalMlsDevice::new("did:web:carol.example", CAROL_DEVICE);
-    let mut state = AcceptedGroupState::genesis();
-
     alice.create_group();
+    let mut state = AcceptedGroupState::genesis(alice.group());
     let alice_endpoint = alice.endpoint.clone();
     let bob_endpoint = bob.endpoint.clone();
     let carol_endpoint = carol.endpoint.clone();
@@ -356,7 +431,7 @@ fn removed_member_cannot_decrypt_new_epoch_and_failures_are_distinct() {
     // Add Bob: one inline Add Commit, accepted, then Bob's Welcome.
     let base = state.current();
     let add_bob = alice.add_member(&bob.claimed_key_package(1_790_000_000_001), &state);
-    let accepted_add_bob = state.accept(alice.actor.clone(), &add_bob.commit);
+    let accepted_add_bob = state.accept(alice.group(), &add_bob.commit);
     assert_eq!(alice.install(&accepted_add_bob, &base), 1);
     let bob_welcome = welcome_delivery(
         &add_bob.welcome,
@@ -374,7 +449,7 @@ fn removed_member_cannot_decrypt_new_epoch_and_failures_are_distinct() {
     // travels inline, so there is nothing to stage separately.
     let base = state.current();
     let add_carol = alice.add_member(&carol.claimed_key_package(1_790_000_000_003), &state);
-    let accepted_add_carol = state.accept(alice.actor.clone(), &add_carol.commit);
+    let accepted_add_carol = state.accept(alice.group(), &add_carol.commit);
     assert_eq!(alice.install(&accepted_add_carol, &base), 2);
     assert_eq!(bob.install(&accepted_add_carol, &base), 2);
     let carol_welcome = welcome_delivery(
@@ -400,6 +475,7 @@ fn removed_member_cannot_decrypt_new_epoch_and_failures_are_distinct() {
     }
 
     let pre_remove = alice.encrypt_message(
+        &state,
         "ak:message:A6u77rrmwcqnlGOsjJ1NCtyWmSQNe4IqYUz4mjELtyso",
         b"before remove",
     );
@@ -413,7 +489,7 @@ fn removed_member_cannot_decrypt_new_epoch_and_failures_are_distinct() {
     let bob_actor = bob.actor.clone();
     let remove = alice.remove_member(&bob_actor, &state);
     assert_eq!(remove.removed_actors, vec![bob_actor]);
-    let accepted_remove = state.accept(alice.actor.clone(), &remove.commit);
+    let accepted_remove = state.accept(alice.group(), &remove.commit);
     assert_eq!(alice.install(&accepted_remove, &base), 3);
     assert_eq!(carol.install(&accepted_remove, &base), 3);
     bob.install(&accepted_remove, &base);
@@ -423,6 +499,7 @@ fn removed_member_cannot_decrypt_new_epoch_and_failures_are_distinct() {
     }
 
     let post_remove = alice.encrypt_message(
+        &state,
         "ak:message:AQKPg68zbJImnDqlj1CYc3otm32z4cR6NCjKfy5qS5xU",
         b"after remove",
     );
@@ -449,7 +526,11 @@ fn removed_member_cannot_decrypt_new_epoch_and_failures_are_distinct() {
 
     let mut independent = LocalMlsDevice::new("did:web:dave.example", DAVE_DEVICE);
     independent.create_group();
+    let independent_endpoint = independent.endpoint.clone();
+    independent.install_fixture_bindings(&[&independent_endpoint]);
+    let independent_state = AcceptedGroupState::genesis(independent.group());
     let wrong_key = independent.encrypt_message(
+        &independent_state,
         "ak:message:AxNcKZEEPR7EFcSKxQ_Lptlgx8iJpZeZqrrfTAafbPbw",
         b"wrong key",
     );

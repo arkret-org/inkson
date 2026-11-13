@@ -359,5 +359,4 @@ pub(super) fn shell_chrome(
 }
 
 #[cfg(test)]
-#[path = "shell_model_tests.rs"]
 mod tests;

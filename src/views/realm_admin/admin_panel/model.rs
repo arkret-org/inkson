@@ -217,5 +217,4 @@ pub(super) fn reconcile_metadata_editors(
 }
 
 #[cfg(test)]
-#[path = "model_tests.rs"]
 mod tests;

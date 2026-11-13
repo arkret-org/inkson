@@ -778,7 +778,6 @@ fn check_registration_result_binding(
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "principal_registration/pcr_genesis_read_tests.rs"]
 mod pcr_genesis_read_tests;
 
 #[cfg(test)]

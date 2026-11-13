@@ -586,7 +586,6 @@ pub fn table(
 }
 
 #[cfg(test)]
-#[path = "widgets/group_tests.rs"]
 mod group_tests;
 
 #[cfg(test)]

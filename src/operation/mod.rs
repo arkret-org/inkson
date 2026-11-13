@@ -700,5 +700,4 @@ pub(crate) fn test_authoring_created_at_at_seq(nth: u64) -> chrono::DateTime<chr
 }
 
 #[cfg(test)]
-#[path = "../operation_tests.rs"]
 mod tests;

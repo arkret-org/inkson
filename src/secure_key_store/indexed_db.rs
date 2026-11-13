@@ -10,7 +10,6 @@ use arkret_sdk::KeyBytes;
 use garth::SecureKeyStoreBackendInfo;
 
 use super::{SecureKeyStore, SecureKeyStoreError, WASM_INDEXEDDB_SECURE_KEY_STORE};
-#[path = "current_index_backend.rs"]
 pub(crate) mod current_index_backend;
 
 type IdbEventCallback = std::rc::Rc<

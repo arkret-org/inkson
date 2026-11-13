@@ -4559,5 +4559,4 @@ fn mls_genesis_event_id_from_events(
 }
 
 #[cfg(test)]
-#[path = "event_submit/tests.rs"]
 mod tests;

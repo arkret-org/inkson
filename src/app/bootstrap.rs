@@ -10,7 +10,7 @@
 //!     `bootstrap_mls_welcome_for_realm`).
 //!
 //! `app.rs` re-exports with `pub(crate) use bootstrap::*;`, preserving existing
-//! call sites and `app_tests.rs` `use super::*` resolution paths.
+//! call sites and `app/tests.rs` `use super::*` resolution paths.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};

@@ -320,7 +320,6 @@ pub(crate) fn merge_chat_messages(target: &mut Vec<ChatMessage>, incoming: Vec<C
 }
 
 #[cfg(test)]
-#[path = "strands_merge_tests.rs"]
 mod merge_tests;
 
 fn pending_message_private_plaintext_sidecar_body(

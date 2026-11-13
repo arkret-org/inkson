@@ -2,7 +2,6 @@ use super::snapshot::ChatSnapshot;
 use super::*;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "panel_lifetime_tests.rs"]
 mod lifetime_tests;
 
 pub(super) fn target(

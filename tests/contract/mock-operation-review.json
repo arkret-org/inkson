@@ -687,8 +687,8 @@
         "zh/identity/key-management.md"
       ],
       "source_references": [
-        "coland/crates/http/src/routing/mls_keypackage_native.rs",
-        "coland/crates/http/src/routing/mls_keypackage_upload.rs"
+        "coland/crates/http/src/routing/mls/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls/mls_keypackage_upload.rs"
       ],
       "mock_test": null,
       "contract_digest": "sha256:5e4dc2dd1ee3b2297b0bf403bd094db6adb3accb825957c7fc01a497f1cf6a7f"
@@ -701,8 +701,8 @@
         "zh/identity/key-management.md"
       ],
       "source_references": [
-        "coland/crates/http/src/routing/mls_keypackage_native.rs",
-        "coland/crates/http/src/routing/mls_keypackage_upload.rs"
+        "coland/crates/http/src/routing/mls/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls/mls_keypackage_upload.rs"
       ],
       "mock_test": null,
       "contract_digest": "sha256:6e4cf891a1c0d9f142e79f043e0b2b1002887edf89009d194c07775c51626bec"
@@ -715,7 +715,7 @@
         "zh/identity/key-management.md"
       ],
       "source_references": [
-        "coland/crates/http/src/routing/mls_keypackage_native.rs"
+        "coland/crates/http/src/routing/mls/mls_keypackage_native.rs"
       ],
       "mock_test": null,
       "contract_digest": "sha256:fb9fb19f2fcf25794e1c0f63c698f6eaedfd390004bfa1ac005a6fb58095a96d"
@@ -728,7 +728,7 @@
         "zh/sync/authority-commit-log.md"
       ],
       "source_references": [
-        "coland/crates/http/src/routing/mls_keypackage_native.rs"
+        "coland/crates/http/src/routing/mls/mls_keypackage_native.rs"
       ],
       "mock_test": null,
       "contract_digest": "sha256:16b22209958c8a645a6a7da7a6e8699749b78df5214ece9ea7a883edbe2eb3a9"
@@ -741,7 +741,7 @@
         "zh/sync/authority-commit-log.md"
       ],
       "source_references": [
-        "coland/crates/http/src/routing/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls/mls_keypackage_native.rs",
         "arkret-rust-sdk/crates/models-collaboration/src/objects/read_receipts.rs"
       ],
       "mock_test": {
@@ -758,7 +758,7 @@
         "zh/sync/authority-commit-log.md"
       ],
       "source_references": [
-        "coland/crates/http/src/routing/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls/mls_keypackage_native.rs",
         "arkret-rust-sdk/crates/models-collaboration/src/objects/read_receipts.rs"
       ],
       "mock_test": {
@@ -1437,8 +1437,8 @@
         "zh/identity/key-management.md"
       ],
       "source_references": [
-        "coland/crates/http/src/routing/mls_keypackage_native.rs",
-        "coland/crates/http/src/routing/mls_keypackage_upload.rs"
+        "coland/crates/http/src/routing/mls/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls/mls_keypackage_upload.rs"
       ],
       "mock_test": null,
       "contract_digest": "sha256:6caa6c185c0e7687e8ef69baffe532fcb22c4ef3facc7fb131d6c02bba7e5da3"
@@ -1451,8 +1451,8 @@
         "zh/identity/key-management.md"
       ],
       "source_references": [
-        "coland/crates/http/src/routing/mls_keypackage_native.rs",
-        "coland/crates/http/src/routing/mls_keypackage_upload.rs"
+        "coland/crates/http/src/routing/mls/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls/mls_keypackage_upload.rs"
       ],
       "mock_test": null,
       "contract_digest": "sha256:c3ba43d5d467df70499b8c9c282bdc56f4be59a928ad006c6a82865f0506acbb"
@@ -1465,8 +1465,8 @@
         "zh/identity/key-management.md"
       ],
       "source_references": [
-        "coland/crates/http/src/routing/mls_keypackage_native.rs",
-        "coland/crates/http/src/routing/mls_keypackage_upload.rs"
+        "coland/crates/http/src/routing/mls/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls/mls_keypackage_upload.rs"
       ],
       "mock_test": null,
       "contract_digest": "sha256:9a458607031b774740329f285321b0f73d0376172bca03a21dca1d4f695e7c4a"
@@ -1479,8 +1479,8 @@
         "zh/identity/key-management.md"
       ],
       "source_references": [
-        "coland/crates/http/src/routing/mls_keypackage_native.rs",
-        "coland/crates/http/src/routing/mls_keypackage_upload.rs"
+        "coland/crates/http/src/routing/mls/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls/mls_keypackage_upload.rs"
       ],
       "mock_test": null,
       "contract_digest": "sha256:2341c59a1fa747c330c72e790c1450c83d1b68a01c28d55ac0cad1016a4ec324"
@@ -1569,7 +1569,7 @@
         "zh/sync/authority-commit-log.md"
       ],
       "source_references": [
-        "coland/crates/http/src/routing/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls/mls_keypackage_native.rs",
         "arkret-rust-sdk/crates/models-collaboration/src/objects/read_receipts.rs"
       ],
       "mock_test": {
@@ -1586,7 +1586,7 @@
         "zh/sync/authority-commit-log.md"
       ],
       "source_references": [
-        "coland/crates/http/src/routing/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls/mls_keypackage_native.rs",
         "arkret-rust-sdk/crates/models-collaboration/src/objects/read_receipts.rs"
       ],
       "mock_test": {

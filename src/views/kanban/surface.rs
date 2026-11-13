@@ -4,7 +4,6 @@ use super::*;
 use crate::presentation::widgets::reactive_distinct;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "surface_lifetime_tests.rs"]
 mod lifetime_tests;
 fn disclosure(
     scope: &Scope,

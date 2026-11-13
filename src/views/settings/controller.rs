@@ -1232,5 +1232,4 @@ impl SettingsController {
 }
 
 #[cfg(test)]
-#[path = "controller_tests.rs"]
 mod tests;

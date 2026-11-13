@@ -5,7 +5,7 @@
 # This exists because the lint baseline went red and stayed red: nothing ran
 # clippy, so thirteen findings accumulated across weeks of commits, and one of
 # them was not a lint at all but a hard compile break that only
-# `--all-features` reaches (`src/bin/inkson-wire.rs` is behind
+# `--all-features` reaches (`src/bin/inkson-wire/main.rs` is behind
 # `required-features = ["spec-conformance"]`, so the default build never
 # compiles it). Both halves matter:
 #

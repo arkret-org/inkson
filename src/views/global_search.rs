@@ -1303,7 +1303,6 @@ mod tests {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "global_search/session_tests.rs"]
 mod session_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

@@ -234,7 +234,6 @@ impl RecoveryPage {
     }
 }
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "panel_surface_tests.rs"]
 mod surface_tests;
 
 fn recovery_label(value: impl Into<glory::Vary<String>>) -> View {

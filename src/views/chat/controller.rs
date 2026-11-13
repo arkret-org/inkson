@@ -2958,7 +2958,6 @@ pub(super) fn install_composer_persistence(
 }
 
 #[cfg(test)]
-#[path = "controller_context_tests.rs"]
 mod controller_context_tests;
 
 #[cfg(test)]

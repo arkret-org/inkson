@@ -7,7 +7,6 @@ use garth::own_station_results::{OwnStationReplica, OwnStationScanPage};
 use super::*;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "own_live/sidecar_tests.rs"]
 mod sidecar_tests;
 
 const MAX_REPLAY_BYTES: usize = 64 * 1024 * 1024;

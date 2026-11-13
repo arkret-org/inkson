@@ -1307,7 +1307,6 @@ fn e2ee_safe_persist_state_owned_with_policy(
 pub mod projection;
 pub mod projection_views;
 #[cfg(test)]
-#[path = "../local_state_tests/mod.rs"]
 mod tests;
 
 #[cfg(target_arch = "wasm32")]

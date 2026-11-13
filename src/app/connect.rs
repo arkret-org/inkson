@@ -1640,7 +1640,6 @@ pub(super) fn connect(
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "connect/lifetime_tests.rs"]
 mod lifetime_tests;
 
 #[cfg(test)]
