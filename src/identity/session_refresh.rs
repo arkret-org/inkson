@@ -476,9 +476,7 @@ impl arkret_sdk::http_client::own_station_results::OwnStationSessionSource
                     && *epoch == self.device_scope_epoch
             })
         {
-            return Err(arkret_sdk::http_client::Error::Protocol(
-                "own Station host session changed".into(),
-            ));
+            return Err(arkret_sdk::http_client::Error::OwnStationSessionChanged);
         }
         self.provider_client.session().cloned()
     }

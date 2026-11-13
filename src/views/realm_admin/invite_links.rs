@@ -40,10 +40,10 @@ enum LinkJoinAttempt {
 
 fn link_join_attempt(
     input: &str,
-    accepted: Option<arkret_sdk::RealmId>,
+    retained: Option<arkret_sdk::RealmId>,
 ) -> anyhow::Result<LinkJoinAttempt> {
     if input.is_empty()
-        && let Some(realm) = accepted
+        && let Some(realm) = retained
     {
         return Ok(LinkJoinAttempt::Readback(realm));
     }
@@ -61,6 +61,7 @@ pub(crate) fn page(
     let busy = scope.cage(false);
     let pending = scope.cage(None::<PendingRealmInviteLink>);
     let accepted_join = scope.cage(None::<arkret_sdk::RealmId>);
+    let pending_join = scope.cage(None::<arkret_sdk::RealmId>);
     let share = scope.cage(String::new());
     let landing = scope.cage("https://arkret.org".to_owned());
     let days = scope.cage("7".to_owned());
@@ -85,6 +86,7 @@ pub(crate) fn page(
         input.revise(|value| value.zeroize());
         pending.revise(|value| *value = None);
         accepted_join.revise(|value| *value = None);
+        pending_join.revise(|value| *value = None);
         share.revise(|value| value.zeroize());
         views.revise(|value| value.clear());
         busy.revise(|value| *value = false);
@@ -459,7 +461,7 @@ pub(crate) fn page(
                         }
                         let attempt = match link_join_attempt(
                             &input.get_untracked(),
-                            if accept { accepted_join.get_untracked() } else { None },
+                            if accept { accepted_join.get_untracked().or_else(|| pending_join.get_untracked()) } else { None },
                         ) {
                             Ok(value) => value,
                             Err(_) => {
@@ -469,7 +471,12 @@ pub(crate) fn page(
                         };
                         if accept && matches!(&attempt, LinkJoinAttempt::Accept(_)) {
                             accepted_join.revise(|value| *value = None);
+                            pending_join.revise(|value| *value = None);
                         }
+                        let target_realm = match &attempt {
+                            LinkJoinAttempt::Accept(credential) => credential.realm_id.clone(),
+                            LinkJoinAttempt::Readback(realm) => realm.clone(),
+                        };
                         let Some(scope) = action_context.root_scope() else {
                             return;
                         };
@@ -525,6 +532,14 @@ pub(crate) fn page(
                                 Err(_) if accept && accepted_join.get_untracked().is_some() => message.revise(|value| {
                                     *value = "Membership is accepted, but live synchronization is pending. Confirm again to retry synchronization without submitting another invitation.".into()
                                 }),
+                                Err(error) if accept && (pending_join.get_untracked().is_some()
+                                    || crate::event_submit::is_durably_queued_error(error.inner())
+                                    || crate::event_submit::is_own_station_session_changed(error.inner())) => {
+                                    pending_join.revise(|value| *value = Some(target_realm));
+                                    message.revise(|value| {
+                                        *value = "Membership confirmation is pending. Confirm again to check it without reusing the invitation.".into()
+                                    });
+                                },
                                 Err(_) if accept => message.revise(|value| {
                                     *value = "Invitation could not be accepted. Reopen the link to retry; pending exact Events continue through the durable queue.".into()
                                 }),
@@ -632,7 +647,7 @@ mod join_retry_tests {
     }
 
     #[test]
-    fn accepted_join_retry_reads_the_same_realm_without_an_invitation_secret() {
+    fn retained_join_retry_reads_the_same_realm_without_an_invitation_secret() {
         let realm = arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
             arkret_sdk::DigestSuite::Sha256,
             [17; 32],

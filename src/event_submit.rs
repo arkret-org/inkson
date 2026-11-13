@@ -105,6 +105,18 @@ pub(crate) fn is_durably_queued_error(error: &anyhow::Error) -> bool {
     error.downcast_ref::<DurablyQueuedError>().is_some()
 }
 
+pub(crate) fn is_own_station_session_changed(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<arkret_sdk::http_client::Error>(),
+            Some(arkret_sdk::http_client::Error::OwnStationSessionChanged)
+        ) || matches!(
+            cause.downcast_ref::<garth::Error>(),
+            Some(garth::Error::OwnStationSessionChanged)
+        )
+    })
+}
+
 /// Scan one independent commit stream from an authenticated HTTP client.
 ///
 /// [`EventSubmitter::scan_stream`] is the ordinary entry point; this free form
@@ -2759,8 +2771,6 @@ impl EventSubmitter {
 
         self.cancel_quarantined_creator_items(&outbound).await?;
         check()?;
-        let authority_client = self.authority_client().await?;
-        check()?;
         let options = arkret_sdk::http_client::ClientRequestOptions::new()
             .request_id(event_id.to_string())
             .idempotency_key(event_id.to_string());
@@ -2773,6 +2783,11 @@ impl EventSubmitter {
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
             check()?;
             self.quarantine_superseded_items(&outbound, &fence).await?;
+            check()?;
+            // Each attempt needs a live consumption context. A retired context
+            // cannot consume a late outcome, but the queue retains the exact
+            // original request for reconciliation through a fresh context.
+            let authority_client = self.authority_client().await?;
             check()?;
             let replay_store = outbound.store().clone();
             let check_send = &check;

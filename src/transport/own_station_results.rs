@@ -42,7 +42,12 @@ pub(crate) async fn client_for_http(
     }
     crate::identity::session_refresh::own_station_result_client_for_http(http)
         .await
-        .map_err(|error| garth::Error::Protocol(error.to_string()))
+        .map_err(
+            |error| match error.downcast::<arkret_sdk::http_client::Error>() {
+                Ok(error) => error.into(),
+                Err(error) => garth::Error::Protocol(error.to_string()),
+            },
+        )
 }
 
 /// Anchor this private assertion independently of the Consent response. Human

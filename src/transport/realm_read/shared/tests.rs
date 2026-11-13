@@ -370,7 +370,12 @@ async fn actual_http_exit_coalesces_waiters_and_refuses_a_replaced_session() {
             .await
             .unwrap();
         if replace_session {
-            assert!(result.unwrap_err().to_string().contains("session changed"));
+            assert!(matches!(
+                result
+                    .unwrap_err()
+                    .downcast_ref::<arkret_sdk::http_client::Error>(),
+                Some(arkret_sdk::http_client::Error::OwnStationSessionChanged)
+            ));
         } else {
             assert!(result.unwrap().is_empty());
         }
