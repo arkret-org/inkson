@@ -750,6 +750,16 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
     client.check_session()?;
     if is_active() {
         *current = replica;
+        if let Err(error) = crate::runtime_helpers::boxed_future(|| {
+            crate::mls::history_exchange::reconcile(client, &projector.state_store, realm)
+        })
+        .await
+        {
+            tracing::warn!(%error, "history key exchange remains pending");
+        }
+        projector
+            .realm_live_epoch
+            .update(|v| *v = v.wrapping_add(1));
     }
     Ok(HintAdmission {
         originals,

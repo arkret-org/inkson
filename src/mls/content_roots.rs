@@ -351,6 +351,12 @@ pub(crate) fn material_from_accepted_original(
     event: &arkret_sdk::Event,
     envelope: &arkret_sdk::EncryptedEnvelope,
 ) -> Option<arkret_models_crypto::EventContentMaterial> {
+    if let Some(material) = state
+        .historical_content_rosters
+        .material_for_original(account, event, envelope)
+    {
+        return Some(material);
+    }
     let actor = arkret_sdk::ActorId::account(account.clone());
     let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
         device_id: device.clone(),
@@ -433,13 +439,35 @@ pub(crate) async fn resolve_root_context(
         anyhow::bail!("content group original is withheld");
     };
     group.verify_installed_historical_base(accepted, reference)?;
+    resolve_public_root_context(
+        &source,
+        group.scope(),
+        genesis,
+        group.epoch(),
+        reference,
+        group.group_ciphersuite_canonical_id()?,
+    )
+    .await
+}
+
+/// Resolves only public strategy coordinates. Exact public epoch provenance
+/// must still be verified by read_public_epoch before consuming any key.
+pub(crate) async fn resolve_public_root_context(
+    source: &arkret_sdk::http_client::own_station_results::OwnStationStateClient,
+    scope: &arkret_sdk::ScopeRef,
+    genesis: &arkret_sdk::EventId,
+    epoch: u64,
+    reference: &arkret_sdk::EventId,
+    cipher_suite: &str,
+) -> anyhow::Result<arkret_models_crypto::ContentRootContext> {
+    let http = source.http_client()?;
     let principal_request = arkret_sdk::CurrentPrincipalRequestBody {
         request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
         account_id: source.session()?.account_id().clone(),
     };
     let principal = source.current_principal(&principal_request).await?;
     let (strategy, strategy_ref) = if principal.value()?.principal_control_realm_id
-        == *group.scope().realm_id()
+        == *scope.realm_id()
     {
         let pcr =
             garth::own_station_results::read_own_station_human_pcr_genesis(&source, principal)
@@ -458,7 +486,7 @@ pub(crate) async fn resolve_root_context(
         // The registered authority bundle carries that exact public
         // original independently of the business-history read floor.
         let request = arkret_sdk::RealmAuthorityBundleRequestBody {
-            realm_id: group.scope().realm_id().clone(),
+            realm_id: scope.realm_id().clone(),
             nonce: arkret_sdk::Base64UrlString::new(crate::random::base64url_token(
                 32,
                 "content strategy nonce unavailable",
@@ -469,17 +497,18 @@ pub(crate) async fn resolve_root_context(
             .resolve_authority(&request)
             .await?;
         source.check_session()?;
-        let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
+        let keys =
+            garth::fetch_historical_station_key_directory(&http, &bundle, None, None).await?;
         let freshness =
             arkret_identity::RealmAuthorityFreshness::new(crate::clock::now_utc(), request.nonce);
-        content_strategy_from_authority(group.scope().realm_id(), &bundle, &freshness, &keys)?
+        content_strategy_from_authority(scope.realm_id(), &bundle, &freshness, &keys)?
     };
     let context = arkret_models_crypto::ContentRootContext {
-        effective_scope: group.scope().clone(),
+        effective_scope: scope.clone(),
         genesis_event_ref: genesis.clone(),
-        epoch: group.epoch(),
+        epoch,
         group_state_ref: reference.clone(),
-        cipher_suite: group.group_ciphersuite_canonical_id()?.to_owned(),
+        cipher_suite: cipher_suite.to_owned(),
         encryption_backup_strategy: strategy,
         backup_strategy_ref: strategy_ref,
     };

@@ -219,6 +219,7 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
     };
     is_wasm_ed25519_seed_key(key)
         || garth::mls::content_roots::is_content_root_vault_key(key)
+        || garth::mls::content_history::is_history_exchange_vault_key(key)
         || scoped_prefix(crate::agent_identity::MANAGED_AGENT_DID_KEYS)
         || key.starts_with(PENDING_LOGOUT_SECRET_KEY_PREFIX)
         || key.contains(&format!(".{PENDING_LOGOUT_SECRET_KEY_PREFIX}"))

@@ -75,6 +75,164 @@ pub(crate) fn decrypt_application_payload_for_effective_scope_internal(
 
 /// The host has already consumed this exact accepted original. Keep its E and
 /// explicit reader endpoint instead of searching a bounded presentation tail.
+pub struct OriginalBoundContentPayload {
+    payload: arkret_sdk::EncryptedPayload,
+    source: arkret_sdk::EventId,
+    content_path: String,
+}
+
+impl std::ops::Deref for OriginalBoundContentPayload {
+    type Target = arkret_sdk::EncryptedPayload;
+    fn deref(&self) -> &Self::Target {
+        &self.payload
+    }
+}
+
+pub trait VerifiedContentPayload {
+    fn payload(&self) -> &arkret_sdk::EncryptedPayload;
+    fn original_slot(&self) -> Option<(&arkret_sdk::EventId, &str)> {
+        None
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod selected_key_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn selected_dek_requires_exact_original_slot_and_reader_without_a_root() {
+        // This isolates local custody and AEAD. Native admission and public
+        // roster verification are exercised at their independent boundaries.
+        let account = crate::test_support::authority("did:web:alice.example");
+        let device = DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1").unwrap();
+        let actor = arkret_sdk::ActorId::account(account.clone());
+        let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+            device_id: device.clone(),
+        };
+        let identity =
+            arkret_sdk::ArkretMlsIdentity::new_test_human_device(actor.clone(), device.clone())
+                .unwrap();
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [81; 32],
+            )),
+        };
+        let mut group = identity.create_group(&scope).unwrap();
+        let reference = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [82; 32]);
+        let material =
+            crate::test_support::content::material(&group, "ak.message.create", &reference);
+        let root = group
+            .export_content_root(&material.content_context.root_context)
+            .unwrap();
+        let key =
+            arkret_crypto::content_history::derive_content_key(&root, &material.content_context)
+                .unwrap();
+        let header = arkret_models_crypto::EventContentPreEncryptionHeader::reconstruct(
+            "1.0",
+            "application/json",
+            arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
+            scope.clone(),
+            "ak.message.create",
+            group.epoch(),
+            reference.clone(),
+            group.local_content_sender_domain().unwrap(),
+            arkret_models_crypto::EventContentRoutingContext::None,
+            material.clone(),
+        )
+        .unwrap();
+        let payload = group
+            .encrypt_payload(header, b"old original after reload")
+            .unwrap();
+        drop(group);
+        let source = arkret_sdk::CommittedEventRef {
+            event_id: reference.clone(),
+            commit_id: arkret_sdk::RealmCommitId::from_digest([83; 32]),
+            stream_ref: arkret_sdk::CommitStreamRef::from_scope(
+                &scope,
+                Some(scope.realm_id().clone()),
+            )
+            .unwrap(),
+            stream_position: 4,
+        };
+        let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+        let vault =
+            garth::mls::content_history::HistoryExchangeVault::new(&secure, &actor, &endpoint);
+        let retained = garth::mls::content_history::RetainedHistoryContentKey::new(
+            source,
+            "/payload/encrypted_content".into(),
+            garth::mls::content_history::RetainedHistoryKeyContext::Body {
+                material: material.clone(),
+            },
+            material.key_commitment,
+            key.as_ref(),
+        )
+        .unwrap();
+        vault.retain_key(&retained).await.unwrap();
+        let state = crate::state::LocalStateStore::default();
+        let mut bound = OriginalBoundContentPayload {
+            payload,
+            source: reference,
+            content_path: "/payload/encrypted_content".into(),
+        };
+        let sender = bound
+            .pre_encryption_header
+            .sender_domain
+            .as_bytes()
+            .to_vec();
+        let open = |bound: &OriginalBoundContentPayload| {
+            decrypt_application_payload_for_scope_from_verified_sender(
+                &state,
+                &secure,
+                scope.realm_id().as_str(),
+                &account,
+                &device,
+                bound,
+                &scope,
+                &sender,
+            )
+        };
+        assert_eq!(
+            open(&bound).as_deref(),
+            Some(b"old original after reload".as_slice())
+        );
+        assert!(
+            decrypt_application_payload_for_scope_from_verified_sender(
+                &state,
+                &secure,
+                scope.realm_id().as_str(),
+                &account,
+                &device,
+                &bound.payload,
+                &scope,
+                &sender
+            )
+            .is_none()
+        );
+        bound.content_path = "/payload/other".into();
+        assert!(open(&bound).is_none());
+        bound.content_path = "/payload/encrypted_content".into();
+        bound.source = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [84; 32]);
+        assert!(open(&bound).is_none());
+        assert!(state.mls_checkpoint_for_scope(&scope).is_none());
+    }
+}
+
+impl VerifiedContentPayload for arkret_sdk::EncryptedPayload {
+    fn payload(&self) -> &arkret_sdk::EncryptedPayload {
+        self
+    }
+}
+
+impl VerifiedContentPayload for OriginalBoundContentPayload {
+    fn payload(&self) -> &arkret_sdk::EncryptedPayload {
+        &self.payload
+    }
+    fn original_slot(&self) -> Option<(&arkret_sdk::EventId, &str)> {
+        Some((&self.source, &self.content_path))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encrypted_payload_from_verified_original(
     state: &crate::state::LocalStateStore,
@@ -84,7 +242,14 @@ pub(crate) fn encrypted_payload_from_verified_original(
     event: &arkret_sdk::Event,
     envelope: &arkret_sdk::EncryptedEnvelope,
     sender: &[u8],
-) -> Option<arkret_sdk::EncryptedPayload> {
+) -> Option<OriginalBoundContentPayload> {
+    use arkret_event_draft::EventContentEnvelopesExt as _;
+    let slots = event.event_content_envelopes().ok()?;
+    let mut matching = slots.iter().filter(|slot| &slot.envelope == envelope);
+    let slot = matching.next()?;
+    if matching.next().is_some() {
+        return None;
+    }
     let scope = &event.scope_ref;
     let material = crate::mls::content_roots::material_from_accepted_original(
         state, secure, account, device, event, envelope,
@@ -99,7 +264,14 @@ pub(crate) fn encrypted_payload_from_verified_original(
             material,
         )
         .ok()?;
-    arkret_sdk::mls::encrypted_envelope_to_payload_with_verified_header(envelope, header).ok()
+    Some(OriginalBoundContentPayload {
+        payload: arkret_sdk::mls::encrypted_envelope_to_payload_with_verified_header(
+            envelope, header,
+        )
+        .ok()?,
+        source: event.event_id.clone(),
+        content_path: slot.content_path.clone(),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -109,10 +281,11 @@ pub fn decrypt_application_payload_for_scope_from_verified_sender(
     realm_id: &str,
     authority: &AccountId,
     device_id: &DeviceId,
-    payload: &arkret_sdk::EncryptedPayload,
+    bound_payload: &impl VerifiedContentPayload,
     effective_scope: &arkret_sdk::ScopeRef,
     verified_sender_domain: &[u8],
 ) -> Option<Vec<u8>> {
+    let payload = bound_payload.payload();
     let plaintext = decrypt_application_payload_for_scope_internal(
         state_store,
         secure_store,
@@ -122,7 +295,44 @@ pub fn decrypt_application_payload_for_scope_from_verified_sender(
         payload,
         effective_scope,
         Some(verified_sender_domain),
-    )?;
+    )
+    .or_else(|| {
+        let (source, path) = bound_payload.original_slot()?;
+        if state_store.realm_projection_has_retired_minimal_metadata_marker(realm_id)
+            || effective_scope.realm_id_opt()?.as_str() != realm_id
+            || payload.pre_encryption_header.effective_scope != *effective_scope
+            || payload.pre_encryption_header.sender_domain.as_bytes() != verified_sender_domain
+            || payload.scheme != arkret_sdk::EncryptedPayloadScheme::EpochContentAead
+        {
+            return None;
+        }
+        payload.verify_payload_digest().ok()?;
+        let actor = arkret_sdk::ActorId::account(authority.clone());
+        let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+            device_id: device_id.clone(),
+        };
+        let key =
+            garth::mls::content_history::HistoryExchangeVault::new(secure_store, &actor, &endpoint)
+                .cached_key(source, path)
+                .ok()??;
+        if key.context
+            != (garth::mls::content_history::RetainedHistoryKeyContext::Body {
+                material: payload.pre_encryption_header.material.clone(),
+            })
+        {
+            return None;
+        }
+        let key = key.key().ok()?;
+        let key: &[u8; 16] = key.as_slice().try_into().ok()?;
+        let plaintext = arkret_crypto::content_history::open_content_from_granted_key(
+            key,
+            &payload.pre_encryption_header,
+            &payload.ciphertext,
+        )
+        .ok()?;
+        state_store.retain_decrypted_content(realm_id, payload.payload_digest.as_str(), &plaintext);
+        Some(plaintext)
+    })?;
     authenticate_received_identity_link(
         state_store,
         secure_store,

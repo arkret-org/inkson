@@ -28,6 +28,7 @@ pub(crate) struct HistoricalContentRosters {
     #[cfg(not(target_arch = "wasm32"))]
     epochs: Arc<Mutex<EpochMap>>,
     revision: Arc<AtomicU64>,
+    controls: Arc<std::sync::Mutex<BTreeMap<arkret_sdk::EventId, arkret_sdk::CommittedEventRef>>>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -50,6 +51,33 @@ impl std::fmt::Debug for HistoricalContentRosters {
 }
 
 impl HistoricalContentRosters {
+    pub(crate) fn note_control(&self, full: &arkret_sdk::CommittedEventFullView) {
+        if matches!(
+            full.event.kind,
+            arkret_sdk::EventKind::MlsHistoryRequest | arkret_sdk::EventKind::MlsHistoryGrant
+        ) {
+            let reference = arkret_sdk::CommittedEventRef {
+                event_id: full.event.event_id.clone(),
+                commit_id: full.commit.commit_id.clone(),
+                stream_ref: full.commit.stream_ref.clone(),
+                stream_position: full.commit.stream_position,
+            };
+            if let Ok(mut controls) = self.controls.lock() {
+                controls.insert(full.event.event_id.clone(), reference);
+            }
+        }
+    }
+
+    pub(crate) fn controls(&self) -> Vec<arkret_sdk::CommittedEventRef> {
+        self.controls
+            .lock()
+            .map(|controls| controls.values().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn note_keys_changed(&self) {
+        self.note_install();
+    }
     /// A process-local presentation input, independent of durable Account and
     /// current-state revisions. Public attribution can arrive after either.
     pub(crate) fn revision(&self) -> u64 {
@@ -65,7 +93,7 @@ impl HistoricalContentRosters {
         self.note_install();
     }
 
-    fn install(
+    pub(crate) fn install(
         &self,
         root: Hash,
         source: &OwnStationStateClient,
@@ -117,6 +145,24 @@ impl HistoricalContentRosters {
     fn epoch(&self, root: &Hash, account: &AccountId) -> Option<SharedEpoch> {
         let epoch = self.with_epochs(|epochs| epochs.get(root).cloned())??;
         (epoch.source.session().ok()?.account_id() == account).then_some(epoch)
+    }
+
+    pub(crate) fn material_for_original(
+        &self,
+        account: &AccountId,
+        original: &Event,
+        envelope: &EncryptedEnvelope,
+    ) -> Option<EventContentMaterial> {
+        let arkret_models_crypto::EncryptedEnvelopeEncryptionContext::EpochContent {
+            root_ref, ..
+        } = &envelope.encryption_context;
+        let epoch = self.epoch(root_ref, account)?;
+        let material = epoch
+            .roster
+            .content_material_for_verified_original(original, envelope)
+            .ok()?;
+        epoch.source.check_session().ok()?;
+        Some(material)
     }
 
     /// Callers supply an exact original from the sealed accepted-page path.

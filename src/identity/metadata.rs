@@ -12,6 +12,26 @@ pub(crate) fn retain_accepted_page_encrypted_originals(
     store: &LocalStateStore,
     page: &impl crate::transport::own_station_results::AcceptedPageRows,
 ) -> Result<(), String> {
+    let Some(endpoint) = crate::secure_key_store::active_device_seed_scope() else {
+        return Ok(());
+    };
+    if store.active_authority().as_ref() != Some(&endpoint.authority)
+        || page
+            .accepted_account()
+            .is_some_and(|account| account != &endpoint.authority)
+    {
+        return Err("history page belongs to another active account".into());
+    }
+    for row in page.accepted_rows()? {
+        if let arkret_sdk::CommittedEventView::Full(full) = row {
+            store.historical_content_rosters.note_control(full);
+            if arkret_event_draft::event_plain_content_blocks(&full.event)
+                .is_ok_and(|blocks| !blocks.is_empty())
+            {
+                store.retain_encrypted_original(&full.event);
+            }
+        }
+    }
     let originals = page
         .accepted_rows()?
         .iter()
@@ -67,6 +87,15 @@ fn retain_accepted_encrypted_original(
     if carriers.is_empty() {
         return;
     }
+    let suite = event.realm_id.digest_suite_code().digest_suite();
+    if event
+        .verify_event_id_matches_content_with_digest_suite(suite)
+        .is_err()
+        || event.verify_producer_proof_self_consistency(suite).is_err()
+    {
+        return;
+    }
+    store.retain_encrypted_original(event);
     let Ok(original) = serde_json::to_value(event) else {
         return;
     };
@@ -78,7 +107,6 @@ fn retain_accepted_encrypted_original(
     ) else {
         return;
     };
-    store.retain_encrypted_original(event);
     for carrier in carriers {
         let Some(payload) = crate::mls::runtime::encrypted_payload_from_verified_original(
             store,

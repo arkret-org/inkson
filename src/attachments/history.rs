@@ -2,7 +2,6 @@
 
 use arkret_models_crypto::{AttachmentContentKeyContext, EncryptedAttachment};
 use arkret_sdk::http_client::own_station_results::OwnStationStateClient;
-use garth::mls::content_roots::ContentRootVault;
 
 /// Both sources stay bound to the live own-Station session. Local key
 /// possession and a rendered descriptor are never original-read authority.
@@ -30,87 +29,20 @@ pub(crate) async fn read_attachment_key(
         ),
         "attachment source is not a message original"
     );
-    let secure = crate::secure_key_store::default_secure_key_store("inkson");
-    let actor = arkret_sdk::ActorId::account(account.clone());
-    let endpoint = arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
-        device_id: device.clone(),
-    };
-    let vault = ContentRootVault::new(secure.as_ref(), &actor, &endpoint);
-    let content = match (
-        event.payload.get("content"),
-        event.payload.get("encrypted_content"),
-    ) {
-        (Some(content), None) => {
-            serde_json::from_value::<arkret_sdk::ContentBlock>(content.clone())?
-        }
-        (None, Some(encrypted)) => {
-            let envelope: arkret_sdk::EncryptedEnvelope =
-                serde_json::from_value(encrypted.clone())?;
-            anyhow::ensure!(envelope.content_type == <arkret_sdk::ContentBlock as arkret_models_crypto::MlsPayloadType>::MLS_CONTENT_TYPE,
-                "attachment source is not a message ContentBlock");
-            let arkret_models_crypto::EncryptedEnvelopeEncryptionContext::EpochContent {
-                root_ref,
-                ..
-            } = &envelope.encryption_context;
-            let root = vault
-                .root(root_ref)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("attachment source content root is pending"))?;
-            let roster = crate::mls::historical_content::read_public_epoch(
-                source,
-                state,
-                &root.root_context,
-            )
-            .await?;
-            let material = roster
-                .content_material_for_verified_original(event, &envelope)
-                .map_err(anyhow::Error::msg)?;
-            let sender = arkret_sdk::mls_basic_credential_identity(event.actual_signer())?;
-            let header = envelope.reconstruct_pre_encryption_header(
-                arkret_sdk::EncryptedPayloadScheme::EpochContentAead,
-                event.scope_ref.clone(),
-                event.kind.as_str(),
-                std::str::from_utf8(&sender)?,
-                None,
-                material,
-            )?;
-            let plaintext = zeroize::Zeroizing::new(arkret_crypto::content_history::open_content(
-                &root.root_base64url,
-                &header,
-                &envelope.ciphertext,
-            )?);
-            serde_json::from_slice::<arkret_sdk::ContentBlock>(&plaintext)?
-        }
-        _ => anyhow::bail!("attachment source content choice is invalid"),
-    };
-    require_original_descriptor(&content, expected, descriptor)?;
+    let key = crate::mls::history_exchange::read_attachment_key(
+        source,
+        state,
+        account,
+        device,
+        original.full()?,
+        expected,
+        descriptor,
+    )
+    .await?;
     original.full()?;
     source.check_session()?;
     ensure_reader(state, account)?;
-    let reference = descriptor.key_ref().group_state_ref.event_id()?;
-    let root = vault
-        .root_for_group_state(&event.scope_ref, &reference)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("attachment original content root is pending"))?;
-    let roster =
-        crate::mls::historical_content::read_public_epoch(source, state, &root.root_context)
-            .await?;
-    roster
-        .validate_content_endpoint_for_original(event, descriptor.producer())
-        .map_err(anyhow::Error::msg)?;
-    let context = descriptor.content_key_context(
-        root.root_context.effective_scope.clone(),
-        root.root_context.genesis_event_ref.clone(),
-        root.root_context.epoch,
-    );
-    let key = arkret_crypto::content_history::derive_attachment_content_key(
-        &root.root_base64url,
-        &context,
-    )?;
-    original.full()?;
-    source.check_session()?;
-    ensure_reader(state, account)?;
-    Ok((context, key))
+    Ok(key)
 }
 
 fn ensure_reader(
@@ -206,7 +138,7 @@ mod tests {
     }
 }
 
-fn require_original_descriptor(
+pub(crate) fn require_original_descriptor(
     original: &arkret_sdk::ContentBlock,
     expected: &arkret_sdk::ContentBlock,
     descriptor: &EncryptedAttachment,

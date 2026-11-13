@@ -1,6 +1,6 @@
 //! Private attachment preparation shared by compose and authenticated rendering.
 pub(crate) mod artifact;
-mod history;
+pub(crate) mod history;
 pub(crate) use history::read_attachment_key;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

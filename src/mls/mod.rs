@@ -25,6 +25,7 @@ pub(crate) mod governance_proof;
 /// with governance bindings; moved out of `views/kanban`.
 pub(crate) mod group_events;
 pub(crate) mod historical_content;
+pub(crate) mod history_exchange;
 pub mod persistence;
 pub(crate) mod roster_install;
 pub mod runtime;
