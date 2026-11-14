@@ -667,6 +667,11 @@ impl LocalStateStore {
         id: &arkret_sdk::EventId,
     ) -> Option<arkret_sdk::Event> {
         self.with_mls_receive_fields(|state, overlay| {
+            if let Some(full) = state.history_exchange_originals.get(id)
+                && full.event.realm_id.as_str() == realm
+            {
+                return Some(full.event.clone());
+            }
             let serialized = overlay
                 .encrypted_originals
                 .get(realm)
@@ -692,6 +697,21 @@ impl LocalStateStore {
                 .unwrap_or_default();
             if let Some(entries) = overlay.encrypted_originals.get(realm) {
                 originals.extend(entries.clone());
+            }
+            // The accepted-page transaction retains source ciphertext before
+            // its shared cursor advances. Async post-commit presentation work
+            // may be cancelled without making a source disappear on restart.
+            for full in state.history_exchange_originals.values().filter(|full| {
+                full.event.realm_id.as_str() == realm
+                    && !matches!(
+                        full.event.kind,
+                        arkret_sdk::EventKind::MlsHistoryRequest
+                            | arkret_sdk::EventKind::MlsHistoryGrant
+                    )
+            }) {
+                if let Ok(serialized) = serde_json::to_string(&full.event) {
+                    originals.insert(full.event.event_id.clone(), serialized);
+                }
             }
             originals
                 .into_iter()

@@ -286,7 +286,7 @@ impl super::ClientLocalState {
             raw_operations: _,
             verified_message_commits: _,
             verified_poll_inputs: _,
-            history_control_originals: _,
+            history_exchange_originals: _,
             verified_reaction_assertions: _,
             verified_poll_prefixes: _,
             verified_sidecar_history: _,
@@ -452,9 +452,9 @@ impl super::ClientLocalState {
             &self.verified_poll_inputs,
         )?;
         changes.map(
-            vec!["history_control_originals".into()],
-            Some(&old.history_control_originals),
-            Some(&self.history_control_originals),
+            vec!["history_exchange_originals".into()],
+            Some(&old.history_exchange_originals),
+            Some(&self.history_exchange_originals),
             |changes, p, a, b| {
                 changes.scalar(p, a, b)?;
                 Ok(())

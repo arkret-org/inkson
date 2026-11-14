@@ -108,7 +108,7 @@ impl LocalStateStore {
             return Err("ordinary accepted page belongs to another account store".into());
         }
         self.ensure_cached_loaded();
-        let controls_changed = self.stage_history_control_originals(page)?;
+        let originals_changed = self.stage_history_exchange_originals(page)?;
         let prior_private_history = self.cached.verified_sidecar_history.clone();
         let private_changes = self.ingest_verified_sidecar_history(page)?;
         let verified_changes = match self.ingest_verified_message_commits(page) {
@@ -134,7 +134,7 @@ impl LocalStateStore {
         // Events here as well: current ciphertext alone cannot establish the
         // sender, scope or AAD used by authenticated metadata decryption.
         // Only the already accepted Full rows above reach this shared funnel.
-        let changes = controls_changed
+        let changes = originals_changed
             + private_changes
             + verified_changes
             + crate::sync_engine::ingest_message_events(self, "", &events)
@@ -177,32 +177,45 @@ impl LocalStateStore {
         Ok(changes + usize::from(coordinates_changed))
     }
 
-    fn stage_history_control_originals(
+    fn stage_history_exchange_originals(
         &mut self,
         page: &impl crate::transport::own_station_results::AcceptedPageRows,
     ) -> Result<usize, String> {
-        let mut next = self.cached.history_control_originals.clone();
+        use arkret_event_draft::EventContentEnvelopesExt as _;
+        let mut next = self.cached.history_exchange_originals.clone();
         let mut changed = 0;
         for row in page.accepted_rows()? {
             let arkret_sdk::CommittedEventView::Full(full) = row else {
                 continue;
             };
-            if !matches!(
+            let control = matches!(
                 full.event.kind,
                 arkret_sdk::EventKind::MlsHistoryRequest | arkret_sdk::EventKind::MlsHistoryGrant
-            ) {
+            );
+            let encrypted = full
+                .event
+                .event_content_envelopes()
+                .is_ok_and(|slots| !slots.is_empty());
+            let attachment =
+                arkret_event_draft::event_plain_content_blocks(&full.event).is_ok_and(|blocks| {
+                    blocks.iter().any(|(path, block)| {
+                        arkret_event_draft::history_attachment_slots(block, path)
+                            .is_ok_and(|slots| !slots.is_empty())
+                    })
+                });
+            if !control && !encrypted && !attachment {
                 continue;
             }
             if let Some(previous) = next.get(&full.event.event_id) {
                 if &**previous != full {
-                    return Err("history control original conflicts at one Event id".into());
+                    return Err("history exchange original conflicts at one Event id".into());
                 }
             } else {
                 next.insert(full.event.event_id.clone(), full.clone().into());
                 changed += 1;
             }
         }
-        self.cached.history_control_originals = next;
+        self.cached.history_exchange_originals = next;
         Ok(changed)
     }
 
@@ -212,9 +225,16 @@ impl LocalStateStore {
     ) -> Vec<arkret_sdk::CommittedEventFullView> {
         let state = self.load();
         state
-            .history_control_originals
+            .history_exchange_originals
             .values()
-            .filter(|full| &full.event.realm_id == realm)
+            .filter(|full| {
+                &full.event.realm_id == realm
+                    && matches!(
+                        full.event.kind,
+                        arkret_sdk::EventKind::MlsHistoryRequest
+                            | arkret_sdk::EventKind::MlsHistoryGrant
+                    )
+            })
             .map(|full| (**full).clone())
             .collect()
     }
@@ -813,7 +833,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn history_controls_commit_with_pages_and_survive_late_pages_reopen_and_rollback() {
+    fn history_sources_and_controls_survive_late_pages_reopen_and_rollback() {
         use arkret_sdk::EventPayloadExt as _;
         let fixture =
             arkret_schema_conformance::spec_json_artifact("fixtures/content-history-fixture.json")
@@ -835,6 +855,13 @@ mod tests {
                 ("ak.mls.history_grant".into(), grant.clone()),
                 ("ak.mls.history_grant".into(), grant.clone()),
                 ("ak.mls.history_grant".into(), grant),
+                (
+                    "ak.strand.update".into(),
+                    serde_json::json!({
+                        "strand_id": arkret_test_kit::subjects::strand_id(),
+                        "patch": {"encrypted_content": {"$op":"set", "value":fixture["kat"]["envelope"]}},
+                    }),
+                ),
             ],
             "bob.example",
             "ak:device:0196419b-0000-7000-8000-000000000001",
@@ -931,6 +958,7 @@ mod tests {
         });
         assert!(refused.is_err());
         assert_eq!(store.history_control_originals(&realm).len(), 2);
+        assert!(store.encrypted_originals_for(realm.as_str()).is_empty());
         store
             .verified_projection_transaction(|store| commit_page(store, 1))
             .unwrap();
@@ -943,14 +971,25 @@ mod tests {
                 .unwrap()
                 .unwrap()
                 .stream_position,
-            4
+            5
         );
         assert_eq!(store.ingest_verified_message_history(&pages[1]).unwrap(), 0);
         let mut retained = store.history_control_originals(&realm);
         retained.sort_by_key(|full| full.commit.stream_position);
-        assert_eq!(retained, items);
+        assert_eq!(retained, items[..4]);
+        // No async metadata/roster post-commit helper has run. The original
+        // source must already survive its cursor and be usable as a hint.
+        assert_eq!(
+            store.encrypted_originals_for(realm.as_str()),
+            vec![items[4].event.clone()]
+        );
+        assert_eq!(
+            store.encrypted_original(realm.as_str(), &items[4].event.event_id),
+            Some(items[4].event.clone())
+        );
         store.switch_test_account("did:web:another.example");
         assert!(store.history_control_originals(&realm).is_empty());
+        assert!(store.encrypted_originals_for(realm.as_str()).is_empty());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
