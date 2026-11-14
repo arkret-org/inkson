@@ -108,6 +108,7 @@ impl LocalStateStore {
             return Err("ordinary accepted page belongs to another account store".into());
         }
         self.ensure_cached_loaded();
+        let controls_changed = self.stage_history_control_originals(page)?;
         let prior_private_history = self.cached.verified_sidecar_history.clone();
         let private_changes = self.ingest_verified_sidecar_history(page)?;
         let verified_changes = match self.ingest_verified_message_commits(page) {
@@ -133,7 +134,8 @@ impl LocalStateStore {
         // Events here as well: current ciphertext alone cannot establish the
         // sender, scope or AAD used by authenticated metadata decryption.
         // Only the already accepted Full rows above reach this shared funnel.
-        let changes = private_changes
+        let changes = controls_changed
+            + private_changes
             + verified_changes
             + crate::sync_engine::ingest_message_events(self, "", &events)
             + crate::sync_engine::ingest_kanban_events(self, "", &events);
@@ -173,6 +175,48 @@ impl LocalStateStore {
                 .map_err(|error| format!("persist structural Commit coordinates: {error}"))?;
         }
         Ok(changes + usize::from(coordinates_changed))
+    }
+
+    fn stage_history_control_originals(
+        &mut self,
+        page: &impl crate::transport::own_station_results::AcceptedPageRows,
+    ) -> Result<usize, String> {
+        let mut next = self.cached.history_control_originals.clone();
+        let mut changed = 0;
+        for row in page.accepted_rows()? {
+            let arkret_sdk::CommittedEventView::Full(full) = row else {
+                continue;
+            };
+            if !matches!(
+                full.event.kind,
+                arkret_sdk::EventKind::MlsHistoryRequest | arkret_sdk::EventKind::MlsHistoryGrant
+            ) {
+                continue;
+            }
+            if let Some(previous) = next.get(&full.event.event_id) {
+                if &**previous != full {
+                    return Err("history control original conflicts at one Event id".into());
+                }
+            } else {
+                next.insert(full.event.event_id.clone(), full.clone().into());
+                changed += 1;
+            }
+        }
+        self.cached.history_control_originals = next;
+        Ok(changed)
+    }
+
+    pub(crate) fn history_control_originals(
+        &self,
+        realm: &arkret_sdk::RealmId,
+    ) -> Vec<arkret_sdk::CommittedEventFullView> {
+        let state = self.load();
+        state
+            .history_control_originals
+            .values()
+            .filter(|full| &full.event.realm_id == realm)
+            .map(|full| (**full).clone())
+            .collect()
     }
 
     pub(crate) fn verified_commit_stream_cursor(
@@ -767,6 +811,147 @@ fn merge_verified_poll_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_controls_commit_with_pages_and_survive_late_pages_reopen_and_rollback() {
+        use arkret_sdk::EventPayloadExt as _;
+        let fixture =
+            arkret_schema_conformance::spec_json_artifact("fixtures/content-history-fixture.json")
+                .unwrap();
+        let grant: arkret_models_crypto::HistoryGrant =
+            serde_json::from_value(fixture["hpke_grant"]["grant"].clone()).unwrap();
+        let request = serde_json::to_value(arkret_models_crypto::HistoryRequest {
+            recipient: grant.recipient.clone(),
+            recipient_hpke_key_base64url: grant.recipient_hpke_key_base64url.clone(),
+            history_cut: grant.history_cut.clone(),
+            expires_at: crate::test_support::committed_event::fixture_time(600),
+        })
+        .unwrap();
+        let grant = serde_json::to_value(grant).unwrap();
+        let (bundle, keys, items) = crate::test_support::committed_event::verified_realm_fixture_as(
+            arkret_test_kit::subjects::realm_id(),
+            vec![
+                ("ak.mls.history_request".into(), request),
+                ("ak.mls.history_grant".into(), grant.clone()),
+                ("ak.mls.history_grant".into(), grant.clone()),
+                ("ak.mls.history_grant".into(), grant),
+            ],
+            "bob.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        );
+        // This is a signed stream/transaction test, not disclosure admission.
+        // The server suite separately binds grant requests and current readers.
+        items[0].event.as_mls_history_request().unwrap();
+        let realm = bundle.realm_id.clone();
+        let stream = arkret_sdk::CommitStreamRef::Realm {
+            realm_id: realm.clone(),
+        };
+        let request = arkret_sdk::RealmAuthorityBundleRequestBody {
+            realm_id: realm.clone(),
+            nonce: bundle.current_assertion.nonce.clone(),
+        };
+        let freshness = arkret_identity::RealmAuthorityFreshness::new(
+            bundle.bundle_issued_at + chrono::Duration::seconds(50),
+            request.nonce.clone(),
+        );
+        let mut replica = garth::RealmReplica::new(realm.clone());
+        replica
+            .install_verified_authority(&request, bundle.clone(), &freshness, &keys)
+            .unwrap();
+        let mut rows = vec![arkret_sdk::CommittedEventView::Full(
+            arkret_sdk::CommittedEventFullView {
+                commit: bundle.genesis_commit.clone(),
+                event: bundle.genesis_event.clone(),
+            },
+        )];
+        rows.extend(
+            items
+                .iter()
+                .cloned()
+                .map(arkret_sdk::CommittedEventView::Full),
+        );
+        let mut pages = Vec::new();
+        for (after, rows) in [(None, rows[..3].to_vec()), (Some(2), rows[3..].to_vec())] {
+            pages.push(
+                replica
+                    .apply_verified_scan(
+                        &arkret_sdk::StreamScanRequestBody {
+                            realm_id: realm.clone(),
+                            stream_ref: stream.clone(),
+                            direction: arkret_sdk::StreamScanDirection::After(after),
+                            limit: 3,
+                        },
+                        arkret_sdk::StreamScanResponseBody {
+                            committed_events: rows,
+                            readable_floor: Some(arkret_sdk::ReadableFloor {
+                                oldest_position: 0,
+                                floor_commit_id: bundle.genesis_commit.commit_id.clone(),
+                                floor_reason: arkret_sdk::ReadableFloorReason::StreamStart,
+                            }),
+                            truncated: false,
+                        },
+                        &freshness,
+                        &keys,
+                    )
+                    .unwrap(),
+            );
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("history-controls.json");
+        let mut store = LocalStateStore::with_path(&path);
+        let commit_page = |store: &mut LocalStateStore, index: usize| {
+            store.ingest_verified_message_history(&pages[index])?;
+            let row = pages[index].rows().last().unwrap();
+            store.save_verified_commit_stream_cursor(
+                &stream,
+                arkret_sdk::CommitStreamHead {
+                    stream_ref: stream.clone(),
+                    commit_id: row.commit().commit_id.clone(),
+                    stream_position: row.commit().stream_position,
+                },
+            )
+        };
+        store
+            .verified_projection_transaction(|store| commit_page(store, 0))
+            .unwrap();
+        drop(store);
+        let mut store = LocalStateStore::with_path(&path);
+        assert_eq!(store.history_control_originals(&realm).len(), 2);
+        assert_eq!(
+            store
+                .verified_commit_stream_cursor(&stream)
+                .unwrap()
+                .unwrap()
+                .stream_position,
+            2
+        );
+        let refused: Result<(), String> = store.verified_projection_transaction(|store| {
+            commit_page(store, 1)?;
+            Err("refuse later page before cursor commit".into())
+        });
+        assert!(refused.is_err());
+        assert_eq!(store.history_control_originals(&realm).len(), 2);
+        store
+            .verified_projection_transaction(|store| commit_page(store, 1))
+            .unwrap();
+        drop(store);
+        let mut store = LocalStateStore::with_path(&path);
+        assert_eq!(store.history_control_originals(&realm).len(), 4);
+        assert_eq!(
+            store
+                .verified_commit_stream_cursor(&stream)
+                .unwrap()
+                .unwrap()
+                .stream_position,
+            4
+        );
+        assert_eq!(store.ingest_verified_message_history(&pages[1]).unwrap(), 0);
+        let mut retained = store.history_control_originals(&realm);
+        retained.sort_by_key(|full| full.commit.stream_position);
+        assert_eq!(retained, items);
+        store.switch_test_account("did:web:another.example");
+        assert!(store.history_control_originals(&realm).is_empty());
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]

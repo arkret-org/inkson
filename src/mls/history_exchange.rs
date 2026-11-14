@@ -14,6 +14,19 @@ pub(crate) use selected::read_attachment_key;
 
 use crate::runtime::input::StateStoreHandle;
 
+fn observe_exchange(stage: &'static str, controls: usize, source: Option<&arkret_sdk::EventId>) {
+    #[cfg(any(
+        feature = "spec-conformance",
+        all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
+    ))]
+    tracing::warn!(stage, controls, source = ?source, "history key exchange checkpoint");
+    #[cfg(not(any(
+        feature = "spec-conformance",
+        all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
+    )))]
+    let _ = (stage, controls, source);
+}
+
 fn reference(full: &CommittedEventFullView) -> CommittedEventRef {
     CommittedEventRef {
         event_id: full.event.event_id.clone(),
@@ -133,12 +146,14 @@ pub(crate) async fn reconcile(
         realm_id: realm.clone(),
     };
     pending::expire_request(&vault, &scope, crate::clock::now_utc()).await?;
-    let (cache, originals) = state.read(|store| {
+    let (cache, originals, mut controls) = state.read(|store| {
         (
             store.historical_content_rosters.clone(),
             store.encrypted_originals_for(realm.as_str()),
+            store.history_control_originals(realm),
         )
     });
+    observe_exchange("accepted_controls_loaded", controls.len(), None);
     let mut missing = false;
     let mut cut = None::<CommittedEventRef>;
     for event in originals.iter().filter(|event| event.scope_ref == scope) {
@@ -183,7 +198,7 @@ pub(crate) async fn reconcile(
             }
         }
     }
-    if !missing && cache.controls().is_empty() {
+    if !missing && controls.is_empty() {
         return Ok(());
     }
     let current = crate::mls::send_gate::read_durable_mls_current(
@@ -258,24 +273,20 @@ pub(crate) async fn reconcile(
         };
         publish(source, state, pending.event()).await?;
     }
-    let mut controls = cache.controls();
-    controls.sort_by_key(|control| control.stream_position);
+    controls.sort_by_key(|control| control.commit.stream_position);
     for control in controls.iter().filter(|control| {
-        control.stream_ref
+        control.commit.stream_ref
             == arkret_sdk::CommitStreamRef::Realm {
                 realm_id: realm.clone(),
             }
     }) {
         let dependency = garth::own_station_results::read_window_dependency_by_event_id(
             source,
-            &control.event_id,
+            &control.event.event_id,
         )
         .await?;
         let full = dependency.full()?;
-        anyhow::ensure!(
-            reference(full) == *control,
-            "history control original differs"
-        );
+        anyhow::ensure!(full == control, "history control original differs");
         match full.event.kind {
             EventKind::MlsHistoryRequest if full.event.actor_id != actor => {
                 // This registered preview schedules work only. Atomic native
@@ -347,7 +358,7 @@ pub(crate) async fn reconcile(
                     {
                         if !controls
                             .iter()
-                            .any(|accepted| accepted.event_id == frozen.event_id)
+                            .any(|accepted| accepted.event.event_id == frozen.event_id)
                         {
                             publish(source, state, &frozen).await?;
                         }
@@ -494,6 +505,11 @@ pub(crate) async fn reconcile(
                     vault.retain_key(&retained).await?;
                     if !known {
                         cache.note_keys_changed();
+                        observe_exchange(
+                            "selected_key_durable",
+                            controls.len(),
+                            Some(source_event_ref),
+                        );
                     }
                 }
             }

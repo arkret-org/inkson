@@ -29,7 +29,6 @@ pub(crate) struct HistoricalContentRosters {
     epochs: Arc<Mutex<EpochMap>>,
     revision: Arc<AtomicU64>,
     content_key_revision: Arc<AtomicU64>,
-    controls: Arc<std::sync::Mutex<BTreeMap<arkret_sdk::EventId, arkret_sdk::CommittedEventRef>>>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -52,30 +51,6 @@ impl std::fmt::Debug for HistoricalContentRosters {
 }
 
 impl HistoricalContentRosters {
-    pub(crate) fn note_control(&self, full: &arkret_sdk::CommittedEventFullView) {
-        if matches!(
-            full.event.kind,
-            arkret_sdk::EventKind::MlsHistoryRequest | arkret_sdk::EventKind::MlsHistoryGrant
-        ) {
-            let reference = arkret_sdk::CommittedEventRef {
-                event_id: full.event.event_id.clone(),
-                commit_id: full.commit.commit_id.clone(),
-                stream_ref: full.commit.stream_ref.clone(),
-                stream_position: full.commit.stream_position,
-            };
-            if let Ok(mut controls) = self.controls.lock() {
-                controls.insert(full.event.event_id.clone(), reference);
-            }
-        }
-    }
-
-    pub(crate) fn controls(&self) -> Vec<arkret_sdk::CommittedEventRef> {
-        self.controls
-            .lock()
-            .map(|controls| controls.values().cloned().collect())
-            .unwrap_or_default()
-    }
-
     pub(crate) fn note_keys_changed(&self) {
         self.content_key_revision.fetch_add(1, Ordering::Release);
         self.note_install();

@@ -24,7 +24,6 @@ pub(crate) fn retain_accepted_page_encrypted_originals(
     }
     for row in page.accepted_rows()? {
         if let arkret_sdk::CommittedEventView::Full(full) = row {
-            store.historical_content_rosters.note_control(full);
             if arkret_event_draft::event_plain_content_blocks(&full.event)
                 .is_ok_and(|blocks| !blocks.is_empty())
             {

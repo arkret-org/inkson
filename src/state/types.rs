@@ -913,6 +913,13 @@ pub struct ClientLocalState {
     pub(crate) verified_message_commits: super::account_items::Shared<Vec<VerifiedMessageCommit>>,
     #[serde(default)]
     pub(crate) verified_poll_inputs: super::account_items::Shared<Vec<VerifiedPollInput>>,
+    /// Accepted control originals are scheduling hints only. Every use reads
+    /// the exact original again through the current own-Station session.
+    #[serde(default)]
+    pub(crate) history_control_originals: imbl::OrdMap<
+        arkret_sdk::EventId,
+        super::account_items::Shared<arkret_sdk::CommittedEventFullView>,
+    >,
     #[serde(default)]
     pub(crate) verified_reaction_assertions:
         super::account_items::Shared<Vec<VerifiedReactionAssertion>>,
@@ -1502,6 +1509,7 @@ impl Default for ClientLocalState {
             raw_operations: Vec::new().into(),
             verified_message_commits: Vec::new().into(),
             verified_poll_inputs: Vec::new().into(),
+            history_control_originals: imbl::OrdMap::new(),
             verified_reaction_assertions: Vec::new().into(),
             verified_poll_prefixes: imbl::OrdMap::new(),
             verified_sidecar_history: imbl::OrdMap::new(),
