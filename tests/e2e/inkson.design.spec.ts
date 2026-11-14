@@ -3,6 +3,12 @@ import { writeFileSync } from "node:fs";
 import { registerStrandsBeforeEach, openKanban, dismissBlockingRecoveryModal, dismissHistoryRecoveryModal } from "./strandsHarness";
 
 registerStrandsBeforeEach();
+async function toggleTheme(page: import("@playwright/test").Page) {
+  const more = page.locator(".topbar-more .sapid-popover-trigger");
+  if (await more.isVisible()) await more.click();
+  await page.locator(".theme-toggle-button:visible").click();
+  await page.keyboard.press("Escape");
+}
 
 test("theme text and action colors retain contrast on their surfaces", async ({ page }, testInfo) => {
   await openKanban(page);
@@ -32,7 +38,7 @@ test("theme text and action colors retain contrast on their surfaces", async ({ 
     check("--text-on-accent", "--accent");
     check("--text-on-accent", "--accent-2");
     check("--nav-muted", "--nav-bg-2");
-    await page.locator(".theme-toggle-button:visible").click();
+    await toggleTheme(page);
   }
   await testInfo.attach("computed-palette-contrast", { body: JSON.stringify(measurements, null, 2), contentType: "application/json" });
 });
@@ -54,7 +60,7 @@ for (const width of [1280, 390]) {
     await expect(title).toHaveValue("Retained list draft");
     await addList.click();
     await page.screenshot({ path: testInfo.outputPath(`board-dark-${width}.png`) });
-    await page.locator(".theme-toggle-button:visible").click();
+    await toggleTheme(page);
     await page.screenshot({ path: testInfo.outputPath(`board-alternate-${width}.png`) });
     const realm = decodeURIComponent(new URL(page.url()).pathname.split("/")[2]);
     await page.goto(`/chat/${encodeURIComponent(realm)}`);
@@ -71,6 +77,8 @@ for (const width of [1280, 390]) {
     await shell.locator(".discussion-users-toggle").click();
     await expect(shell.locator(".discussion-details-panel")).toBeVisible();
     await shell.locator(".discussion-users-toggle").click();
+    await expect(shell.locator(".discussion-details-panel")).toBeHidden();
+    await expect(shell).toHaveClass(/right-collapsed/);
     await expect(input).toHaveValue("A draft that must survive opening conversation details");
     const area = await shell.locator(".discussion-main-panel").boundingBox();
     const composer = await shell.locator(".discussion-composer").boundingBox();
@@ -84,7 +92,7 @@ for (const width of [1280, 390]) {
       body: JSON.stringify({ viewport: page.viewportSize(), discussion: area, composer }),
       contentType: "application/json",
     });
-    await page.locator(".theme-toggle-button:visible").click();
+    await toggleTheme(page);
     await expect(input).toHaveValue("A draft that must survive opening conversation details");
     await page.screenshot({ path: testInfo.outputPath(`discussion-alternate-${width}.png`) });
   });
@@ -109,9 +117,9 @@ test("attachment failures expose retry while preserving the message draft", asyn
   let uploads = 0;
   await page.route(/\/_arkret\/self\/blob\/upload(?:\?.*)?$/, async route => {
     uploads += 1;
-    await route.fulfill({ status: 503, contentType: "application/problem+json", body: JSON.stringify({
-      type: "https://arkret.org/problems/service_unavailable", title: "Service unavailable", status: 503,
-      detail: "Temporary attachment service failure",
+    await route.fulfill({ status: 403, contentType: "application/problem+json", body: JSON.stringify({
+      type: "https://arkret.org/problems/blob_quota_exceeded", title: "Blob quota exceeded", status: 403,
+      detail: "The test account storage quota is exhausted.",
     }) });
   });
   const chooser = page.waitForEvent("filechooser");

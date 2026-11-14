@@ -224,7 +224,7 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
             line(
                 "auth-brand",
                 vec![
-                    plain("C"),
+                    crate::presentation::widgets::arkret_logo("auth-mark"),
                     stack(
                         "",
                         vec![heading(1, "", "Create account"), paragraph("", "Arkret")],
@@ -235,11 +235,15 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
                 "auth-form",
                 vec![
                     status,
+                    paragraph(
+                        "muted auth-server-help",
+                        context.translated(scope, "login.station_help"),
+                    ),
                     input(
                         scope,
                         context.clone(),
                         "register-server",
-                        "Station",
+                        "login.station",
                         station,
                         scope.bond(move || !busy.get()),
                     ),

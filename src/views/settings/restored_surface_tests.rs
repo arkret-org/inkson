@@ -98,52 +98,80 @@ fn type_into(app: &App, class_name: &str, value: &str) {
 }
 
 #[test]
-fn theme_has_separate_cards_icon_choices_current_value_switcher_and_live_direction() {
+fn theme_has_one_localized_radio_group_and_reports_the_effective_system_theme() {
     let (app, context, _directory) = harness();
     app.mount(theme_page(app.scope(), context.clone())).unwrap();
     app.flush().unwrap();
     class(&app, "theme-settings");
     class(&app, "language-settings");
     class(&app, "theme-switcher");
-    assert_eq!(
-        nodes(&app)
-            .iter()
-            .filter(|id| app
-                .tree()
-                .node(**id)
+    let radios = nodes(&app)
+        .into_iter()
+        .filter(|id| {
+            app.tree()
+                .node(*id)
                 .unwrap()
                 .descriptor
                 .view()
                 .classes
                 .iter()
-                .any(|value| value == "settings-theme-choice"))
-            .count(),
-        3
-    );
-    let night = class(&app, "settings-theme-night");
-    app.dispatch(night, Event::Activate).unwrap();
+                .any(|value| value == "theme-switcher-option")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(radios.len(), 3);
+    let dark = radios
+        .iter()
+        .copied()
+        .find(|id| {
+            app.tree()
+                .node(*id)
+                .unwrap()
+                .descriptor
+                .view()
+                .name
+                .as_deref()
+                == Some("Dark")
+        })
+        .unwrap();
+    app.dispatch(dark, Event::CheckedChanged(true)).unwrap();
     app.flush().unwrap();
     assert_eq!(context.theme.get_untracked(), "night");
+    assert!(
+        matches!(app.tree().node(dark).unwrap().descriptor.view().props, Props::Check(value) if value.checked)
+    );
+    context.locale.revise(|locale| *locale = UiLocale::Zh);
+    context.theme.revise(|value| *value = "system".into());
+    context.system_theme_is_night.revise(|value| *value = true);
+    app.flush().unwrap();
     assert_eq!(
         app.tree()
-            .node(night)
+            .node(dark)
             .unwrap()
             .descriptor
             .view()
-            .semantics
-            .as_ref()
-            .unwrap()
-            .pressed,
-        Some(true)
+            .name
+            .as_deref(),
+        Some("深色")
     );
-    let direction = class(&app, "text-direction");
-    context.locale.revise(|locale| *locale = UiLocale::Zh);
-    app.flush().unwrap();
-    assert_eq!(class(&app, "settings-theme-night"), night);
+    let effective = class(&app, "theme-effective-description");
     assert!(
-        matches!(app.tree().node(direction).unwrap().descriptor.view().props,Props::Text(value) if value.content==UiLocale::Zh.direction().as_str())
+        matches!(app.tree().node(effective).unwrap().descriptor.view().props, Props::Text(value) if value.content.contains("深色"))
     );
-    assert!(nodes(&app).iter().any(|id|matches!(app.tree().node(*id).unwrap().descriptor.view().props,Props::Text(value) if value.content==crate::i18n::tr_args("settings.theme.current",&[("theme","night".into())]))));
+    context.system_theme_is_night.revise(|value| *value = false);
+    app.flush().unwrap();
+    assert!(
+        matches!(app.tree().node(effective).unwrap().descriptor.view().props, Props::Text(value) if value.content.contains("浅色"))
+    );
+    assert!(!nodes(&app).iter().any(|id| {
+        app.tree()
+            .node(*id)
+            .unwrap()
+            .descriptor
+            .view()
+            .classes
+            .iter()
+            .any(|value| value == "text-direction" || value == "settings-theme-choice")
+    }));
 }
 
 #[test]

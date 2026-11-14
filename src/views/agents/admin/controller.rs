@@ -9,6 +9,14 @@
 
 use super::*;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AgentListPhase {
+    Loading,
+    Ready,
+    Failed,
+    SignInRequired,
+}
+
 /// Signals the Agent settings writes fold their outcome back into.
 #[derive(Clone)]
 pub(super) struct AgentAdminController {
@@ -16,6 +24,7 @@ pub(super) struct AgentAdminController {
     pub(super) owner: glory::ui::WeakScope,
     pub(super) agents: Cage<Vec<AgentView>>,
     pub(super) list_status: Cage<String>,
+    pub(super) list_phase: Cage<AgentListPhase>,
     pub(super) last_op_status: Cage<String>,
     /// Guards against an out-of-order directory response overwriting a newer
     /// one: every refresh claims the next epoch and drops its own result once
@@ -177,6 +186,7 @@ impl AgentAdminController {
         let Self {
             agents,
             list_status,
+            list_phase,
             refresh_epoch,
             ..
         } = self.clone();
@@ -186,6 +196,8 @@ impl AgentAdminController {
             *value = next;
         });
         if let Some(scope) = owner.upgrade() {
+            list_phase.revise(|phase| *phase = AgentListPhase::Loading);
+            list_status.revise(String::clear);
             {
                 let _ = scope.owner().spawn(async move {
                     crate::runtime_helpers::sleep_for(Duration::from_millis(1)).await;
@@ -193,6 +205,7 @@ impl AgentAdminController {
                         if refresh_epoch.get_untracked() != request_epoch {
                             return;
                         }
+                        list_phase.revise(|phase| *phase = AgentListPhase::SignInRequired);
                         list_status.revise(|value| {
                             let next = "Sign in to load your agents.".to_owned();
                             *value = next;
@@ -228,11 +241,13 @@ impl AgentAdminController {
                                 });
                             }
                             agents.revise(|current| replace_agent_directory(current, rows));
+                            list_phase.revise(|phase| *phase = AgentListPhase::Ready);
                         }
                         Err(err) => {
                             if refresh_epoch.get_untracked() != request_epoch {
                                 return;
                             }
+                            list_phase.revise(|phase| *phase = AgentListPhase::Failed);
                             list_status.revise(|value| {
                                 let next = format!("Failed to load agents: {}", err.display());
                                 *value = next;

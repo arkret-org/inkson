@@ -454,7 +454,15 @@ fn theme_toggle_button(scope: &Scope, context: Rc<InksonContext>) -> View {
             )
         }
     });
-    let name = scope.bond(move || chrome.get().1);
+    let caption_context = context.clone();
+    let name = scope.bond(move || {
+        let _ = caption_context.locale.get();
+        caption_context.tr(if chrome.get().0 == "sun" {
+            "theme.switch_to_light"
+        } else {
+            "theme.switch_to_dark"
+        })
+    });
     let sun = scope.bond(move || chrome.get().0 == "sun");
     Box::new(
         sapid::button()
@@ -462,8 +470,11 @@ fn theme_toggle_button(scope: &Scope, context: Rc<InksonContext>) -> View {
             .class("btn icon theme-toggle-button")
             .name(name)
             .fill(
-                glory::ui::when(sun, || crate::components::ui_icon("sun"))
-                    .otherwise(|| crate::components::ui_icon("moon")),
+                glory::ui::group().fill((
+                    glory::ui::when(sun, || crate::components::ui_icon("sun"))
+                        .otherwise(|| crate::components::ui_icon("moon")),
+                    text().class("theme-toggle-caption").content(name),
+                )),
             )
             .on_press(move || {
                 let next = super::next_manual_theme(&context.theme.get());
@@ -901,16 +912,22 @@ fn topbar(
                 "actions",
                 vec![
                     search,
-                    theme_toggle_button(scope, context.clone()),
-                    icon_action(
-                        "btn icon",
-                        context.translated(scope, "shortcuts.title"),
-                        "keyboard",
-                        {
-                            let ui = ui.clone();
-                            move || ui.shortcut_open.revise(|value| *value = !*value)
-                        },
+                    block(
+                        "desktop-chrome-actions",
+                        vec![
+                            theme_toggle_button(scope, context.clone()),
+                            icon_action(
+                                "btn icon",
+                                context.translated(scope, "shortcuts.title"),
+                                "keyboard",
+                                {
+                                    let ui = ui.clone();
+                                    move || ui.shortcut_open.revise(|value| *value = !*value)
+                                },
+                            ),
+                        ],
                     ),
+                    topbar_more(scope, context.clone(), ui.clone()),
                     notifications_button(scope, &context, unread, {
                         let ui = ui.clone();
                         move || ui.notifications_open.revise(|value| *value = !*value)
@@ -919,6 +936,49 @@ fn topbar(
                 ],
             ),
         ],
+    )
+}
+fn topbar_more(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
+    let open = scope.cage(false);
+    let help_ui = ui.clone();
+    let appearance = context.clone();
+    let mut content = Some(block(
+        "topbar-more-actions",
+        vec![
+            theme_toggle_button(scope, context.clone()),
+            nav(
+                appearance,
+                Route::SettingsSection {
+                    section: "theme".into(),
+                    filter: String::new(),
+                },
+                "secondary",
+                context.translated(scope, "settings.group.appearance"),
+                "",
+            ),
+            action(
+                "secondary",
+                context.translated(scope, "shortcuts.title"),
+                move || {
+                    open.revise(|value| *value = false);
+                    help_ui.shortcut_open.revise(|value| *value = true);
+                },
+            ),
+        ],
+    ));
+    block(
+        "topbar-more",
+        vec![Box::new(
+            sapid::popover(format!("topbar-more-{}", scope.id().slot()))
+                .unstyled()
+                .class("topbar-more-panel")
+                .label(context.translated(scope, "app.nav.more"))
+                .open(open)
+                .on_open_change(move |next| open.revise(|value| *value = next))
+                .trigger_content(|| Box::new(text().content("•••")) as View)
+                .content_policy(sapid::ContentPolicy::KeepMounted)
+                .content(move || content.take().unwrap_or_else(empty)),
+        ) as View],
     )
 }
 pub(super) fn account_page_avatar(
@@ -1077,6 +1137,9 @@ pub(super) fn account_rail_link(scope: &Scope, context: Rc<InksonContext>) -> Vi
             }))
             .fill((
                 avatar,
+                text()
+                    .class("rail-label")
+                    .content(context.translated(scope, "route.account")),
                 reactive(online, move |_, online| {
                     if online {
                         Box::new(text().class("dot-online").content("")) as View
@@ -2031,7 +2094,20 @@ mod tests {
         ))
         .unwrap();
         app.flush().unwrap();
-        let trigger = nodes(&app, "sapid-popover-trigger")[0];
+        let triggers = nodes(&app, "sapid-popover-trigger")
+            .into_iter()
+            .filter(|id| {
+                app.tree()
+                    .node(*id)
+                    .unwrap()
+                    .descriptor
+                    .view()
+                    .name
+                    .as_deref()
+                    != Some("More")
+            })
+            .collect::<Vec<_>>();
+        let trigger = triggers[0];
         app.dispatch(trigger, glory::render::Event::Activate)
             .unwrap();
         app.flush().unwrap();
@@ -2040,7 +2116,21 @@ mod tests {
         for _ in 0..3 {
             context.state_revision.revise(|revision| *revision += 1);
             app.flush().unwrap();
-            assert_eq!(nodes(&app, "sapid-popover-trigger"), vec![trigger]);
+            assert_eq!(
+                nodes(&app, "sapid-popover-trigger")
+                    .into_iter()
+                    .filter(|id| app
+                        .tree()
+                        .node(*id)
+                        .unwrap()
+                        .descriptor
+                        .view()
+                        .name
+                        .as_deref()
+                        != Some("More"))
+                    .collect::<Vec<_>>(),
+                triggers
+            );
             assert_eq!(
                 nodes(&app, "realm-nav-menu-panel"),
                 panel,
@@ -2081,7 +2171,19 @@ mod tests {
                 .view()
                 .hidden()
         );
-        let next_trigger = nodes(&app, "sapid-popover-trigger")[0];
+        let next_trigger = nodes(&app, "sapid-popover-trigger")
+            .into_iter()
+            .find(|id| {
+                app.tree()
+                    .node(*id)
+                    .unwrap()
+                    .descriptor
+                    .view()
+                    .name
+                    .as_deref()
+                    != Some("More")
+            })
+            .unwrap();
         assert_ne!(next_trigger, trigger);
         app.dispatch(next_trigger, glory::render::Event::Activate)
             .unwrap();

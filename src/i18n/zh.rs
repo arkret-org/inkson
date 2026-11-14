@@ -526,8 +526,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("login.working", "处理中...");
     dict.set("login.title", "登录");
     dict.set("login.completing", "正在完成登录");
-    dict.set("login.station", "登录服务器");
-    dict.set("login.station_url", "登录服务器地址");
+    dict.set("login.station", "账号服务器");
+    dict.set("login.station_url", "账号服务器地址");
     dict.set("login.show_preset_servers", "显示预设服务器");
     dict.set("login.preset_servers", "预设服务器");
     dict.set("login.status.signed_out", "未登录");
@@ -669,17 +669,17 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.section.account", "账号信息");
     dict.set("settings.section.agents", "我的智能体");
     dict.set("settings.section.server", "服务器信息");
-    dict.set("settings.section.devices", "设备");
+    dict.set("settings.section.devices", "设备与会话");
     dict.set("settings.section.storage", "数据与同步");
-    dict.set("settings.section.encryption", "安全");
-    dict.set("settings.section.recovery", "恢复");
+    dict.set("settings.section.encryption", "加密历史与内容密钥");
+    dict.set("settings.section.recovery", "恢复身份与换设备");
     dict.set("settings.section.mimi", "集成");
     dict.set("settings.section.notifications", "通知");
     dict.set("settings.section.privacy", "隐私与分享");
     dict.set("settings.section.invite_policy", "谁能邀请我");
-    dict.set("settings.section.consent", "邀请与同意");
+    dict.set("settings.section.consent", "处理邀请与同意");
     dict.set("settings.section.blocklist", "屏蔽名单");
-    dict.set("settings.section.capabilities", "应用授权");
+    dict.set("settings.section.capabilities", "查看应用授权");
     dict.set("settings.section.theme", "外观与语言");
     dict.set("settings.section.release", "发布状态");
     dict.set("settings.section.audit", "审计日志");
@@ -725,14 +725,17 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.invite_locator.sign_in", "登录后显示安全邀请链接");
     // Settings navigation - group labels + hints.
     dict.set("settings.group.account", "账号");
-    dict.set("settings.group.account.hint", "身份、智能体与服务器。");
-    dict.set("settings.group.security", "设备与安全");
+    dict.set("settings.group.account.hint", "个人资料与账号服务器。");
+    dict.set("settings.group.security", "设备与恢复");
     dict.set(
         "settings.group.security.hint",
         "已登录设备、恢复与应用授权。",
     );
     dict.set("settings.group.privacy", "隐私");
-    dict.set("settings.group.privacy.hint", "个人私密的披露控制。");
+    dict.set(
+        "settings.group.privacy.hint",
+        "资料可见范围、邀请和屏蔽名单。",
+    );
     dict.set("settings.group.notifications", "通知");
     dict.set("settings.group.notifications.hint", "通知投递行为。");
     dict.set("settings.group.appearance", "外观与语言");
@@ -1052,9 +1055,8 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("settings.theme.badge", "外观");
     dict.set("settings.theme.light", "浅色主题");
-    dict.set("settings.theme.night", "深色主题");
+    dict.set("settings.theme.night", "深色");
     dict.set("settings.theme.system", "跟随系统");
-    dict.set("settings.theme.current", "当前：{theme}");
     dict.set("settings.language.title", "语言");
     dict.set("settings.session_diagnostics.title", "会话诊断");
     dict.set("settings.proof_mode.real_ed25519", "真实 Ed25519");
@@ -2211,7 +2213,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("search.kind.message", "消息");
 
-    dict.set("login.create_identity", "第一次使用？创建可恢复的身份");
+    dict.set("login.create_identity", "第一次使用？创建账号");
     dict.set("login.connection.review", "检查服务器变更");
     dict.set("login.connection.changed", "服务器连接已变更");
     dict.set("login.connection.identity_changed", "服务器身份已变更");
@@ -2725,6 +2727,48 @@ pub fn chinese_translations() -> TranslationDict {
     route_label_strings(&mut dict);
     prompt_copy_strings(&mut dict);
 
+    dict.set(
+        "login.station_help",
+        "账号服务器（Station）会引导你前往账号登录服务，也可填写自托管地址。",
+    );
+    dict.set("settings.theme.effective", "当前生效：{theme}");
+    dict.set("app.nav.more", "更多");
+    dict.set("theme.switch_to_light", "切换到浅色主题");
+    dict.set("theme.switch_to_dark", "切换到深色主题");
+    dict.set("agents.empty.loading", "正在加载你的 Agent…");
+    dict.set(
+        "agents.empty.failed",
+        "未能加载 Agent，可以重试；现有设置没有改变。",
+    );
+    dict.set("agents.empty.sign_in", "登录后可查看你的 Agent。");
+    dict.set("agents.empty.filtered", "没有符合这些条件的 Agent。");
+    dict.set(
+        "agents.empty.none",
+        "还没有 Agent。先创建，再配对其运行端。",
+    );
+    dict.set("agents.clear_filters", "清除筛选");
+    dict.set("onboarding.stage.identity", "准备身份");
+    dict.set("onboarding.stage.material", "保存恢复材料");
+    dict.set("onboarding.stage.ready", "开始使用");
+    dict.set(
+        "onboarding.refresh_failed_help",
+        "暂时无法确认当前设置步骤。重试会继续本次设置，也可以重新登录后继续。",
+    );
+    dict.set("onboarding.retry_current", "重试本次设置");
+    dict.set("onboarding.technical_details", "查看技术详情");
+    dict.set("onboarding.material.title", "不同恢复方式分别恢复什么");
+    dict.set(
+        "onboarding.material.sign_in",
+        "登录密码或 Passkey：用于登录 Coauth 账号。",
+    );
+    dict.set(
+        "onboarding.material.identity",
+        "身份恢复材料：用于按账号当前恢复策略与资格校验继续恢复原身份。",
+    );
+    dict.set(
+        "onboarding.material.history",
+        "内容密钥：用于读取原讨论范围内的加密内容。恢复身份不会自动取得历史密钥或新的访问权限。",
+    );
     dict
 }
 
@@ -4195,4 +4239,5 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("manage.contact_dm", "私聊 {state}");
     dict.set("manage.contact_no_dm", "无私聊");
     dict.set("poll_provisional", "投票等待已验证历史");
+    dict.set("contacts.clear_filter", "清除搜索");
 }

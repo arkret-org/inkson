@@ -190,6 +190,7 @@ pub(super) const SETTINGS_SECURITY_GROUP: &[SettingsSection] = &[
 ];
 pub(super) const SETTINGS_PRIVACY_GROUP: &[SettingsSection] = &[
     SettingsSection::Privacy,
+    SettingsSection::Contacts,
     // G3.Y3 blocklist is an actor-private disclosure control
     // (spec governance/content-moderation.md §4).
     SettingsSection::Blocklist,
@@ -202,7 +203,6 @@ pub(super) const SETTINGS_NOTIFICATIONS_GROUP: &[SettingsSection] =
     &[SettingsSection::Notifications];
 pub(super) const SETTINGS_APPEARANCE_GROUP: &[SettingsSection] = &[SettingsSection::Theme];
 pub(super) const SETTINGS_ADVANCED_GROUP: &[SettingsSection] = &[
-    SettingsSection::Contacts,
     SettingsSection::Storage,
     SettingsSection::Release,
     SettingsSection::Audit,

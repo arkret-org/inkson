@@ -14,7 +14,7 @@
   background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text);
   box-shadow: none;
 }
-.theme-switcher .theme-switcher-option.primary { background: var(--accent); color: var(--text-on-accent); }
+.theme-switcher .theme-switcher-option.primary { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
 .theme-switcher .theme-switcher-option input[type=radio] {
   position: absolute; inset: 0; width: 100%; height: 100%; margin: 0;
   opacity: 0; cursor: pointer;
@@ -33,18 +33,10 @@
 }
 .language-settings .settings-language-choice.secondary { background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text); box-shadow: none; }
 .language-settings .settings-language-choice.primary {
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
-  color: var(--primary-foreground); box-shadow: 0 14px 28px color-mix(in srgb, var(--primary) 24%, transparent);
+  background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-/* The icon trio used Small Ghost/Primary Button metadata in the original UI;
-   its active gradient is separate from the solid radio selection below it. */
-.theme-settings .settings-theme-choice.ghost { border-color: var(--border-strong); }
-.theme-settings .settings-theme-choice.primary {
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
-  color: var(--primary-foreground);
-  box-shadow: 0 14px 28px color-mix(in srgb, var(--primary) 24%, transparent);
-}
-.theme-settings .settings-theme-choice.primary:not(:disabled):hover {
-  background: linear-gradient(135deg, var(--primary-strong) 0%, color-mix(in srgb, var(--primary-2) 92%, white) 100%);
+
+@media (max-width: 768px) {
+  .theme-switcher .theme-switcher-option, .language-settings .settings-language-choice { min-height: 44px; height: auto; }
 }

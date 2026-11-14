@@ -2,14 +2,14 @@ use super::*;
 use crate::notification_rules::{DndPeriod, DndSchedule, DndSettings};
 
 #[test]
-fn contact_permissions_are_available_in_advanced_settings() {
+fn contact_permissions_are_available_in_privacy_settings() {
     assert_eq!(
         SettingsSection::from_slug(Some("contacts")),
         SettingsSection::Contacts
     );
     let groups = visible_nav_groups("Contact permissions");
     assert_eq!(groups.len(), 1);
-    assert_eq!(groups[0].label_key, "settings.group.advanced");
+    assert_eq!(groups[0].label_key, "settings.group.privacy");
     assert_eq!(groups[0].sections, vec![SettingsSection::Contacts]);
 }
 
@@ -42,7 +42,10 @@ fn empty_nav_query_keeps_every_group() {
 fn nav_query_drops_groups_with_no_surviving_section() {
     let groups = visible_nav_groups("devices");
     assert_eq!(groups.len(), 1);
-    assert_eq!(groups[0].sections, vec![SettingsSection::Devices]);
+    assert_eq!(
+        groups[0].sections,
+        vec![SettingsSection::Devices, SettingsSection::Recovery]
+    );
     assert_eq!(groups[0].label_key, "settings.group.security");
 }
 
@@ -67,7 +70,7 @@ fn nav_query_with_no_match_renders_no_groups() {
 fn nav_query_finds_localized_controls_inside_sections() {
     for (query, section) in [
         ("language", SettingsSection::Theme),
-        ("night theme", SettingsSection::Theme),
+        ("dark", SettingsSection::Theme),
         ("display name", SettingsSection::Account),
         ("sound", SettingsSection::Notifications),
         ("recovery 24", SettingsSection::Recovery),

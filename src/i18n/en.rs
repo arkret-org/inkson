@@ -398,28 +398,31 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.section.account", "Account information");
     dict.set("settings.section.agents", "My Agents");
     dict.set("settings.section.server", "Server information");
-    dict.set("settings.section.devices", "Devices");
+    dict.set("settings.section.devices", "Devices & sessions");
     dict.set("settings.section.storage", "Data & sync");
-    dict.set("settings.section.encryption", "Security");
-    dict.set("settings.section.recovery", "Recovery");
+    dict.set(
+        "settings.section.encryption",
+        "Encrypted history & content keys",
+    );
+    dict.set(
+        "settings.section.recovery",
+        "Identity recovery & new devices",
+    );
     dict.set("settings.section.mimi", "Integrations");
     dict.set("settings.section.notifications", "Notifications");
     dict.set("settings.section.privacy", "Privacy & sharing");
     dict.set("settings.section.invite_policy", "Who can invite me");
-    dict.set("settings.section.consent", "Invites & consent");
+    dict.set("settings.section.consent", "Review invites & consent");
     dict.set("settings.section.blocklist", "Block list");
-    dict.set("settings.section.capabilities", "App authorizations");
+    dict.set("settings.section.capabilities", "Review app authorizations");
     dict.set("settings.section.theme", "Appearance & locale");
     dict.set("settings.section.release", "Release status");
     dict.set("settings.section.audit", "Audit log");
     dict.set("settings.section.developer", "Developer tools");
     // Settings navigation — group labels + hints.
     dict.set("settings.group.account", "Account");
-    dict.set(
-        "settings.group.account.hint",
-        "Identity, agents, and server.",
-    );
-    dict.set("settings.group.security", "Devices & security");
+    dict.set("settings.group.account.hint", "Profile and account server.");
+    dict.set("settings.group.security", "Devices & recovery");
     dict.set(
         "settings.group.security.hint",
         "Signed-in devices, recovery, and app authorizations.",
@@ -427,7 +430,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.group.privacy", "Privacy");
     dict.set(
         "settings.group.privacy.hint",
-        "Actor-private disclosure controls.",
+        "Profile visibility, invitations and your block list.",
     );
     dict.set("settings.group.notifications", "Notifications");
     dict.set(
@@ -858,9 +861,8 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("settings.theme.badge", "appearance");
     dict.set("settings.theme.light", "Light theme");
-    dict.set("settings.theme.night", "Night theme");
-    dict.set("settings.theme.system", "System theme");
-    dict.set("settings.theme.current", "Current: {theme}");
+    dict.set("settings.theme.night", "Dark");
+    dict.set("settings.theme.system", "Follow system");
     dict.set("settings.language.title", "Language");
     dict.set("settings.session_diagnostics.title", "Session diagnostics");
 
@@ -895,8 +897,8 @@ pub fn english_translations() -> TranslationDict {
     dict.set("login.working", "Working...");
     dict.set("login.title", "Sign in");
     dict.set("login.completing", "Completing sign in");
-    dict.set("login.station", "Sign-in server");
-    dict.set("login.station_url", "Sign-in server URL");
+    dict.set("login.station", "Account server");
+    dict.set("login.station_url", "Account server URL");
     dict.set("login.show_preset_servers", "Show preset servers");
     dict.set("login.preset_servers", "Preset servers");
     dict.set("login.status.signed_out", "signed-out");
@@ -2438,10 +2440,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("search.kind.message", "Message");
 
-    dict.set(
-        "login.create_identity",
-        "New here? Create a recoverable identity",
-    );
+    dict.set("login.create_identity", "New here? Create an account");
     dict.set("login.connection.review", "Review changed server");
     dict.set("login.connection.changed", "Server connection changed");
     dict.set(
@@ -2981,6 +2980,39 @@ pub fn english_translations() -> TranslationDict {
     route_label_strings(&mut dict);
     prompt_copy_strings(&mut dict);
 
+    dict.set("login.station_help", "This Station directs you to its account sign-in service. You can enter a self-hosted Station address.");
+    dict.set("settings.theme.effective", "Currently using: {theme}");
+    dict.set("app.nav.more", "More");
+    dict.set("theme.switch_to_light", "Switch to light theme");
+    dict.set("theme.switch_to_dark", "Switch to dark theme");
+    dict.set("agents.empty.loading", "Loading your agents…");
+    dict.set(
+        "agents.empty.failed",
+        "Agents could not be loaded. Try again without changing your current setup.",
+    );
+    dict.set("agents.empty.sign_in", "Sign in to view your agents.");
+    dict.set("agents.empty.filtered", "No agents match these filters.");
+    dict.set(
+        "agents.empty.none",
+        "No agents yet. Create an Agent, then pair its runtime.",
+    );
+    dict.set("agents.clear_filters", "Clear filters");
+    dict.set("onboarding.stage.identity", "Prepare identity");
+    dict.set("onboarding.stage.material", "Save recovery material");
+    dict.set("onboarding.stage.ready", "Start using Arkret");
+    dict.set("onboarding.refresh_failed_help", "The current setup step could not be confirmed. Retry to continue this same setup, or sign in again.");
+    dict.set("onboarding.retry_current", "Retry current setup");
+    dict.set("onboarding.technical_details", "Technical details");
+    dict.set(
+        "onboarding.material.title",
+        "What each recovery method restores",
+    );
+    dict.set(
+        "onboarding.material.sign_in",
+        "Password or Passkey: signs you in to the Coauth account.",
+    );
+    dict.set("onboarding.material.identity", "Identity recovery material: continues recovery of the same identity under the account’s current policy and eligibility checks.");
+    dict.set("onboarding.material.history", "Content keys: read encrypted content in its original conversation scope. Identity recovery does not automatically supply historical keys or new access.");
     dict
 }
 
@@ -4908,4 +4940,5 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("manage.contact_dm", "DM {state}");
     dict.set("manage.contact_no_dm", "No DM");
     dict.set("poll_provisional", "Votes pending verified history");
+    dict.set("contacts.clear_filter", "Clear search");
 }

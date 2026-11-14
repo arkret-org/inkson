@@ -328,12 +328,12 @@ test("login page delegates account lifecycle to coauth OIDC", async ({
 }) => {
   await page.goto("/login", { waitUntil: "domcontentloaded" });
   await expect(loginPanel(page)).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "Sign-in server URL", exact: true })).toHaveValue(
+  await expect(page.getByRole("textbox", { name: "Account server URL", exact: true })).toHaveValue(
     "https://local.host/",
   );
   // Neutral client: the station field is a free-text URL input with a
   // custom-styled preset dropdown (no native <datalist>, no browser autofill).
-  await expect(page.getByRole("textbox", { name: "Sign-in server URL", exact: true })).not.toHaveAttribute(
+  await expect(page.getByRole("textbox", { name: "Account server URL", exact: true })).not.toHaveAttribute(
     "list",
     /.*/,
   );

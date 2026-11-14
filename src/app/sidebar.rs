@@ -827,7 +827,7 @@ pub(super) fn sidebar(scope: &Scope, context: Rc<InksonContext>) -> View {
             internal_link()
                 .target(target.to_string())
                 .class(class)
-                .name(name)
+                .name(name.clone())
                 .semantics(scope.bond(move || {
                     Some(Box::new(Semantics {
                         current: class
@@ -837,10 +837,10 @@ pub(super) fn sidebar(scope: &Scope, context: Rc<InksonContext>) -> View {
                         ..Default::default()
                     }))
                 }))
-                .fill(crate::components::icons::ui_icon_with_class(
-                    icon,
-                    "ui-icon rail-icon",
-                ))
+                .fill(glory::ui::group().fill((
+                    crate::components::icons::ui_icon_with_class(icon, "ui-icon rail-icon"),
+                    text().class("rail-label").content(name),
+                )))
                 .on(EventKind::Activate, move |_| {
                     rail_context.navigate(target.clone())
                 }),

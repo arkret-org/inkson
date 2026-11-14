@@ -831,33 +831,6 @@ fn theme_page(scope: &Scope, context: Rc<InksonContext>) -> View {
     });
     let theme = context.theme;
     let locale_state = context.locale;
-    let mut icons = Vec::new();
-    for (value, label, icon) in [
-        ("light", "settings.theme.light", "sun"),
-        ("night", "settings.theme.night", "moon"),
-        ("system", "settings.theme.system", "monitor"),
-    ] {
-        let commit = persist.clone();
-        let selected = scope.bond(move || theme.get() == value);
-        let classes = scope.bond(move || {
-            format!(
-                "btn icon sm settings-theme-{value} settings-theme-choice {}",
-                if selected.get() { "primary" } else { "ghost" }
-            )
-        });
-        icons.push(Box::new(
-            sapid::button()
-                .unstyled()
-                .class(classes)
-                .name(context.translated(scope, label))
-                .pressed(selected)
-                .fill(crate::components::ui_icon(icon))
-                .on(glory::render::EventKind::Activate, move |_| {
-                    theme.revise(|theme| *theme = value.to_owned());
-                    commit(value.to_owned());
-                }),
-        ) as View);
-    }
     let mut languages = Vec::new();
     for locale in [UiLocale::En, UiLocale::Zh] {
         let change = context.clone();
@@ -892,14 +865,33 @@ fn theme_page(scope: &Scope, context: Rc<InksonContext>) -> View {
                             plain(context.translated(scope, "settings.theme.badge")),
                         ],
                     ),
-                    line("actions", icons),
                     paragraph(
-                        "muted",
-                        scope.bond(move || {
-                            crate::i18n::tr_args(
-                                "settings.theme.current",
-                                &[("theme", theme.get())],
-                            )
+                        "muted theme-effective-description",
+                        scope.bond({
+                            let context = context.clone();
+                            move || {
+                                let _ = context.locale.get();
+                                let dark = match crate::components::ThemeMode::from_persisted_str(
+                                    &theme.get(),
+                                ) {
+                                    crate::components::ThemeMode::Dark => true,
+                                    crate::components::ThemeMode::Light => false,
+                                    crate::components::ThemeMode::System => {
+                                        context.system_theme_is_night.get()
+                                    }
+                                };
+                                crate::i18n::tr_args(
+                                    "settings.theme.effective",
+                                    &[(
+                                        "theme",
+                                        context.tr(if dark {
+                                            "settings.theme.night"
+                                        } else {
+                                            "settings.theme.light"
+                                        }),
+                                    )],
+                                )
+                            }
                         }),
                     ),
                     crate::components::theme_switcher(
@@ -917,14 +909,7 @@ fn theme_page(scope: &Scope, context: Rc<InksonContext>) -> View {
                 vec![
                     line(
                         "event-head",
-                        vec![
-                            plain(context.translated(scope, "settings.language.title")),
-                            Box::new(glory::prelude::text().class("text-direction").content(
-                                scope.bond(move || {
-                                    locale_state.get().direction().as_str().to_owned()
-                                }),
-                            )),
-                        ],
+                        vec![plain(context.translated(scope, "settings.language.title"))],
                     ),
                     line("actions", languages),
                 ],

@@ -42,6 +42,20 @@ struct AgentPage {
     services: Cage<Vec<AgentServiceScopePreset>>,
     replace_open: Cage<bool>,
 }
+impl AgentPage {
+    fn begin_creation(&self) {
+        self.slug.revise(String::clear);
+        self.controller
+            .new_agent_avatar_blob_ref
+            .revise(String::clear);
+        self.controller.last_op_status.revise(String::clear);
+        self.controller
+            .provision_operation_id
+            .revise(|value| *value = None);
+        self.controller.create_mode.revise(|value| *value = true);
+        self.context.workspace_navigation.open_detail();
+    }
+}
 pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
     page_with_header(scope, context, route, Rc::new(|_| empty()))
 }
@@ -78,6 +92,11 @@ pub(crate) fn page_with_header(
         owner: scope.downgrade(),
         agents: scope.cage(Vec::new()),
         list_status: scope.cage(String::new()),
+        list_phase: scope.cage(if context.token.get_untracked().is_empty() {
+            AgentListPhase::SignInRequired
+        } else {
+            AgentListPhase::Loading
+        }),
         last_op_status: scope.cage(String::new()),
         refresh_epoch: scope.cage(0),
         detail_refresh_epoch: scope.cage(0),
@@ -208,28 +227,14 @@ pub(crate) fn page_with_header(
                     "Create agent",
                     "plus",
                     "secondary",
-                    move || {
-                        begin.slug.revise(|value| value.clear());
-                        begin
-                            .controller
-                            .new_agent_avatar_blob_ref
-                            .revise(|value| value.clear());
-                        begin
-                            .controller
-                            .last_op_status
-                            .revise(|value| value.clear());
-                        begin
-                            .controller
-                            .provision_operation_id
-                            .revise(|value| *value = None);
-                        begin.controller.create_mode.revise(|value| *value = true);
-                        begin.context.workspace_navigation.open_detail();
-                    },
+                    move || begin.begin_creation(),
                 ),
             ],
         )
     };
     let list_state = state.clone();
+    let list_phase = controller.list_phase;
+    let query_signal = query;
     let list_rows = reactive(
         scope.bond(move || {
             (
@@ -238,9 +243,10 @@ pub(crate) fn page_with_header(
                 create.get(),
                 filter.get(),
                 query.get(),
+                list_phase.get(),
             )
         }),
-        move |scope, (rows, selected_id, is_create, current_filter, query)| {
+        move |scope, (rows, selected_id, is_create, current_filter, query, phase)| {
             let state = list_state.clone();
             let context = state.context.clone();
             let mut children = Vec::new();
@@ -353,14 +359,89 @@ pub(crate) fn page_with_header(
             let empty = agent_rows.is_empty();
             children.push(stack("agent-admin-list-rows", agent_rows));
             if empty {
-                children.push(paragraph(
-                    "members-empty compact",
-                    if view.has_any_agents {
-                        "No agents match this filter."
-                    } else {
-                        "No agents yet. Create an Agent to connect its runtime."
-                    },
-                ));
+                let mut empty_actions = vec![];
+                let message = match phase {
+                    AgentListPhase::Loading => "agents.empty.loading",
+                    AgentListPhase::Failed => "agents.empty.failed",
+                    AgentListPhase::SignInRequired => "agents.empty.sign_in",
+                    AgentListPhase::Ready if view.has_any_agents || !query.is_empty() => {
+                        "agents.empty.filtered"
+                    }
+                    AgentListPhase::Ready => "agents.empty.none",
+                };
+                match phase {
+                    AgentListPhase::Ready if !view.has_any_agents && query.is_empty() => {
+                        let begin = state.clone();
+                        empty_actions.push(action(
+                            scope,
+                            context.clone(),
+                            "agent-empty-create",
+                            "Create agent",
+                            "primary",
+                            true,
+                            move || begin.begin_creation(),
+                        ));
+                    }
+                    AgentListPhase::Ready => {
+                        let reset = context.clone();
+                        empty_actions.push(action(
+                            scope,
+                            context.clone(),
+                            "agent-empty-clear",
+                            "agents.clear_filters",
+                            "secondary",
+                            true,
+                            move || {
+                                query_signal.revise(String::clear);
+                                reset.navigate(Route::SettingsSection {
+                                    section: "agents".into(),
+                                    filter: "all".into(),
+                                });
+                            },
+                        ));
+                    }
+                    AgentListPhase::Failed => {
+                        let refresh = state.controller.clone();
+                        let retry_context = context.clone();
+                        empty_actions.push(action(
+                            scope,
+                            context.clone(),
+                            "agent-empty-retry",
+                            "Retry",
+                            "secondary",
+                            true,
+                            move || {
+                                refresh.clone().refresh_agents(
+                                    retry_context.base_url.get(),
+                                    retry_context.token.get(),
+                                )
+                            },
+                        ));
+                    }
+                    AgentListPhase::SignInRequired => {
+                        let login = context.clone();
+                        empty_actions.push(action(
+                            scope,
+                            context.clone(),
+                            "agent-empty-signin",
+                            "Sign in",
+                            "secondary",
+                            true,
+                            move || login.navigate(Route::Login),
+                        ));
+                    }
+                    AgentListPhase::Loading => {}
+                }
+                children.insert(
+                    1,
+                    stack(
+                        "agent-list-state members-empty compact",
+                        vec![
+                            paragraph("", context.translated(scope, message)),
+                            line("actions", empty_actions),
+                        ],
+                    ),
+                );
             }
             stack("agent-admin-list-content", children)
         },

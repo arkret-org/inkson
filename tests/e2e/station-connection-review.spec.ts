@@ -20,7 +20,7 @@ for (const viewport of [
       return value;
     });
     await page.route("https://server.local/_arkret/describe*", (route) => route.fulfill({ json: description }));
-    await page.getByRole("textbox", { name: "Sign-in server URL" }).fill("https://server.local/");
+    await page.getByRole("textbox", { name: "Account server URL" }).fill("https://server.local/");
     await page.evaluate(async () => {
       const longPath = "previous-authentication-provider/".repeat(30);
       const binding = {
@@ -115,7 +115,7 @@ for (const changedField of ["identity", "trust domain", "client"] as const) {
       return value;
     });
     await page.route("https://server.local/_arkret/describe*", route => route.fulfill({ json: description }));
-    await page.getByRole("textbox", { name: "Sign-in server URL" }).fill("https://server.local/");
+    await page.getByRole("textbox", { name: "Account server URL" }).fill("https://server.local/");
     const previous = await page.evaluate(async ({ description, changedField }) => {
       const binding = {
         // The browser trust CAS stores the Rust serializer's exact JSON. Match

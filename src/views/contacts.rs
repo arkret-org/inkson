@@ -1431,6 +1431,7 @@ fn contact_list_rows(
     current: &str,
     query: &str,
     selected: Cage<String>,
+    filter: Cage<String>,
 ) -> View {
     let query = query.trim().to_lowercase();
     let mut items = Vec::new();
@@ -1528,9 +1529,20 @@ fn contact_list_rows(
         ) as View);
     }
     if items.is_empty() {
-        items.push(contact_list_text(
-            "muted",
-            list_context.translated(scope, "search.no_results"),
+        items.push(stack(
+            "contacts-filtered-state",
+            vec![
+                contact_list_text("muted", list_context.translated(scope, "search.no_results")),
+                action(
+                    scope,
+                    list_context,
+                    "contacts-clear-filter",
+                    "contacts.clear_filter",
+                    "secondary",
+                    true,
+                    move || filter.revise(String::clear),
+                ),
+            ],
         ));
     }
     stack("contact-list-items", items)
@@ -1781,10 +1793,10 @@ fn contacts_panel_with_header(
                         },
                     ],
                 );
-                return if advanced || detail_side {
+                return if advanced || !detail_side {
                     empty_state
                 } else {
-                    paragraph("muted", ctx.translated(scope, "contacts.empty_title"))
+                    empty()
                 };
             }
             if advanced {
@@ -1819,6 +1831,7 @@ fn contacts_panel_with_header(
             let list_agents = agents.clone();
             let list_rows = rows.clone();
             let list_context = ctx.clone();
+            let filter = query;
             let list = reactive(
                 scope.bond({
                     let ctx = ctx.clone();
@@ -1840,6 +1853,7 @@ fn contacts_panel_with_header(
                         &current,
                         &query,
                         selected,
+                        filter,
                     )
                 },
             );
@@ -2070,6 +2084,7 @@ mod feedback_tests {
             "",
             "",
             selected,
+            app.scope().cage(String::new()),
         ))
         .unwrap();
         app.flush().unwrap();

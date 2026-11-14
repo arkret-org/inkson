@@ -33,22 +33,6 @@ impl ThemeMode {
             Self::System => "system",
         }
     }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Light => "Light",
-            Self::Dark => "Dark",
-            Self::System => "Follow system",
-        }
-    }
-
-    pub fn aria_description(self) -> &'static str {
-        match self {
-            Self::Light => "Use the light color scheme.",
-            Self::Dark => "Use the dark color scheme.",
-            Self::System => "Match the operating system's color scheme preference.",
-        }
-    }
 }
 
 pub struct ThemeSwitcherProps {
@@ -92,8 +76,22 @@ pub fn theme_switcher(
                             sapid::radio(mode.as_persisted_str())
                                 .unstyled()
                                 .class(class)
-                                .name(mode.label())
-                                .label(mode.label())
+                                .name(context.translated(
+                                    scope,
+                                    match mode {
+                                        ThemeMode::Light => "settings.theme.light",
+                                        ThemeMode::Dark => "settings.theme.night",
+                                        ThemeMode::System => "settings.theme.system",
+                                    },
+                                ))
+                                .label(context.translated(
+                                    scope,
+                                    match mode {
+                                        ThemeMode::Light => "settings.theme.light",
+                                        ThemeMode::Dark => "settings.theme.night",
+                                        ThemeMode::System => "settings.theme.system",
+                                    },
+                                ))
                         }),
                 )
                 .on_value_change(move |next| {
@@ -126,12 +124,5 @@ mod tests {
     fn unknown_value_falls_back_to_system() {
         assert_eq!(ThemeMode::from_persisted_str(""), ThemeMode::System);
         assert_eq!(ThemeMode::from_persisted_str("garbage"), ThemeMode::System);
-    }
-
-    #[test]
-    fn each_mode_has_distinct_label() {
-        assert_ne!(ThemeMode::Light.label(), ThemeMode::Dark.label());
-        assert_ne!(ThemeMode::Dark.label(), ThemeMode::System.label());
-        assert_ne!(ThemeMode::Light.label(), ThemeMode::System.label());
     }
 }

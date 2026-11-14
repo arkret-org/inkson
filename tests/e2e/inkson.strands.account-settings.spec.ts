@@ -212,17 +212,17 @@ test("settings language selector offers only English and Chinese", async ({ page
   await byClass(page, "settings-nav-item-theme").click();
   await expect(byClass(page, "language-settings")).toBeVisible();
   await expect(byClass(page, "settings-language-choice")).toHaveCount(2);
-  await byClass(page, "settings-theme-night").click();
-  await expect(byClass(page, "settings-theme-night")).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("radio", {name:"Dark",exact:true}).click();
+  await expect(page.getByRole("radio", {name:"Dark",exact:true})).toBeChecked();
   await expect(byClass(page, "inkson-root")).toHaveClass(/inkson-theme-dark/);
-  await byClass(page, "settings-theme-system").click();
-  await expect(byClass(page, "settings-theme-system")).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("radio", {name:"Follow system",exact:true}).click();
+  await expect(page.getByRole("radio", {name:"Follow system",exact:true})).toBeChecked();
 
   await expect(byClass(page, "language-ar")).toHaveCount(0);
   await expect(byClass(page, "current-language")).toHaveCount(0);
   await selectLanguage(page, "zh");
   await expect(page.locator(".shell.app")).toHaveCSS("direction", "ltr");
-  await expect(byClass(page, "text-direction")).toContainText("ltr");
+  await expect(byClass(page, "text-direction")).toHaveCount(0);
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.locator(".shell.app")).toBeVisible({ timeout: 120_000 });

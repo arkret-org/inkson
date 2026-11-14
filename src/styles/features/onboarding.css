@@ -169,3 +169,8 @@
   .onboarding-progress li > span:last-child { display: none; }
   .onboarding-progress { justify-items: center; }
 }
+
+.onboarding-guidance { width: min(640px, 100%); margin: 12px auto; }
+.onboarding-guidance > .sapid-collapsible-trigger { min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); font: inherit; text-align: start; }
+.onboarding-guidance > .sapid-collapsible-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.onboarding-guidance .sapid-collapsible-panel { padding: 12px; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }

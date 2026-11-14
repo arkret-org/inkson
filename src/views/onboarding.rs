@@ -78,35 +78,42 @@ fn link(context: Rc<InksonContext>, key: &str, label: &str, route: Route) -> Vie
         context.navigate(route.clone())
     })
 }
-fn progress(current: usize) -> View {
+fn progress(scope: &Scope, locale: Cage<crate::i18n::UiLocale>, current: usize) -> View {
     stack(
         "onboarding-progress",
-        ["Identity", "Recovery Key", "Ready"]
-            .into_iter()
-            .enumerate()
-            .map(|(index, label)| {
-                line(
-                    if index + 1 == current {
-                        "is-current"
-                    } else if index + 1 < current {
-                        "is-complete"
-                    } else {
-                        ""
-                    },
-                    vec![
-                        paragraph(
-                            "onboarding-progress-index",
-                            if index + 1 < current {
-                                "✓".to_owned()
-                            } else {
-                                (index + 1).to_string()
-                            },
-                        ),
-                        plain(label),
-                    ],
-                )
-            })
-            .collect(),
+        [
+            "onboarding.stage.identity",
+            "onboarding.stage.material",
+            "onboarding.stage.ready",
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, label)| {
+            line(
+                if index + 1 == current {
+                    "is-current"
+                } else if index + 1 < current {
+                    "is-complete"
+                } else {
+                    ""
+                },
+                vec![
+                    paragraph(
+                        "onboarding-progress-index",
+                        if index + 1 < current {
+                            "✓".to_owned()
+                        } else {
+                            (index + 1).to_string()
+                        },
+                    ),
+                    plain(scope.bond(move || {
+                        let _ = locale.get();
+                        crate::i18n::tr(label)
+                    })),
+                ],
+            )
+        })
+        .collect(),
     )
 }
 fn notice(title: &str, body: impl Into<glory::Vary<String>>, children: Vec<View>) -> View {
@@ -114,7 +121,7 @@ fn notice(title: &str, body: impl Into<glory::Vary<String>>, children: Vec<View>
     nodes.extend(children);
     stack("event onboarding-card onboarding-centered", nodes)
 }
-pub fn page(_scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
+pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
     let ctx = context.clone();
     let ready = crate::presentation::widgets::reactive_distinct(
         context.secure_store_bootstrap_ready,
@@ -149,6 +156,7 @@ pub fn page(_scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
                     }
                 })
             };
+            let retry = resource.clone();
             reactive(resource.data, move |scope, result| match result {
                 None => notice(
                     "Checking identity setup",
@@ -157,9 +165,19 @@ pub fn page(_scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
                 ),
                 Some(Err(error)) => notice(
                     "Identity setup could not be refreshed",
-                    "No local checkpoint was used to guess a next step.",
+                    crate::i18n::tr("onboarding.refresh_failed_help"),
                     vec![
-                        paragraph("error", error),
+                        {
+                            let retry = retry.clone();
+                            button(
+                                "onboarding-retry-current-setup",
+                                ctx.translated(scope, "onboarding.retry_current"),
+                                "secondary",
+                                true,
+                                move || retry.reload(),
+                            )
+                        },
+                        setup_details(scope, ctx.clone(), error),
                         link(
                             ctx.clone(),
                             "onboarding-authenticate",
@@ -172,7 +190,42 @@ pub fn page(_scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
             })
         },
     );
-    stack("timeline onboarding-flow onboarding-panel", vec![ready])
+    let mut guide = Some(stack(
+        "onboarding-material-guide",
+        vec![
+            paragraph("", context.translated(scope, "onboarding.material.sign_in")),
+            paragraph(
+                "",
+                context.translated(scope, "onboarding.material.identity"),
+            ),
+            paragraph("", context.translated(scope, "onboarding.material.history")),
+        ],
+    ));
+    let guide: View = Box::new(
+        sapid::collapsible("onboarding-material-guide")
+            .unstyled()
+            .class("onboarding-guidance")
+            .label(context.translated(scope, "onboarding.material.title"))
+            .default_open(false)
+            .content_policy(sapid::ContentPolicy::KeepMounted)
+            .content(move || guide.take().unwrap_or_else(empty)),
+    );
+    stack(
+        "timeline onboarding-flow onboarding-panel",
+        vec![ready, guide],
+    )
+}
+fn setup_details(scope: &Scope, context: Rc<InksonContext>, error: String) -> View {
+    let mut details = Some(paragraph("error onboarding-error-detail", error));
+    Box::new(
+        sapid::collapsible(format!("onboarding-details-{}", scope.id().slot()))
+            .unstyled()
+            .class("onboarding-guidance")
+            .label(context.translated(scope, "onboarding.technical_details"))
+            .default_open(false)
+            .content_policy(sapid::ContentPolicy::KeepMounted)
+            .content(move || details.take().unwrap_or_else(empty)),
+    )
 }
 fn flow(scope: &Scope, context: Rc<InksonContext>) -> View {
     let reroute = scope.cage(0_u32);
@@ -559,7 +612,7 @@ fn identity_creation(scope: &Scope, context: Rc<InksonContext>) -> View {
             return stack(
                 "event onboarding-card account-handoff-onboarding",
                 vec![
-                    progress(3),
+                    progress(scope, context.locale, 3),
                     stack(
                         "onboarding-finished onboarding-complete",
                         vec![
@@ -672,13 +725,16 @@ fn identity_creation(scope: &Scope, context: Rc<InksonContext>) -> View {
                 MissingCreationHandoffSurface::Finishing => notice(
                     "Finishing identity setup",
                     "The account binding was accepted. Inkson is finishing the local recovery and session records…",
-                    vec![progress(3), paragraph("muted", status)],
+                    vec![
+                        progress(scope, context.locale, 3),
+                        paragraph("muted", status),
+                    ],
                 ),
                 MissingCreationHandoffSurface::Complete => notice(
                     "Identity ready",
                     "Your account, this device, and recovery backup are ready.",
                     vec![
-                        progress(3),
+                        progress(scope, context.locale, 3),
                         paragraph("onboarding-finish-mark", "✓"),
                         link(
                             ctx.clone(),
@@ -741,11 +797,15 @@ fn identity_creation(scope: &Scope, context: Rc<InksonContext>) -> View {
                     .and_then(|checkpoint| checkpoint.identity_abandonment)
             })
         });
-        let mut children = vec![progress(if selected == IdentityChoice::Create {
-            2
-        } else {
-            1
-        })];
+        let mut children = vec![progress(
+            scope,
+            context.locale,
+            if selected == IdentityChoice::Create {
+                2
+            } else {
+                1
+            },
+        )];
         if let Some(pending) = pending_abandonment {
             children.push(stack("onboarding-heading",vec![paragraph("eyebrow","Explicit abandonment"),heading(2,"","Confirm giving up this provisional identity"),paragraph("muted","The orphan anchor will be permanently unusable and cannot be deactivated or continued. A new identity root DID and PCR must be created.")]));
             children.push(stack(
@@ -956,7 +1016,7 @@ fn stale_setup(scope: &Scope, context: Rc<InksonContext>, on_discard: Rc<dyn Fn(
     stack(
         "event onboarding-card stale-principal-setup",
         vec![
-            progress(2),
+            progress(scope, context.locale, 2),
             stack(
                 "onboarding-heading",
                 vec![

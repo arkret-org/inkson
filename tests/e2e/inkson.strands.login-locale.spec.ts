@@ -23,12 +23,12 @@ for (const language of ["en", "zh"] as const) {
     await expect(login.getByRole("heading", { level: 1 })).toHaveText(zh ? "登录" : "Sign in");
     await expect(byClass(login, "auth-primary")).toHaveText(zh ? "前往服务器登录" : "Sign in to this server");
     const create = login.locator('a[href="/register"]');
-    await expect(create).toHaveText(zh ? "第一次使用？创建可恢复的身份" : "New here? Create a recoverable identity");
+    await expect(create).toHaveText(zh ? "第一次使用？创建账号" : "New here? Create an account");
     await expect(create).toHaveAttribute("href", "/register");
     const input = byClass(login, "auth-station-field").getByRole("textbox");
     const originalUrl = await input.inputValue();
     expect(originalUrl).not.toBe("");
-    await expect(input).toHaveAccessibleName(zh ? "登录服务器地址" : "Sign-in server URL");
+    await expect(input).toHaveAccessibleName(zh ? "账号服务器地址" : "Account server URL");
     const toggle = byClass(login, "auth-combobox-toggle");
     await expect(toggle).toHaveAttribute("aria-label", zh ? "显示预设服务器" : "Show preset servers");
     await toggle.click();

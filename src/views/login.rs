@@ -728,38 +728,46 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
         ) as View,
         None => empty(),
     });
-    Box::new(view().class("auth-panel").fill((
-        error,
-        view().class("auth-brand").fill((
-            view().class("auth-logo").fill(text().content("C")),
-            view().fill((
-                heading(
-                    1,
-                    "",
-                    context.translated(
-                        scope,
-                        if callback {
-                            "login.completing"
-                        } else {
-                            "login.title"
-                        },
+    Box::new(
+        view().class("auth-panel").fill((
+            error,
+            view().class("auth-brand").fill((
+                view()
+                    .class("auth-logo")
+                    .fill(crate::presentation::widgets::arkret_logo("auth-mark")),
+                view().fill((
+                    heading(
+                        1,
+                        "",
+                        context.translated(
+                            scope,
+                            if callback {
+                                "login.completing"
+                            } else {
+                                "login.title"
+                            },
+                        ),
                     ),
+                    paragraph("", "Arkret"),
+                )),
+            )),
+            view().class("auth-form").fill((
+                station,
+                paragraph(
+                    "muted auth-server-help",
+                    context.translated(scope, "login.station_help"),
                 ),
-                paragraph("", "Arkret"),
+                sign_in,
+                return_previous,
+                footer,
+                status,
+                review,
+                trust,
+                retry,
+                diagnostics,
             )),
         )),
-        view().class("auth-form").fill((
-            station,
-            sign_in,
-            return_previous,
-            footer,
-            status,
-            review,
-            trust,
-            retry,
-            diagnostics,
-        )),
-    )))
+    )
 }
 
 fn retain_station(context: &InksonContext, state: LoginState, url: &str) {
