@@ -292,6 +292,7 @@ pub(super) fn agent_matches_filter(status: &str, filter: &str) -> bool {
 pub(super) struct AgentAdminView {
     pub(super) visible_agents: Vec<AgentView>,
     pub(super) has_any_agents: bool,
+    pub(super) selected_grants: Vec<serde_json::Value>,
     pub(super) selected_title: String,
     pub(super) selected_slug: String,
     /// The controller lifecycle intent (key-management.md §3.6.1). Pause,
@@ -432,6 +433,10 @@ pub(super) fn build_agent_admin_view(
     AgentAdminView {
         visible_agents,
         has_any_agents,
+        selected_grants: selected_agent
+            .as_ref()
+            .map(|agent| agent.grants.clone())
+            .unwrap_or_default(),
         selected_title,
         selected_slug,
         selected_status,

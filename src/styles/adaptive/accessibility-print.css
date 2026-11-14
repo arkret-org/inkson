@@ -4,22 +4,19 @@
  * or `.metric` at all, because plain rules injected after it won.
  */
 
-/* Accessibility: focus styles */
-button:focus-visible {
-  outline: none;
-  box-shadow: var(--ring);
-}
-input:focus-visible, textarea:focus-visible, select:focus-visible {
-  outline: none;
+/* Keyboard focus must survive component paint and inline layout adapters. */
+:where(button, input, textarea, select, a):focus-visible {
+  outline: 2px solid var(--text) !important;
+  outline-offset: 3px;
 }
 
 /* High contrast mode (deliberately absolute values — do not tokenize) */
 @media (prefers-contrast: high) {
-  .event { border-width: 2px; border-color: #18212f; }
-  .primary { background: #0047b3; }
-  .secondary { border: 2px solid #18212f; }
+  .event { border-width: 2px; border-color: var(--text); }
+  .primary { background: #0047b3; color: #fff; }
+  .secondary { border: 2px solid var(--text); }
   .metric { border-width: 2px; }
-  .badge { border: 1px solid #18212f; }
+  .badge { border: 1px solid var(--text); }
 }
 
 /* Reduced motion */

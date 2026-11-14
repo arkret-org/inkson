@@ -20,6 +20,8 @@ test('one theme selector follows system appearance and translates in place on na
   await expect(page.locator('.rail-link:visible .rail-label')).toHaveCount(4);
   const more = page.locator('.topbar-more .sapid-popover-trigger');
   await expect(more).toBeVisible();
+  await expect(page.locator('.topbar-context-title')).toBeVisible();
+  await expect.poll(async () => (await page.locator('.topbar-context-title').boundingBox())?.width ?? 0).toBeGreaterThan(40);
   const title = await page.locator('.topbar-context-title').boundingBox();
   const geometry = await page.locator('.topbar').evaluate(root => [root,...root.querySelectorAll('*')].filter(el => /topbar|actions|connection-status/.test(el.className)).map(el => ({tag:el.tagName, cls:el.className, style:el.getAttribute('style'), rect:el.getBoundingClientRect().toJSON(), display:getComputedStyle(el).display, flex:getComputedStyle(el).flex, width:getComputedStyle(el).width})));
   await (await import('node:fs/promises')).writeFile(info.outputPath('header-geometry.json'), JSON.stringify(geometry, null, 2));

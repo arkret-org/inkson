@@ -97,7 +97,6 @@ pub(super) fn chat_composer_placeholder(mentions_enabled: bool) -> String {
 fn composer_scope_label(
     route: arkret_sdk::AgentMentionRoute,
     scope: arkret_sdk::AgentMentionComposerScope,
-    strand: &str,
 ) -> String {
     if matches!(
         route,
@@ -112,7 +111,7 @@ fn composer_scope_label(
         arkret_sdk::AgentMentionComposerScope::Realm
         | arkret_sdk::AgentMentionComposerScope::Sidecar => "chat.composer.original_scope",
     };
-    crate::i18n::tr_args(key, &[("strand", strand.to_owned())])
+    crate::i18n::tr(key)
 }
 
 pub(super) fn active_composer_mention_token(
@@ -925,11 +924,7 @@ pub(super) fn chat_composer(
     ));
     let scope_label = scope.bond(move || {
         let preview = preview.get();
-        composer_scope_label(
-            preview.route,
-            preview.scope,
-            &controller.selected_channel.get(),
-        )
+        composer_scope_label(preview.route, preview.scope)
     });
     let reply_app = app.clone();
     let reply_source = scope.bond(move || {
@@ -1270,6 +1265,15 @@ pub(super) fn chat_composer(
         "discussion-composer chat-composer",
         vec![
             paragraph("composer-send-scope", scope_label),
+            Box::new(
+                sapid::collapsible(format!("composer-scope-{}", scope.id().slot()))
+                    .unstyled()
+                    .class("composer-scope-details")
+                    .label(app.translated(scope, "chat.composer.scope_details"))
+                    .default_open(false)
+                    .content_policy(sapid::ContentPolicy::KeepMounted)
+                    .content(move || paragraph("mono", controller.selected_channel)),
+            ),
             paragraph(
                 "muted composer-send-diagnostic",
                 scope.bond(move || preview.get().title),

@@ -414,7 +414,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.section.invite_policy", "Who can invite me");
     dict.set("settings.section.consent", "Review invites & consent");
     dict.set("settings.section.blocklist", "Block list");
-    dict.set("settings.section.capabilities", "Review app authorizations");
+    dict.set(
+        "settings.section.capabilities",
+        "Review granted permissions",
+    );
     dict.set("settings.section.theme", "Appearance & locale");
     dict.set("settings.section.release", "Release status");
     dict.set("settings.section.audit", "Audit log");
@@ -860,7 +863,7 @@ pub fn english_translations() -> TranslationDict {
         "Issuer link unavailable",
     );
     dict.set("settings.theme.badge", "appearance");
-    dict.set("settings.theme.light", "Light theme");
+    dict.set("settings.theme.light", "Light");
     dict.set("settings.theme.night", "Dark");
     dict.set("settings.theme.system", "Follow system");
     dict.set("settings.language.title", "Language");
@@ -2496,7 +2499,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set("applets.installed", "Observed Applet Services");
     dict.set("applets.close_install", "Close install");
     dict.set("applets.open_install", "+ Install applet");
-    dict.set("applets.manifest_placeholder", "manifest URL or JSON body");
+    dict.set(
+        "applets.manifest_placeholder",
+        "Complete registration material JSON (AppletInstallPreviewRequestBody)",
+    );
     dict.set(
         "applets.circle_placeholder",
         "optional Circle id (ak:circle:…) — blank = Realm-wide",
@@ -2640,15 +2646,15 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "chat.composer.circle_scope",
-        "Circle discussion: {strand}. Only members authorized to read this Circle.",
+        "Visible to authorized readers in this Circle",
     );
     dict.set(
         "chat.composer.direct_scope",
-        "Direct conversation: {strand}. The two conversation participants.",
+        "Visible to the two participants in this direct conversation",
     );
     dict.set(
         "chat.composer.original_scope",
-        "Original Strand: {strand}. Members authorized to read this scope.",
+        "Send to this Realm discussion; visible to authorized readers of this scope",
     );
 
     dict.set("circles.page.state_active", "Active");
@@ -4941,4 +4947,81 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("manage.contact_no_dm", "No DM");
     dict.set("poll_provisional", "Votes pending verified history");
     dict.set("contacts.clear_filter", "Clear search");
+    dict.set("kanban.ui.summary", "Summary");
+    dict.set("kanban.ui.add_summary", "Add summary");
+    dict.set("kanban.ui.edit_summary", "Edit summary and labels");
+    dict.set("kanban.ui.add_description", "Add description");
+    dict.set("kanban.ui.edit_description", "Edit description");
+    dict.set("kanban.ui.add_labels", "Add labels");
+    dict.set("kanban.ui.security", "Encryption");
+    dict.set("kanban.ui.discussion_scope", "Discussion scope");
+    dict.set("kanban.ui.people_time", "People and time");
+    dict.set("kanban.ui.status_labels", "Labels");
+    dict.set(
+        "kanban.ui.access_technical",
+        "Access and technical information",
+    );
+    dict.set("kanban.ui.edit_schedule", "Edit schedule");
+    dict.set("kanban.ui.add_schedule", "Add schedule");
+    dict.set("search.time_unknown", "Time not provided");
+    dict.set("search.empty_body", "Empty body");
+    dict.set(
+        "search.metadata_only",
+        "Metadata only; no readable body available",
+    );
+    dict.set("notifications.priority.action", "Needs action");
+    dict.set("notifications.priority.mention", "Mentions");
+    dict.set("notifications.priority.other", "Other notifications");
+    dict.set("chat.composer.scope_details", "Sending scope identifiers");
+
+    dict.set("call.choose_target", "Choose a call target");
+    dict.set("call.technical_details", "Call technical information");
+    dict.set("call.manual_targets", "Advanced: enter call targets");
+    dict.set(
+        "call.choose_members",
+        "Choose group participants from this Realm",
+    );
+    dict.set("call.context_hint", "No member context available. Open the relevant conversation or enter a known target in advanced settings.");
+
+    dict.set("permissions.exact", "View exact permission ceiling");
+    dict.set(
+        "permissions.sources",
+        "View permissions, scopes and source details",
+    );
+    dict.set("permissions.ceiling_note", "These are configured ceilings, not current effective access. Access still depends on Realm membership, participation, effective grants and runtime readiness.");
+    dict.set("permissions.read_ceiling", "Read ceiling");
+    dict.set("permissions.write_ceiling", "Write and proposal ceiling");
+    dict.set(
+        "permissions.none",
+        "No matching preset selected; see exact actions",
+    );
+    dict.set("permissions.controller", "Accountable principal");
+    dict.set("permissions.account_station", "Account Station");
+    dict.set("permissions.runtime_location_note", "The account Station is not a physical runtime location. This projection does not disclose physical location; pairing or runtime replacement changes neither PCR authority nor historical access eligibility.");
+    dict.set("permissions.no_runtime_key", "No runtime key authorization reported. Pairing, paused or expired states do not indicate availability.");
+    dict.set("permissions.key_expiry", "Runtime key expiry");
+    dict.set(
+        "permissions.no_fixed_expiry",
+        "No fixed expiry; revocation and other constraints still apply",
+    );
+    dict.set(
+        "permissions.details_unavailable",
+        "Permission details are not loaded; availability cannot be inferred.",
+    );
+    dict.set("permissions.package_needed", "Provide complete registration material to choose from the actions requested by that package.");
+    dict.set("permissions.package_unverified", "These are package requests, not granted permissions. Select actions, preview the service, scopes, constraints and approvals, then install.");
+    dict.set("permissions.package_expiry", "Package expiry");
+    dict.set("permissions.plan_note", "Preview returned. Installation remains subject to this frozen plan and service acceptance; partial denial, revocation and runtime status are reported separately.");
+    dict.set("permissions.action_read_events", "Read authorized events");
+    dict.set("permissions.action_read_objects", "Read authorized objects");
+    dict.set("permissions.action_send", "Create messages");
+    dict.set("permissions.action_react", "Add reactions");
+    dict.set("permissions.action_create_strand", "Create Strands");
+    dict.set("permissions.action_update_strand", "Update Strands");
+    dict.set("permissions.action_relate", "Create relations");
+    dict.set("permissions.action_read_blob", "Read authorized blobs");
+    dict.set(
+        "permissions.action_other",
+        "Other requested capability; review its exact definition",
+    );
 }

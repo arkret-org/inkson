@@ -33,7 +33,7 @@ function agentCreation(page: Page) {
 }
 
 function agentLastOperation(page: Page) {
-  return byClass(page, "agent-admin").locator(":scope > .write-status");
+  return byClass(page, "agent-admin-detail-stack").locator(":scope > .write-status");
 }
 
 function terminalAgentNote(page: Page) {

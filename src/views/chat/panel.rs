@@ -583,7 +583,14 @@ fn shell(
                     move || {
                         context.navigate(Route::Call {
                             call_id: String::new(),
-                            peer: String::new(),
+                            peer: context.state_store.read(|store| {
+                                store
+                                    .direct_conversation_peer(&realm)
+                                    .map(|peer| {
+                                        peer.contact_actor_id().signing_principal_id().to_string()
+                                    })
+                                    .unwrap_or_default()
+                            }),
                             realm_id: realm.clone(),
                             video: if video { "1" } else { "0" }.into(),
                             incoming: "0".into(),

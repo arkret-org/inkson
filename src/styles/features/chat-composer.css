@@ -284,19 +284,6 @@
   background: color-mix(in srgb, var(--accent-soft) 22%, var(--surface));
 }
 
-.discussion-composer .compose-drop-zone textarea {
-  width: 100%;
-  min-height: 74px;
-  max-height: 180px;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--text);
-  resize: vertical;
-  outline: none;
-  box-shadow: none;
-}
 
 .discussion-composer .mention-chip-row {
   position: relative;
@@ -411,3 +398,7 @@
 .discussion-shell.embedded [class~="send-e2ee-move-button"]{
   display: none;
 }
+
+.composer-send-scope { font-weight: 600; }
+.composer-scope-details > .sapid-collapsible-trigger { font: inherit; font-size: 12px; color: var(--text-2); background: none; border: 0; padding: 2px 0; cursor: pointer; }
+.composer-scope-details .mono { overflow-wrap: anywhere; font-size: 12px; }

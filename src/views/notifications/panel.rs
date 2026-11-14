@@ -332,8 +332,8 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
                     .then_with(|| b.timestamp.cmp(&a.timestamp))
             }),
             UiNotificationGroup::ByType => rows.sort_by(|a, b| {
-                a.kind
-                    .cmp(&b.kind)
+                notification_priority(a)
+                    .cmp(&notification_priority(b))
                     .then_with(|| b.timestamp.cmp(&a.timestamp))
             }),
         }
@@ -445,7 +445,16 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
 }
 fn notification_row(scope: &Scope, state: NotificationPage, notification: UiNotification) -> View {
     let ctx = state.context.clone();
+    let priority = match notification_priority(&notification) {
+        0 => "notifications.priority.action",
+        1 => "notifications.priority.mention",
+        _ => "notifications.priority.other",
+    };
     let mut children = vec![
+        paragraph(
+            "badge notification-priority",
+            ctx.translated(scope, priority),
+        ),
         line(
             "event-head",
             vec![
@@ -684,4 +693,14 @@ fn contact_request(
         scope.bond(move || status.get().render()),
     ));
     stack("event contact-request-notification", children)
+}
+
+fn notification_priority(row: &UiNotification) -> u8 {
+    if row.action.is_some() {
+        0
+    } else if row.kind.contains("mention") {
+        1
+    } else {
+        2
+    }
 }

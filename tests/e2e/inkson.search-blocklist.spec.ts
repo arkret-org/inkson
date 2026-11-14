@@ -33,7 +33,7 @@ test("global search applies personal message blocks and restores retained histor
   await openSettings(page);
   await byClass(page, "settings-nav-item-blocklist").click();
   const settings = byClass(page, "settings-content-column");
-  await expect(settings.getByRole("heading", { name: "Block list", exact: true })).toBeVisible();
+  await expect(settings.getByText("Personal blocklist", { exact: true })).toBeVisible();
   await inputByClass(settings, "block-target-input").fill(JSON.stringify(CURRENT_ACCOUNT_ACTOR_ID));
   for (const surface of ["mentions", "dm", "calls", "contacts", "applets", "presence", "notifications", "directory"]) {
     await byClass(settings, `block-surface-${surface}`).getByRole("checkbox").click();

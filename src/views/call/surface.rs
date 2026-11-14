@@ -180,6 +180,34 @@ pub(super) fn surface(
             .state_store
             .read(|store| crate::views::helpers::actor_display_label(store, &actor))
     });
+    let target_context = context.clone();
+    let target = scope.bond(move || {
+        let _ = target_context.state_revision.get();
+        let _ = target_context.locale.get();
+        let realm = state.active_realm.get();
+        let peer = state.peer_input.get();
+        let title = target_context.state_store.read(|store| {
+            if peer.is_empty() {
+                target_context
+                    .realm_tree_nodes
+                    .get()
+                    .iter()
+                    .find(|node| {
+                        node.id == realm && node.kind == crate::models::RealmTreeNodeKind::Realm
+                    })
+                    .map(|node| node.title.clone())
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or_else(|| crate::views::helpers::short_protocol_id(&realm))
+            } else {
+                crate::views::helpers::actor_display_label(store, &peer)
+            }
+        });
+        if title.is_empty() {
+            crate::i18n::tr("call.choose_target")
+        } else {
+            title
+        }
+    });
     let device_label = crate::views::helpers::short_protocol_id(&device);
     let signal_context = context.clone();
     let signal_count = label(
@@ -229,6 +257,17 @@ pub(super) fn surface(
             label("mono", device_label),
         ],
     );
+    let mut identity = Some(identity);
+    let identity: View = Box::new(
+        sapid::collapsible(format!("call-details-{}", scope.id().slot()))
+            .unstyled()
+            .class("call-technical-details")
+            .label(context.translated(scope, "call.technical_details"))
+            .default_open(false)
+            .content_policy(sapid::ContentPolicy::KeepMounted)
+            .content(move || identity.take().unwrap_or_else(widgets::empty)),
+    );
+    let call_target = block("call-target", vec![label("call-target-name", target)]);
     let phase_context = context.clone();
     let phase_callbacks = callbacks.clone();
     let phase = widgets::reactive_distinct(state.stage, move |scope, phase| {
@@ -242,20 +281,15 @@ pub(super) fn surface(
                         && (!decryption.get() || state.media_plaintext_confirmed.get())
                 });
                 let can_group = scope.bond(move || {
-                    !state.active_realm.get().trim().is_empty()
+                    arkret_sdk::RealmId::new(state.active_realm.get()).is_ok()
+                        && !super::projection::participant_list_from_input(&state.group_input.get())
+                            .is_empty()
                         && (!decryption.get() || state.media_plaintext_confirmed.get())
                 });
-                block(
-                    "event call-dialer",
+                let mut technical = Some(block(
+                    "call-manual-fields",
                     vec![
-                        field(
-                            scope,
-                            "realm",
-                            context.translated(scope, "friendly.realm"),
-                            state.active_realm,
-                            false,
-                            state,
-                        ),
+                        field(scope, "realm", "Realm", state.active_realm, false, state),
                         field(scope, "peer", "Peer (1:1)", state.peer_input, false, state),
                         field(
                             scope,
@@ -265,6 +299,23 @@ pub(super) fn surface(
                             true,
                             state,
                         ),
+                    ],
+                ));
+                let manual: View = Box::new(
+                    sapid::collapsible(format!("call-manual-{}", scope.id().slot()))
+                        .unstyled()
+                        .class("call-manual-targets")
+                        .label(context.translated(scope, "call.manual_targets"))
+                        .default_open(state.active_realm.get_untracked().is_empty())
+                        .content_policy(sapid::ContentPolicy::KeepMounted)
+                        .content(move || technical.take().unwrap_or_else(widgets::empty)),
+                );
+                let targets = call_targets(scope, context.clone(), state);
+                block(
+                    "event call-dialer",
+                    vec![
+                        targets,
+                        manual,
                         media_consent(scope, state, decryption),
                         block(
                             "actions",
@@ -571,6 +622,82 @@ pub(super) fn surface(
     });
     block(
         "timeline call-panel",
-        vec![block("event", vec![header, identity, phase, status, error])],
+        vec![block(
+            "event",
+            vec![header, call_target, phase, status, error, identity],
+        )],
     )
+}
+
+fn call_targets(scope: &Scope, context: Rc<InksonContext>, state: CallSurface) -> View {
+    let source_context = context.clone();
+    let source = scope.bond(move || {
+        (
+            state.active_realm.get(),
+            source_context.state_revision.get(),
+        )
+    });
+    widgets::reactive_distinct(source, move |scope, (realm, _)| {
+        let rows = context.state_store.read(|store| {
+            let snapshot = store.load();
+            crate::views::member_display::realm_member_roster(
+                snapshot.realm_tree_projections.get(&realm),
+            )
+        });
+        let own = context
+            .principal_id
+            .get_untracked()
+            .map(|id| id.to_string())
+            .unwrap_or_default();
+        let mut choices = Vec::new();
+        for row in rows
+            .into_iter()
+            .filter(|row| row.membership == Some(arkret_sdk::sync::MemberRosterMembership::Join))
+        {
+            let peer = row.actor_id.signing_principal_id().to_string();
+            if peer == own {
+                continue;
+            }
+            let name = context.state_store.read(|store| {
+                crate::views::member_display::resolve_member_display(store, &realm, &row).label
+            });
+            let selected = peer.clone();
+            choices.push(Box::new(
+                sapid::checkbox()
+                    .unstyled()
+                    .class("checkbox-row call-target-choice")
+                    .label(name)
+                    .checked(scope.bond(move || {
+                        super::projection::participant_list_from_input(&state.group_input.get())
+                            .contains(&selected)
+                    }))
+                    .on_checked_change(move |checked| {
+                        let mut peers = super::projection::participant_list_from_input(
+                            &state.group_input.get_untracked(),
+                        );
+                        peers.retain(|value| value != &peer);
+                        if checked {
+                            peers.push(peer.clone());
+                        }
+                        state.group_input.revise(|value| *value = peers.join("\n"));
+                    }),
+            ) as View);
+        }
+        if choices.is_empty() {
+            return label(
+                "muted call-target-hint",
+                context.translated(scope, "call.context_hint"),
+            );
+        }
+        let mut choices = Some(block("call-target-choices", choices));
+        Box::new(
+            sapid::collapsible(format!("call-members-{}", scope.id().slot()))
+                .unstyled()
+                .class("call-member-picker")
+                .label(context.translated(scope, "call.choose_members"))
+                .default_open(state.peer_input.get_untracked().is_empty())
+                .content_policy(sapid::ContentPolicy::KeepMounted)
+                .content(move || choices.take().unwrap_or_else(widgets::empty)),
+        )
+    })
 }

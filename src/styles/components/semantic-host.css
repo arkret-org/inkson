@@ -1,3 +1,6 @@
+
+
+/* Semantic host layout and control integration. */
 /* Semantic host containers participate in the original four CSS layers. */
 html, body, #app { min-width: 0; min-height: 100%; }
 #app { height: 100dvh; }

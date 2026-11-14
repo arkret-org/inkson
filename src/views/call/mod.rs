@@ -48,7 +48,7 @@ pub fn page(
     else {
         return crate::presentation::widgets::empty();
     };
-    let realm = if realm_id.is_empty() {
+    let realm = if realm_id.is_empty() && peer.is_empty() {
         context.selected_realm_id.get()
     } else {
         realm_id

@@ -175,7 +175,7 @@ fn add_generic_error_keys_zh(dict: &mut TranslationDict) {
 pub fn chinese_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(UiLocale::Zh);
     dict.set("contacts.my_agent", "我的智能体");
-    dict.set("nav.realms", "领域");
+    dict.set("nav.realms", "Realm");
     dict.set("search.result_source", "搜索结果来源");
     dict.set("search.source_event", "事件");
     dict.set("search.source_commit", "覆盖提交");
@@ -679,7 +679,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.section.invite_policy", "谁能邀请我");
     dict.set("settings.section.consent", "处理邀请与同意");
     dict.set("settings.section.blocklist", "屏蔽名单");
-    dict.set("settings.section.capabilities", "查看应用授权");
+    dict.set("settings.section.capabilities", "查看权限授权");
     dict.set("settings.section.theme", "外观与语言");
     dict.set("settings.section.release", "发布状态");
     dict.set("settings.section.audit", "审计日志");
@@ -1054,7 +1054,7 @@ pub fn chinese_translations() -> TranslationDict {
         "签发方链接不可用",
     );
     dict.set("settings.theme.badge", "外观");
-    dict.set("settings.theme.light", "浅色主题");
+    dict.set("settings.theme.light", "浅色");
     dict.set("settings.theme.night", "深色");
     dict.set("settings.theme.system", "跟随系统");
     dict.set("settings.language.title", "语言");
@@ -2266,7 +2266,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("applets.installed", "已观察到的小程序 Service");
     dict.set("applets.close_install", "关闭安装表单");
     dict.set("applets.open_install", "+ 安装小程序");
-    dict.set("applets.manifest_placeholder", "清单网址或 JSON 内容");
+    dict.set(
+        "applets.manifest_placeholder",
+        "完整注册材料 JSON（AppletInstallPreviewRequestBody）",
+    );
     dict.set(
         "applets.circle_placeholder",
         "可选 Circle 标识（ak:circle:…）；留空表示整个 Realm",
@@ -2398,15 +2401,12 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set(
         "chat.composer.circle_scope",
-        "Circle 讨论：{strand}。仅限获授权读取此 Circle 的成员。",
+        "仅此 Circle 中获授权读取的成员可见",
     );
-    dict.set(
-        "chat.composer.direct_scope",
-        "直接对话：{strand}。仅限两位对话参与者。",
-    );
+    dict.set("chat.composer.direct_scope", "仅此直接对话的两位参与者可见");
     dict.set(
         "chat.composer.original_scope",
-        "原始 Strand：{strand}。仅限获授权读取此范围的成员。",
+        "发送到当前 Realm 的讨论；仅获授权读取此范围的成员可见",
     );
 
     dict.set("circles.page.state_active", "活跃");
@@ -4240,4 +4240,75 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("manage.contact_no_dm", "无私聊");
     dict.set("poll_provisional", "投票等待已验证历史");
     dict.set("contacts.clear_filter", "清除搜索");
+    dict.set("kanban.ui.summary", "摘要");
+    dict.set("kanban.ui.add_summary", "添加摘要");
+    dict.set("kanban.ui.edit_summary", "编辑摘要与标签");
+    dict.set("kanban.ui.add_description", "添加描述");
+    dict.set("kanban.ui.edit_description", "编辑描述");
+    dict.set("kanban.ui.add_labels", "添加标签");
+    dict.set("kanban.ui.security", "加密状态");
+    dict.set("kanban.ui.discussion_scope", "讨论范围");
+    dict.set("kanban.ui.people_time", "负责人和时间");
+    dict.set("kanban.ui.status_labels", "标签");
+    dict.set("kanban.ui.access_technical", "访问与技术信息");
+    dict.set("kanban.ui.edit_schedule", "编辑日程");
+    dict.set("kanban.ui.add_schedule", "添加日程");
+    dict.set("search.time_unknown", "时间未提供");
+    dict.set("search.empty_body", "正文为空");
+    dict.set("search.metadata_only", "仅有元数据，当前没有可显示的正文");
+    dict.set("notifications.priority.action", "需要我处理");
+    dict.set("notifications.priority.mention", "提及我");
+    dict.set("notifications.priority.other", "其他通知");
+    dict.set("chat.composer.scope_details", "查看发送范围标识");
+
+    dict.set("call.choose_target", "选择通话对象");
+    dict.set("call.technical_details", "通话技术信息");
+    dict.set("call.manual_targets", "高级：手动指定通话对象");
+    dict.set("call.choose_members", "从当前 Realm 选择群组参与者");
+    dict.set(
+        "call.context_hint",
+        "尚无可用成员上下文。可先打开对应讨论，或在高级设置中填写已知对象。",
+    );
+
+    dict.set("permissions.exact", "查看精确的权限上限清单");
+    dict.set("permissions.sources", "查看权限、范围与来源详情");
+    dict.set("permissions.ceiling_note", "以下是创建时配置的能力上限，不代表当前实际可用权限；实际访问仍取决于 Realm 成员资格、参与范围、有效授权和运行状态。");
+    dict.set("permissions.read_ceiling", "读取上限");
+    dict.set("permissions.write_ceiling", "写入与提议上限");
+    dict.set("permissions.none", "未选择对应预设；精确动作见详情");
+    dict.set("permissions.controller", "负责账号");
+    dict.set("permissions.account_station", "账号 Station");
+    dict.set("permissions.runtime_location_note", "账号 Station 不等于运行位置。当前投影未披露物理运行位置；配对与换端不会改变 PCR 权威或历史访问资格。");
+    dict.set(
+        "permissions.no_runtime_key",
+        "尚无已报告的运行密钥授权；配对、暂停或失效均不表示可用。",
+    );
+    dict.set("permissions.key_expiry", "运行密钥到期");
+    dict.set(
+        "permissions.no_fixed_expiry",
+        "未设置固定到期时间；仍受撤销与其它约束",
+    );
+    dict.set(
+        "permissions.details_unavailable",
+        "尚未加载权限详情，不能据此确认可用能力。",
+    );
+    dict.set(
+        "permissions.package_needed",
+        "提供完整的注册材料后，将列出包所请求的动作供逐项选择。",
+    );
+    dict.set("permissions.package_unverified", "这是包声明的请求，不是已授予权限。逐项选择后预览，核对服务、范围、限制与审批结果，再安装。");
+    dict.set("permissions.package_expiry", "包到期");
+    dict.set(
+        "permissions.plan_note",
+        "预览已返回。安装仍以此冻结计划及服务接受结果为准；部分拒绝、撤销和运行状态另行显示。",
+    );
+    dict.set("permissions.action_read_events", "读取获授权的事件");
+    dict.set("permissions.action_read_objects", "读取获授权的对象");
+    dict.set("permissions.action_send", "创建消息");
+    dict.set("permissions.action_react", "添加回应");
+    dict.set("permissions.action_create_strand", "创建 Strand");
+    dict.set("permissions.action_update_strand", "更新 Strand");
+    dict.set("permissions.action_relate", "创建关联");
+    dict.set("permissions.action_read_blob", "读取获授权的附件");
+    dict.set("permissions.action_other", "其他请求能力，请核对精确定义");
 }

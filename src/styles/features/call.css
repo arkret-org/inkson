@@ -15,3 +15,10 @@
   display: flex; justify-content: center; gap: 10px;
   border-top: 1px solid #2a2c40;
 }
+
+.call-target { padding: 12px 0; font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
+.call-technical-details, .call-manual-targets { margin-top: 16px; }
+.call-technical-details > .sapid-collapsible-trigger, .call-manual-targets > .sapid-collapsible-trigger, .call-member-picker > .sapid-collapsible-trigger { padding: 8px 0; border: 0; background: none; color: var(--text-2); font: inherit; cursor: pointer; }
+.call-target-choices { display: grid; gap: 8px; max-height: 220px; overflow: auto; }
+.call-target-choice { display: flex; align-items: center; gap: 8px; }
+.call-target-hint { max-width: 65ch; }

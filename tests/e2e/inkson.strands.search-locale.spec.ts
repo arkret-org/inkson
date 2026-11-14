@@ -57,7 +57,7 @@ test("global search empty and no-match states follow the active language", async
     await expect(byClass(panel, "global-search-index-label")).toHaveText(language === "zh" ? "搜索索引" : "Search index");
     await expect(byClass(panel, "global-search-back")).toHaveText(language === "zh" ? "返回首页" : "Back to dashboard");
     await expect(input).toHaveValue("");
-    await expect(panel.locator(".input-empty-prompt")).toHaveText( language === "zh" ? "在所有 Realm 中搜索消息…" : "Search across all your Realms...");
+    await expect(input).toHaveAttribute("placeholder", language === "zh" ? "在所有 Realm 中搜索消息…" : "Search across all your Realms...");
     await expect(byClass(panel, "global-search-submit")).toBeDisabled();
     await expect(byClass(panel, "global-search-results-empty")).toHaveText(language === "zh" ? "输入查询以在所有 Realm 中搜索。" : "Type a query to search across your Realms.");
     await input.fill(literalQuery);

@@ -1,0 +1,280 @@
+{
+  "applet_package": {
+    "applet_id": "ak:applet:01904100-0000-7000-8000-aaaaaaaaaaaa",
+    "service_id": "ak:did_core:webvh:z6mkfixtureappletexample",
+    "controller_principal_id": "ak:did_core:webvh:z6mkfixture",
+    "base_url": "https://applet.example/cx",
+    "protocols": [
+      "ak.applet.v1",
+      "slack"
+    ],
+    "namespaces": {
+      "realms": [],
+      "handles": []
+    },
+    "receive_events": true,
+    "receive_signals": false,
+    "rate_limited": true,
+    "requested_scopes": [
+      "ak.message.create",
+      "ak.reaction.add"
+    ],
+    "created_at": "2026-07-12T00:00:00.000Z",
+    "schema": "ak.schema.applet_package.v1",
+    "package_id": "design-fixture-package",
+    "claimed_profiles": [
+      "ak.profile.applet_service.v1"
+    ],
+    "endpoint_policy": {
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/_arkret/edge/applet/transactions",
+          "authentication_kind": "webhook_signature"
+        }
+      ]
+    },
+    "webhook_signature_policy": {
+      "key_ref": "did:webvh:z6mkfixtureappletexample:applet.example#server-key-1",
+      "kind": "http_message_signature",
+      "accepted_signature_algorithms": [
+        "ed25519"
+      ]
+    },
+    "limits": {},
+    "ghost_policy": {
+      "enabled": false
+    },
+    "delegation_policy": {
+      "enabled": false
+    },
+    "e2ee_policy": {
+      "enabled": false,
+      "mls_join_requested": false
+    },
+    "package_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "registration_epoch": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "expires_at": "2026-12-31T00:00:00.000Z",
+    "proof": {
+      "kind": "detached_jws",
+      "verification_method": "did:webvh:z6mkfixtureappletexample:applet.example#server-key-1",
+      "payload_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "created_at": "2026-07-12T00:00:00.000Z",
+      "jws": "eyJhbGciOiJFZDI1NTE5In0..AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    }
+  },
+  "authoring_request_basis": {
+    "schema": "ak.schema.applet_install_authoring_request_basis.v1",
+    "purpose": "install_service",
+    "target_station_id": "ak:did_core:web:station.example",
+    "install_actor_id": {
+      "kind": "account",
+      "account_id": {
+        "principal_id": "ak:did_core:webvh:z6mkfixture",
+        "station_id": "ak:did_core:web:station.example"
+      }
+    },
+    "applet_id": "ak:applet:01904100-0000-7000-8000-aaaaaaaaaaaa",
+    "service_id": "ak:did_core:webvh:z6mkfixtureappletexample",
+    "package_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "effective_scope": {
+      "kind": "realm",
+      "realm_id": "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI"
+    },
+    "approval_request": {
+      "approve_actions": [],
+      "ghost_actor_mode": "disallowed",
+      "delegated_native_actors_allowed": false,
+      "e2ee_join_allowed": false,
+      "widget_allowed": false
+    },
+    "registration_event": {
+      "event_id": "ak:event:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI",
+      "kind": "ak.applet.registration",
+      "realm_id": "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI",
+      "scope_ref": {
+        "kind": "realm",
+        "realm_id": "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI"
+      },
+      "actor_id": {
+        "kind": "account",
+        "account_id": {
+          "principal_id": "ak:did_core:webvh:z6mkfixture",
+          "station_id": "ak:did_core:web:station.example"
+        }
+      },
+      "created_at": "2026-07-12T00:00:00.000Z",
+      "payload": {
+        "applet_id": "ak:applet:01904100-0000-7000-8000-aaaaaaaaaaaa",
+        "service_id": "ak:did_core:webvh:z6mkfixtureappletexample",
+        "controller_principal_id": "ak:did_core:webvh:z6mkfixture",
+        "base_url": "https://applet.example/cx",
+        "protocols": [
+          "ak.applet.v1",
+          "slack"
+        ],
+        "namespaces": {
+          "realms": [],
+          "handles": []
+        },
+        "receive_events": true,
+        "receive_signals": false,
+        "rate_limited": true,
+        "requested_scopes": [
+          "ak.message.create",
+          "ak.reaction.add"
+        ],
+        "created_at": "2026-07-12T00:00:00.000Z",
+        "expected_revision": null,
+        "claimed_profiles": [
+          "ak.profile.applet_service.v1"
+        ],
+        "registration_epoch": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "webhook_signature_policy": {
+          "key_ref": "did:webvh:z6mkfixtureappletexample:applet.example#server-key-1",
+          "kind": "http_message_signature",
+          "accepted_signature_algorithms": [
+            "ed25519"
+          ]
+        },
+        "manifest": {
+          "claimed_profiles": [
+            "ak.profile.applet_service.v1"
+          ],
+          "limits": {},
+          "ghost_policy": {
+            "enabled": false
+          },
+          "delegation_policy": {
+            "enabled": false
+          },
+          "e2ee_policy": {
+            "enabled": false,
+            "mls_join_requested": false
+          },
+          "registration_epoch_evidence": {
+            "did": "did:webvh:z6mkfixtureappletexample:applet.example",
+            "document_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "method_version_evidence": {
+              "method": "did:webvh",
+              "version_id": "QmRegistrationVersion1",
+              "unversioned_refetch": false
+            },
+            "accepted_signing_keys": [
+              {
+                "key_ref": "did:webvh:z6mkfixtureappletexample:applet.example#server-key-1",
+                "public_key_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              {
+                "key_ref": "did:webvh:z6mkfixtureappletexample:applet.example#server-key-2",
+                "public_key_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            ]
+          }
+        },
+        "proof": {
+          "kind": "detached_jws",
+          "verification_method": "did:webvh:z6mkfixtureappletexample:applet.example#server-key-1",
+          "payload_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "created_at": "2026-07-12T00:00:00.000Z",
+          "jws": "eyJhbGciOiJFZDI1NTE5In0..AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      }
+    },
+    "capability_grant_events": [
+      {
+        "event_id": "ak:event:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI",
+        "kind": "ak.applet.registration",
+        "realm_id": "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI",
+        "scope_ref": {
+          "kind": "realm",
+          "realm_id": "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI"
+        },
+        "actor_id": {
+          "kind": "account",
+          "account_id": {
+            "principal_id": "ak:did_core:webvh:z6mkfixture",
+            "station_id": "ak:did_core:web:station.example"
+          }
+        },
+        "created_at": "2026-07-12T00:00:00.000Z",
+        "payload": {
+          "applet_id": "ak:applet:01904100-0000-7000-8000-aaaaaaaaaaaa",
+          "service_id": "ak:did_core:webvh:z6mkfixtureappletexample",
+          "controller_principal_id": "ak:did_core:webvh:z6mkfixture",
+          "base_url": "https://applet.example/cx",
+          "protocols": [
+            "ak.applet.v1",
+            "slack"
+          ],
+          "namespaces": {
+            "realms": [],
+            "handles": []
+          },
+          "receive_events": true,
+          "receive_signals": false,
+          "rate_limited": true,
+          "requested_scopes": [
+            "ak.message.create",
+            "ak.reaction.add"
+          ],
+          "created_at": "2026-07-12T00:00:00.000Z",
+          "expected_revision": null,
+          "claimed_profiles": [
+            "ak.profile.applet_service.v1"
+          ],
+          "registration_epoch": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "webhook_signature_policy": {
+            "key_ref": "did:webvh:z6mkfixtureappletexample:applet.example#server-key-1",
+            "kind": "http_message_signature",
+            "accepted_signature_algorithms": [
+              "ed25519"
+            ]
+          },
+          "manifest": {
+            "claimed_profiles": [
+              "ak.profile.applet_service.v1"
+            ],
+            "limits": {},
+            "ghost_policy": {
+              "enabled": false
+            },
+            "delegation_policy": {
+              "enabled": false
+            },
+            "e2ee_policy": {
+              "enabled": false,
+              "mls_join_requested": false
+            },
+            "registration_epoch_evidence": {
+              "did": "did:webvh:z6mkfixtureappletexample:applet.example",
+              "document_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "method_version_evidence": {
+                "method": "did:webvh",
+                "version_id": "QmRegistrationVersion1",
+                "unversioned_refetch": false
+              },
+              "accepted_signing_keys": [
+                {
+                  "key_ref": "did:webvh:z6mkfixtureappletexample:applet.example#server-key-1",
+                  "public_key_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                },
+                {
+                  "key_ref": "did:webvh:z6mkfixtureappletexample:applet.example#server-key-2",
+                  "public_key_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                }
+              ]
+            }
+          },
+          "proof": {
+            "kind": "detached_jws",
+            "verification_method": "did:webvh:z6mkfixtureappletexample:applet.example#server-key-1",
+            "payload_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "created_at": "2026-07-12T00:00:00.000Z",
+            "jws": "eyJhbGciOiJFZDI1NTE5In0..AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1025,7 +1025,10 @@ fn detail_contents(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
                                 "card-detail-section-head",
                                 vec![line(
                                     "card-detail-section-title",
-                                    vec![crate::components::ui_icon("file"), plain("Summary")],
+                                    vec![
+                                        crate::components::ui_icon("file"),
+                                        plain(detail.app.translated(scope, "kanban.ui.summary")),
+                                    ],
                                 )],
                             ),
                             input(
@@ -1040,7 +1043,7 @@ fn detail_contents(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
                                 scope,
                                 detail.app.clone(),
                                 "card-detail-summary-input",
-                                "Summary",
+                                "kanban.ui.summary",
                                 c.card_edit_description,
                                 true,
                                 true,
@@ -1066,6 +1069,20 @@ fn detail_contents(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
                     )
                 } else {
                     let edit = detail.clone();
+                    if card_summary_text(&card.description).is_empty() {
+                        return line(
+                            "card-detail-summary-add",
+                            vec![action(
+                                scope,
+                                detail.app.clone(),
+                                "card-detail-edit-button",
+                                "kanban.ui.add_summary",
+                                "ghost card-detail-mini-action",
+                                card_detail_edit_ready(&card),
+                                move || edit.begin(CardEditScope::Summary, None),
+                            )],
+                        );
+                    }
                     stack(
                         "card-detail-section card-detail-summary-section",
                         vec![
@@ -1074,30 +1091,28 @@ fn detail_contents(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
                                 vec![
                                     line(
                                         "card-detail-section-title",
-                                        vec![crate::components::ui_icon("file"), plain("Summary")],
+                                        vec![
+                                            crate::components::ui_icon("file"),
+                                            plain(
+                                                detail.app.translated(scope, "kanban.ui.summary"),
+                                            ),
+                                        ],
                                     ),
                                     action(
                                         scope,
                                         detail.app.clone(),
                                         "card-detail-edit-button",
-                                        "common.edit",
+                                        "kanban.ui.edit_summary",
                                         "secondary card-detail-mini-action card-detail-edit-action",
                                         card_detail_edit_ready(&card),
                                         move || edit.begin(CardEditScope::Summary, None),
                                     ),
                                 ],
                             ),
-                            if card_summary_text(&card.description).is_empty() {
-                                paragraph(
-                                    "card-detail-empty",
-                                    detail.app.translated(scope, "kanban.ui.no_summary"),
-                                )
-                            } else {
-                                paragraph(
-                                    "card-detail-summary card-summary",
-                                    card_summary_text(&card.description),
-                                )
-                            },
+                            paragraph(
+                                "card-detail-summary card-summary",
+                                card_summary_text(&card.description),
+                            ),
                         ],
                     )
                 }
@@ -1680,21 +1695,16 @@ fn narrative(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
                             MLS_LOCKED_FIELD_PLACEHOLDER,
                         ));
                     } else {
-                        children.push(if card.description_body.trim().is_empty() {
-                            paragraph(
-                                "card-detail-empty",
-                                detail.app.translated(scope, "kanban.ui.no_description"),
-                            )
-                        } else {
-                            stack(
+                        if !card.description_body.trim().is_empty() {
+                            children.push(stack(
                                 "card-detail-description card-description-body",
                                 vec![render_body(
                                     scope,
                                     detail.app.clone(),
                                     &card.description_body,
                                 )],
-                            )
-                        });
+                            ));
+                        }
                         let edit = detail.clone();
                         children.push(line(
                             "card-synthesis-footer-action",
@@ -1702,7 +1712,11 @@ fn narrative(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
                                 scope,
                                 detail.app.clone(),
                                 "card-detail-edit-description-button",
-                                "common.edit",
+                                if card.description_body.trim().is_empty() {
+                                    "kanban.ui.add_description"
+                                } else {
+                                    "kanban.ui.edit_description"
+                                },
                                 "secondary card-detail-mini-action",
                                 card_detail_edit_ready(&card),
                                 move || edit.begin(CardEditScope::Description, None),
@@ -2065,52 +2079,89 @@ fn details_fields(
     }
     due_children.push(due_editor);
     let due_view = line("due-editor card-detail-due", due_children);
-    let mut fields = vec![
-        side_field("kanban.ui.strand_id", strand_identity(scope, &card.id)),
-        side_field("kanban.ui.assignees", assignees),
-        side_field("kanban.ui.due", due_view),
-    ];
-    fields.push(side_field(
-        "kanban.ui.labels",
-        line(
-            "card-labels",
-            card.labels
-                .iter()
-                .map(|label| paragraph("card-label", label.clone()))
-                .collect(),
-        ),
-    ));
-    fields.push(side_field(
-        "kanban.ui.calendar",
-        calendar_view(scope, detail.clone(), card.clone()),
-    ));
-    fields.push(side_field(
-        "Security",
-        crate::components::security_state_badge(
+    let mut labels = card
+        .labels
+        .iter()
+        .map(|label| paragraph("card-label", label.clone()))
+        .collect::<Vec<_>>();
+    if labels.is_empty() {
+        let edit = detail.clone();
+        labels.push(action(
             scope,
             detail.app.clone(),
-            crate::components::SecurityStateBadgeProps {
-                encrypted: card.security_encrypted.unwrap_or(true),
-                compact: false,
-                test_id: Some("card-detail-security-badge".into()),
-                unknown: card.security_encrypted.is_none(),
-            },
+            "card-detail-add-labels",
+            "kanban.ui.add_labels",
+            "ghost card-detail-mini-action",
+            card_detail_edit_ready(&card),
+            move || edit.begin(CardEditScope::Summary, None),
+        ));
+    }
+    let access = vec![
+        side_field("kanban.ui.strand_id", strand_identity(scope, &card.id)),
+        side_field(
+            "kanban.ui.security",
+            crate::components::security_state_badge(
+                scope,
+                detail.app.clone(),
+                crate::components::SecurityStateBadgeProps {
+                    encrypted: card.security_encrypted.unwrap_or(true),
+                    compact: false,
+                    test_id: Some("card-detail-security-badge".into()),
+                    unknown: card.security_encrypted.is_none(),
+                },
+            ),
         ),
-    ));
-    fields.push(side_field(
-        "Discussion scope",
-        paragraph("", card.external_visibility),
-    ));
+        side_field(
+            "kanban.ui.discussion_scope",
+            paragraph("", card.external_visibility.clone()),
+        ),
+    ];
+    let mut access = Some(field_group("kanban.ui.access_technical", access));
     stack(
         "card-detail-side-fields card-fields",
-        vec![Box::new(
-            glory::ui::view()
-                .document_part(glory::render::DocumentPart::DescriptionList)
-                .class("card-detail-field-list semantic-card-fields")
-                .fill(fields),
-        )],
+        vec![
+            field_group(
+                "kanban.ui.people_time",
+                vec![
+                    side_field("kanban.ui.assignees", assignees),
+                    side_field("kanban.ui.due", due_view),
+                    side_field(
+                        "kanban.ui.calendar",
+                        calendar_view(scope, detail.clone(), card),
+                    ),
+                ],
+            ),
+            field_group(
+                "kanban.ui.status_labels",
+                vec![side_field("kanban.ui.labels", line("card-labels", labels))],
+            ),
+            Box::new(
+                sapid::collapsible(format!("card-access-{}", scope.id().slot()))
+                    .unstyled()
+                    .class("card-detail-access")
+                    .label(detail.app.translated(scope, "kanban.ui.access_technical"))
+                    .default_open(false)
+                    .content_policy(sapid::ContentPolicy::KeepMounted)
+                    .content(move || access.take().unwrap_or_else(empty)),
+            ),
+        ],
     )
 }
+fn field_group(title: &str, fields: Vec<View>) -> View {
+    stack(
+        "card-detail-field-group",
+        vec![
+            heading(4, "card-detail-field-group-title", crate::i18n::tr(title)),
+            Box::new(
+                glory::ui::view()
+                    .document_part(glory::render::DocumentPart::DescriptionList)
+                    .class("card-detail-field-list semantic-card-fields")
+                    .fill(fields),
+            ),
+        ],
+    )
+}
+
 fn assignee_picker(scope: &Scope, detail: Detail, realm: String) -> View {
     let c = detail.c;
     scope.effect(move || {
@@ -2544,11 +2595,6 @@ fn calendar_view(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
                     },
                 );
                 children.push(rsvp_view(scope, detail.clone(), card.clone()));
-            } else {
-                children.push(paragraph(
-                    "calendar-empty",
-                    crate::i18n::tr("kanban.ui.no_schedule"),
-                ));
             }
             let edit = detail.clone();
             let enabled = card_detail_edit_ready(&card);
@@ -2556,7 +2602,11 @@ fn calendar_view(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
                 scope,
                 detail.app.clone(),
                 "card-detail-calendar-edit",
-                "common.edit",
+                if schedule.has_schedule() {
+                    "kanban.ui.edit_schedule"
+                } else {
+                    "kanban.ui.add_schedule"
+                },
                 "secondary",
                 enabled,
                 move || {

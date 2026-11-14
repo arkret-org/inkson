@@ -4,21 +4,7 @@
  */
 body { margin: 0; font-family: var(--font-sans); background: var(--bg); color: var(--text); }
 button, input, textarea, select { font: inherit; }
-/* ===================================================================
- * Claude Design — Arkret v1 UI shared stylesheet
- * -------------------------------------------------------------------
- * TOKEN OWNERSHIP: this file does NOT define theme tokens anymore.
- * The single source of truth for the palette (surfaces, lines, text,
- * brand, semantic colors, radius, shadows, fonts, layout widths,
- * layers) is `app_overrides/theme-shell-overrides.css`, which loads
- * last and always wins. This file keeps only the reset/base rules and
- * the i18n visibility rules below.
- *
- * Theming  : light / dark via [data-theme] on <html>.
- * i18n     : zh / en via [data-lang] on <html>. Use class .i18n with
- *            <span class="zh">…</span><span class="en">…</span>
- *            children — opposite-lang span is hidden by attribute.
- * ================================================================ */
+/* Shared element defaults; semantic tokens are owned by base/tokens.css. */
 
 /* ===== 1. RESET / BASE ============================================ */
 

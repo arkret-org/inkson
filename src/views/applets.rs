@@ -91,6 +91,20 @@ struct AppletInstallPreviewSnapshot {
     preview: AppletInstallPreviewResponseBody,
 }
 
+fn applet_action_label(action: &str) -> String {
+    tr(match action {
+        "ak.event.read" => "permissions.action_read_events",
+        "ak.object.read" => "permissions.action_read_objects",
+        "ak.message.create" => "permissions.action_send",
+        "ak.reaction.add" => "permissions.action_react",
+        "ak.strand.create" => "permissions.action_create_strand",
+        "ak.strand.update" => "permissions.action_update_strand",
+        "ak.relation.create" => "permissions.action_relate",
+        "ak.blob.read" => "permissions.action_read_blob",
+        _ => "permissions.action_other",
+    })
+}
+
 fn approved_actions_from_plan(
     plan: &AppletInstallPlan,
     package: &AppletPackage,
@@ -1232,6 +1246,7 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
                 return empty();
             }
             let mut fields = vec![];
+            let proposal_actions = state.install_approve_actions;
             for (key, label, value) in [
                 (
                     "applet-install-manifest-input",
@@ -1242,11 +1257,6 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
                     "applet-install-circle-input",
                     "applets.circle_placeholder",
                     state.install_circle_id,
-                ),
-                (
-                    "applet-install-approve-actions-input",
-                    "applets.actions_placeholder",
-                    state.install_approve_actions,
                 ),
             ] {
                 let placeholder = state.context.translated(scope, label);
@@ -1265,6 +1275,9 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
                                 .multiline(true)
                                 .on_value_change(move |next| {
                                     value.revise(|v| *v = next);
+                                    if key == "applet-install-manifest-input" {
+                                        proposal_actions.revise(String::clear);
+                                    }
                                     preview.revise(|v| *v = None);
                                 })
                         }),
@@ -1274,6 +1287,96 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
                     vec![control],
                 ));
             }
+            let proposal = state.install_manifest;
+            let actions = state.install_approve_actions;
+            let proposal_context = state.context.clone();
+            fields.push(reactive(proposal, move |scope, raw| {
+                let Some((package, _)) =
+                    applet_install_material_from_manifest(&classify_manifest_input(&raw))
+                else {
+                    return paragraph(
+                        "muted",
+                        proposal_context.translated(scope, "permissions.package_needed"),
+                    );
+                };
+                let mut choices = vec![
+                    paragraph(
+                        "applet-permission-identity",
+                        format!("{} · {}", package.applet_id, package.service_id),
+                    ),
+                    paragraph("applet-permission-location", package.base_url.clone()),
+                    paragraph(
+                        "muted",
+                        proposal_context.translated(scope, "permissions.package_unverified"),
+                    ),
+                    paragraph(
+                        "applet-permission-expiry",
+                        format!(
+                            "{}: {}",
+                            tr("permissions.package_expiry"),
+                            package
+                                .expires_at
+                                .map(|time| time.to_rfc3339())
+                                .unwrap_or_else(|| tr("permissions.no_fixed_expiry"))
+                        ),
+                    ),
+                ];
+                for requested in package.requested_scopes {
+                    let selected = requested.clone();
+                    choices.push(Box::new(
+                        sapid::checkbox()
+                            .unstyled()
+                            .class("checkbox-row applet-permission-choice")
+                            .label(format!(
+                                "{} · {}",
+                                applet_action_label(&requested),
+                                requested
+                            ))
+                            .checked(scope.bond(move || {
+                                parse_applet_approval_actions(&actions.get()).contains(&selected)
+                            }))
+                            .on_checked_change(move |checked| {
+                                let mut values =
+                                    parse_applet_approval_actions(&actions.get_untracked());
+                                values.retain(|value| value != &requested);
+                                if checked {
+                                    values.push(requested.clone());
+                                }
+                                actions.revise(|value| *value = values.join("\n"));
+                                preview.revise(|value| *value = None);
+                            }),
+                    ) as View);
+                }
+                stack("applet-permission-proposal", choices)
+            }));
+            let preview_context = state.context.clone();
+            fields.push(reactive(preview, move |scope, snapshot| {
+                let Some(snapshot) = snapshot else {
+                    return empty();
+                };
+                let mut plan = Some(paragraph(
+                    "mono permission-source-json",
+                    serde_json::to_string_pretty(&snapshot.preview.plan).unwrap_or_default(),
+                ));
+                stack(
+                    "applet-permission-plan",
+                    vec![
+                        paragraph(
+                            "",
+                            preview_context.translated(scope, "permissions.plan_note"),
+                        ),
+                        Box::new(
+                            sapid::collapsible(format!("applet-plan-{}", scope.id().slot()))
+                                .unstyled()
+                                .class("applet-permission-plan-details")
+                                .label(preview_context.translated(scope, "permissions.sources"))
+                                .default_open(false)
+                                .content_policy(sapid::ContentPolicy::KeepMounted)
+                                .content(move || plan.take().unwrap_or_else(empty)),
+                        ),
+                    ],
+                )
+            }));
             let ghost = state.install_ghost_actors_allowed;
             fields.push(stack(
                 "metric applet-install-ghost-row",
@@ -1604,6 +1707,20 @@ mod tests {
 
         assert!(
             applet_install_material_from_manifest(&super::ManifestInputKind::Invalid).is_none()
+        );
+    }
+
+    #[test]
+    fn applet_permission_proposal_fixture_uses_the_closed_sdk_request() {
+        let raw = include_str!("../../tests/e2e/fixtures/applet-permission-proposal.json");
+        let _: super::AppletInstallPreviewRequestBody =
+            serde_json::from_str(raw).expect("closed request disclosure fixture");
+        let (package, _) =
+            applet_install_material_from_manifest(&super::ManifestInputKind::Json(raw.to_owned()))
+                .expect("package proposal is readable without granting access");
+        assert_eq!(
+            package.requested_scopes,
+            ["ak.message.create", "ak.reaction.add"]
         );
     }
 

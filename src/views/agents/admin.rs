@@ -702,6 +702,7 @@ fn details_view(scope: &Scope, state: &AgentPage, view: AgentAdminView, id: Stri
             ],
         ),
     ];
+    children.push(permission_overview(scope, context.clone(), &view));
     if view.selected_should_show_pairing_card {
         let mut pairing = Vec::new();
         if view.selected_pairing_is_expired {
@@ -854,9 +855,18 @@ fn details_view(scope: &Scope, state: &AgentPage, view: AgentAdminView, id: Stri
             "Historical grants have been revoked and are no longer usable.",
         ));
     }
-    children.push(stack(
+    let mut exact = Some(stack(
         "agent-admin-section agent-admin-capabilities",
         capability_section,
+    ));
+    children.push(Box::new(
+        sapid::collapsible(format!("agent-ceiling-{}", scope.id().slot()))
+            .unstyled()
+            .class("agent-admin-exact-permissions")
+            .label(context.translated(scope, "permissions.exact"))
+            .default_open(false)
+            .content_policy(sapid::ContentPolicy::KeepMounted)
+            .content(move || exact.take().unwrap_or_else(empty)),
     ));
     let terminal = view.selected_status == "deactivated";
     let enable = state.clone();
@@ -1122,4 +1132,124 @@ mod retained_creation_tests {
         assert_eq!(owners.borrow().len(), 2);
         assert!(owner.upgrade().is_none());
     }
+}
+
+fn permission_overview(scope: &Scope, context: Rc<InksonContext>, view: &AgentAdminView) -> View {
+    let labels = |presets: &[AgentGrantPreset]| {
+        view.selected_content_capabilities
+            .iter()
+            .filter(|(preset, checked)| *checked && presets.contains(preset))
+            .map(|(preset, _)| preset.label())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let read = labels(&[AgentGrantPreset::Read]);
+    let write = labels(&[
+        AgentGrantPreset::Draft,
+        AgentGrantPreset::ReplyAsAgent,
+        AgentGrantPreset::ActOnBehalf,
+        AgentGrantPreset::Organizer,
+    ]);
+    let mut rows = vec![
+        paragraph(
+            "agent-permission-state",
+            format!(
+                "{} · {}",
+                super::model::agent_state_label(&view.selected_runtime_state),
+                view.selected_status
+            ),
+        ),
+        paragraph(
+            "muted",
+            context.translated(scope, "permissions.ceiling_note"),
+        ),
+        paragraph(
+            "",
+            format!(
+                "{}: {}",
+                crate::i18n::tr("permissions.read_ceiling"),
+                if read.is_empty() {
+                    crate::i18n::tr("permissions.none")
+                } else {
+                    read
+                }
+            ),
+        ),
+        paragraph(
+            "",
+            format!(
+                "{}: {}",
+                crate::i18n::tr("permissions.write_ceiling"),
+                if write.is_empty() {
+                    crate::i18n::tr("permissions.none")
+                } else {
+                    write
+                }
+            ),
+        ),
+    ];
+    if let Some(key) = &view.selected_key_state_owned {
+        rows.push(paragraph(
+            "agent-permission-controller",
+            format!(
+                "{}: {}",
+                crate::i18n::tr("permissions.controller"),
+                short_protocol_id(key.controller_account_id.principal_id.as_str())
+            ),
+        ));
+        rows.push(paragraph(
+            "agent-permission-station",
+            format!(
+                "{}: {}",
+                crate::i18n::tr("permissions.account_station"),
+                short_protocol_id(key.controller_account_id.station_id.as_str())
+            ),
+        ));
+        rows.push(paragraph(
+            "muted",
+            context.translated(scope, "permissions.runtime_location_note"),
+        ));
+        if key.active_authorizations.is_empty() {
+            rows.push(paragraph(
+                "muted agent-permission-expiry",
+                context.translated(scope, "permissions.no_runtime_key"),
+            ));
+        } else {
+            for authorization in &key.active_authorizations {
+                rows.push(paragraph(
+                    "agent-permission-expiry",
+                    format!(
+                        "{} · {}: {}",
+                        short_protocol_id(authorization.verification_method.as_str()),
+                        crate::i18n::tr("permissions.key_expiry"),
+                        authorization
+                            .expires_at
+                            .map(|date| date.to_rfc3339())
+                            .unwrap_or_else(|| crate::i18n::tr("permissions.no_fixed_expiry"))
+                    ),
+                ));
+            }
+        }
+        let disclosure = serde_json::json!({"controller_account_id":key.controller_account_id,"principal_control_realm_id":key.principal_control_realm_id,
+            "controller_authorization_ref":key.controller_authorization_ref,"requested_scope":key.requested_scope,"active_authorizations":key.active_authorizations,"reported_grants":view.selected_grants});
+        let mut source = Some(paragraph(
+            "mono permission-source-json",
+            serde_json::to_string_pretty(&disclosure).unwrap_or_default(),
+        ));
+        rows.push(Box::new(
+            sapid::collapsible(format!("agent-source-{}", scope.id().slot()))
+                .unstyled()
+                .class("permission-source")
+                .label(context.translated(scope, "permissions.sources"))
+                .default_open(false)
+                .content_policy(sapid::ContentPolicy::KeepMounted)
+                .content(move || source.take().unwrap_or_else(empty)),
+        ));
+    } else {
+        rows.push(paragraph(
+            "muted",
+            context.translated(scope, "permissions.details_unavailable"),
+        ));
+    }
+    stack("agent-admin-section agent-permission-overview", rows)
 }

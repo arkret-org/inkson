@@ -924,18 +924,12 @@ fn card_tile(
         let realm = board.local_realm.clone();
         let label = scope.bond(move || {
             let _ = app.state_revision.get();
+            let _ = app.locale.get();
             let names = app.state_store.read(|store| {
                 let members = card_member_roster(store, &realm);
                 actors
                     .iter()
-                    .map(|actor| {
-                        let name = assignee_label_for_actor(store, &realm, &members, actor);
-                        if name.starts_with("ak:") || name.starts_with("did:") {
-                            short_protocol_id(&name)
-                        } else {
-                            name
-                        }
-                    })
+                    .map(|actor| assignee_label_for_actor(store, &realm, &members, actor))
                     .collect::<Vec<_>>()
             });
             format!(

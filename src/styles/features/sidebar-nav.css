@@ -886,3 +886,274 @@
   color: var(--text, var(--ak-ink));
   border: 1px solid color-mix(in srgb, #9b7bd4 55%, transparent);
 }
+
+/* Semantic host layout and control integration. */
+/* A separate real agent disclosure button occupies the original trailing badge position. */
+.contact-sidebar-action-row.has-contact-agents { grid-template-columns: minmax(0, 1fr) auto; }
+.contact-sidebar-action-row > .contact-agent-count { border: 0; min-height: 0; align-self: center; margin-inline-end: 32px; cursor: pointer; }
+
+/* Semantic host layout and control integration. */
+/* Shared icon rail and independently scrolling list/detail columns. */
+.shell.app.workspace-shell,
+.shell.app.workspace-shell.sidebar-collapsed {
+  --sidebar-w: 64px;
+  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100dvh;
+}
+.workspace-shell > .navigation-rail {
+  position: relative;
+  inset: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 64px;
+  min-width: 0;
+  height: 100%;
+  padding: 12px 8px;
+  overflow: visible;
+  border-inline-end: 1px solid var(--border);
+  background: var(--nav-bg);
+  z-index: 30;
+}
+.navigation-rail .rail-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  border-radius: 10px;
+  color: var(--nav-muted);
+  text-decoration: none;
+}
+.navigation-rail .rail-link:hover { background: var(--nav-bg-2); color: var(--nav-text); }
+.navigation-rail .rail-link.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  box-shadow: inset 2px 0 var(--accent);
+}
+.navigation-rail .rail-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.navigation-rail .rail-brand { margin-bottom: 12px; }
+.navigation-rail .rail-logo { display: block; width: 38px; height: 38px; object-fit: contain; }
+.navigation-rail .rail-icon { width: 22px; height: 22px; }
+.navigation-rail .rail-settings { margin-top: auto; }
+.navigation-rail .rail-account { position: relative; }
+.rail-account .rail-account-avatar { width: 32px; height: 32px; flex: 0 0 auto; }
+.rail-account-avatar .content-block-image,
+.rail-account-avatar .content-block-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.rail-account .dot-online {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  margin: 0;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.workspace-shell > .workspace { grid-column: 2; grid-row: 1; }
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; }
+.workspace.workspace-has-list { grid-template-columns: 264px minmax(0, 1fr); }
+.workspace > .main.realm { height: 100%; min-height: 0; grid-column: auto; grid-row: auto; }
+.workspace-outer-header { display: contents; }
+.workspace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 12px 12px;
+  border-inline-end: 1px solid var(--border);
+  background: var(--bg);
+  overflow: hidden;
+}
+.workspace-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: 0 0 auto; min-height: 52px; margin: 0; }
+.workspace-list-title { margin: 0; font-size: 16px; font-weight: 650; }
+.workspace-list-heading .workspace-list-title { flex: 1; min-width: 0; }
+.workspace-list-heading .btn.icon, .workspace-list-heading .sidebar-toolbar-action, .workspace-list-heading .workspace-search-disclosure > .sapid-collapsible-trigger { display: grid; place-items: center; width: 30px; height: 30px; min-height: 30px; padding: 4px; flex: 0 0 30px; border: 0; background: transparent; color: var(--text-2); border-radius: 6px; }
+.workspace-list-heading .btn.icon:hover, .workspace-list-heading .sidebar-toolbar-action:hover, .workspace-list-heading .workspace-search-disclosure > .sapid-collapsible-trigger:hover { background: var(--surface-2); color: var(--text); }
+.workspace-list-heading .ui-icon { width: 18px; height: 18px; }
+.workspace-list-rows { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.workspace-list .sidebar-nav-item { color: var(--text-2); }
+.workspace-list .sidebar-nav-item.is-active { color: var(--accent-ink); }
+.workspace-shell .realm-body:has(> .settings-page),
+.workspace-shell .realm-body:has(> .agent-admin-page),
+.workspace-shell .realm-body:has(> .contacts-page) { padding: 0; overflow: hidden; }
+.workspace-shell .realm-body > .settings-page,
+.workspace-shell .realm-body > .agent-admin-page,
+.workspace-shell .realm-body > .contacts-page { height: 100%; min-height: 0; gap: 0; }
+.workspace-shell .realm-body > .settings-page { display: flex; flex-direction: column; overflow: hidden; }
+.workspace-shell .settings-page > .settings-shell,
+.workspace-shell .agent-admin-layout,
+.workspace-shell .contacts-layout { display: grid; grid-template-columns: 264px minmax(0, 1fr); height: 100%; min-height: 0; gap: 0; align-items: stretch; overflow: hidden; }
+.workspace-shell .settings-page > .settings-shell { flex: 1 1 0; height: auto; }
+.workspace-shell .settings-page .settings-sidebar-column,
+.workspace-shell .agent-admin-list-pane,
+.workspace-shell .contacts-list-pane { padding: 0 12px 12px; border: 0; border-inline-end: 1px solid var(--border); border-radius: 0; background: var(--bg); overflow-y: auto; min-height: 0; align-content: start; gap: 12px; }
+.workspace-shell .contacts-list-pane,
+.workspace-shell .agent-admin-list-pane { display: flex; flex-direction: column; overflow: hidden; }
+.contacts-list-pane > .workspace-list-heading,
+.contacts-list-pane > .workspace-search-input,
+.agent-admin-list-pane > .agent-admin-filter-bar { flex-shrink: 0; }
+.contacts-list-pane > .contact-list-items,
+.agent-admin-list-pane > .agent-admin-list-rows { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.agent-admin-list-pane > .agent-admin-list-rows:empty { flex: 0 0 auto; }
+.workspace-detail-column { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.workspace-detail-column > .topbar { flex: 0 0 auto; min-height: 52px; height: auto; padding: 8px 16px; }
+.workspace-detail-column > .topbar .actions { margin-inline-start: auto; }
+.workspace-detail-column > .topbar .topbar-context:empty { display: none; }
+.workspace-detail-mobile-title { display: none; }
+.workspace-mobile .workspace-detail-mobile-title { display: block; }
+.workspace-detail-column > :last-child { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+.workspace-shell .settings-page .settings-content-column,
+.workspace-shell .agent-admin-detail-content,
+.workspace-shell .contacts-detail-pane { padding: 24px; overflow-y: auto; min-height: 0; min-width: 0; align-content: start; }
+.workspace-shell .settings-page .settings-sidebar-column { display: flex; flex-direction: column; }
+.workspace-shell .settings-page .settings-sidebar-column > :last-child { min-height: 0; overflow-y: auto; }
+.workspace-shell .realm-body > .agent-admin-page { display: flex; flex-direction: column; overflow: hidden; }
+.workspace-shell .agent-admin-layout { flex: 1 1 0; height: auto; overflow: hidden; }
+.workspace-shell .agent-admin-detail-pane { max-height: none; box-sizing: border-box; }
+.agent-admin-detail-stack { display: grid; gap: 12px; min-width: 0; align-content: start; }
+.workspace-shell .agent-admin-list-rows { max-height: none; }
+.contacts-page { display: flex; flex-direction: column; }
+.contacts-page > .contacts-layout { flex: 1 1 0; }
+.contacts-list-pane { display: grid; gap: 16px; }
+.contact-list-items { display: grid; gap: 6px; align-content: start; }
+.contact-list-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px; border: 0; border-radius: 6px; color: var(--text-2); background: transparent; font: inherit; text-align: start; cursor: pointer; }
+.contact-list-item:hover { background: var(--surface-2); }
+.contact-list-item.is-active { background: var(--accent-soft); color: var(--accent-ink); }
+.contact-list-avatar { display: grid; place-items: center; flex: 0 0 28px; height: 28px; margin: 0; border-radius: 50%; background: var(--surface-2); }
+.contact-list-name { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; }
+.workspace-shell .contacts-detail-pane > .contact-row { max-width: 960px; }
+.workspace-shell .mobile-shellbar, .workspace-shell .mobile-drawer { display: none; }
+@media (max-width: 860px) {
+  .shell.app.workspace-shell, .shell.app.workspace-shell.sidebar-collapsed {
+    --sidebar-w: 0px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .workspace-shell > .workspace { grid-column: 1; grid-row: 1; }
+  .shell.app.workspace-shell:has(> .recovery-setup-banner) { grid-template-rows: minmax(0, 1fr) auto auto; }
+  .shell.app.workspace-shell:has(> .recovery-setup-banner) > .navigation-rail { grid-row: 3; }
+  .shell.app.workspace-shell > .navigation-rail {
+    grid-column: 1;
+    grid-row: 2;
+    flex-direction: row;
+    justify-content: space-around;
+    width: 100%;
+    height: auto;
+    box-sizing: border-box;
+    padding: 8px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    border-inline-end: 0;
+    border-top: 1px solid var(--border);
+  }
+  .navigation-rail .rail-brand, .navigation-rail .rail-settings { display: none; }
+  .navigation-rail .rail-link.is-active { box-shadow: inset 0 2px var(--accent); }
+  .workspace.workspace-has-list { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .workspace-list { padding: 0 12px 12px; border-inline-end: 0; border-bottom: 1px solid var(--border); }
+  .workspace-shell .settings-page > .settings-shell,
+  .workspace-shell .agent-admin-layout,
+  .workspace-shell .contacts-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .workspace-shell .settings-page .settings-sidebar-column,
+  .workspace-shell .agent-admin-list-pane,
+  .workspace-shell .contacts-list-pane { padding: 0 12px 12px; border-inline-end: 0; border-bottom: 1px solid var(--border); }
+  .workspace-shell .settings-page .settings-content-column,
+  .workspace-shell .agent-admin-detail-content,
+  .workspace-shell .contacts-detail-pane { padding: 14px; }
+  .workspace-shell .topbar.realm-header { display: flex; }
+  .workspace-shell .topbar { flex-wrap: wrap; height: auto; min-height: 52px; padding: 8px; gap: 8px; }
+  .workspace-shell .topbar > .actions { gap: 4px; flex-direction: row; flex-wrap: wrap; }
+}
+@media (max-width: 860px) and (max-height: 480px) {
+  .workspace-list,
+  .workspace-shell .contacts-list-pane,
+  .workspace-shell .agent-admin-list-pane { overflow-y: auto; }
+  .workspace-list > .workspace-list-rows,
+  .contacts-list-pane > .contact-list-items,
+  .agent-admin-list-pane > .agent-admin-list-rows { flex: 0 0 auto; overflow: visible; }
+  .workspace-shell .settings-page .settings-sidebar-column > :last-child { flex-shrink: 0; overflow: visible; }
+}
+
+.contacts-detail-pane .contact-row { overflow-wrap: anywhere; }
+
+.workspace-shell .contacts-layout > .contacts-list-pane { min-width: 0; box-sizing: border-box; }
+.workspace-search-input { display: block; width: 100%; min-width: 0; box-sizing: border-box; }
+.contact-list-items { min-width: 0; }
+.contact-list-item { min-width: 0; max-width: 100%; }
+.contact-agent-actions { justify-content: flex-end; }
+
+/* A pane is retained while hidden; its controls leave layout and tab order. */
+.workspace-pane { min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
+.workspace-pane.is-hidden { display: none; }
+.workspace-pane-list > :first-child { height: 100%; min-height: 0; }
+.workspace-pane-detail > .workspace-detail-column { height: 100%; }
+.workspace-shell.workspace-list-collapsed:not(.workspace-mobile) .workspace.workspace-has-list,
+.workspace-shell.workspace-list-collapsed:not(.workspace-mobile) .settings-page > .settings-shell,
+.workspace-shell.workspace-list-collapsed:not(.workspace-mobile) .agent-admin-layout,
+.workspace-shell.workspace-list-collapsed:not(.workspace-mobile) .contacts-layout { grid-template-columns: minmax(0, 1fr); }
+.workspace-list-heading.workspace-navigation-heading { display: grid; grid-template-columns: minmax(0, 1fr) 30px; grid-template-rows: 52px auto; row-gap: 0; }
+.workspace-list-heading.workspace-navigation-heading-2 { grid-template-columns: minmax(0, 1fr) repeat(2, 30px); }
+.workspace-list-heading.workspace-navigation-heading-3 { grid-template-columns: minmax(0, 1fr) repeat(3, 30px); }
+.workspace-navigation-heading > :first-child,
+.workspace-navigation-heading > .btn,
+.workspace-navigation-heading > .sidebar-toolbar-action,
+.workspace-search-disclosure > .sapid-collapsible-trigger { grid-row: 1; }
+.workspace-search-disclosure { display: contents; }
+.workspace-search-disclosure > .sapid-collapsible-panel { grid-column: 1 / -1; grid-row: 2; width: 100%; min-width: 0; }
+.workspace-search-disclosure .workspace-search-input { width: 100%; min-width: 0; }
+.workspace-navigation-button { flex-shrink: 0; }
+.settings-list-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.workspace-shell .topbar-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.agent-admin-list-content { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; flex: 1; }
+.agent-admin-list-content .agent-admin-list-rows { flex: 1; min-height: 0; overflow-y: auto; }
+@keyframes workspace-detail-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@media (prefers-reduced-motion: no-preference) {
+  .workspace-mobile .workspace-pane-detail.is-visible > .realm-body,
+  .workspace-mobile .workspace-pane-detail.is-visible .workspace-detail-content {
+    animation: workspace-detail-enter 180ms ease-out;
+  }
+}
+
+.rail-label { display: none; }
+@media (max-width: 860px) {
+  .navigation-rail .rail-link { flex: 0 0 68px; flex-direction: column; width: 68px; min-height: 64px; height: 64px; gap: 3px; padding: 4px; }
+  .navigation-rail .rail-label { display: block; font-size: 11px; line-height: 15px; font-weight: 600; }
+  .navigation-rail .rail-account .dot-online { top: 27px; bottom: auto; }
+}
+
+.desktop-chrome-actions { display: flex; align-items: center; gap: 6px; }
+.topbar-more, .theme-toggle-caption { display: none; }
+.topbar-more-panel {
+  display: grid; gap: 8px; padding: 10px;
+  width: min(260px, calc(100vw - 24px));
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface-solid); color: var(--text); box-shadow: var(--shadow-lg);
+}
+.topbar-more-actions { display: grid; gap: 8px; }
+.topbar-more-panel .theme-toggle-caption { display: block; }
+.realm-header .actions .topbar-more-panel .theme-toggle-button,
+.topbar-more-panel .secondary {
+  display: flex; align-items: center; justify-content: flex-start; gap: 8px;
+  width: 100%; min-height: 44px; height: auto; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 7px;
+  background: var(--surface-2); color: var(--text); font: inherit;
+}
+.topbar-more > .sapid-layer-root > .sapid-popover-trigger {
+  min-width: 36px; height: 36px; padding: 4px;
+  border: 1px solid var(--border-strong); border-radius: 7px;
+  background: var(--surface-2); color: var(--text); font: inherit;
+}
+@media (max-width: 860px) {
+  .desktop-chrome-actions { display: none; }
+  .topbar-more { display: block; }
+  .workspace-shell .topbar { flex-wrap: nowrap; min-height: 56px; gap: 6px; }
+  .workspace-shell .topbar > .topbar-left { flex: 1 1 0; min-width: 0; }
+  .workspace-shell .topbar > .actions { width: max-content; flex: 0 0 auto; flex-wrap: nowrap; }
+  .navigation-rail .rail-link > [data-gly-kind="group"] { display: contents; }
+}

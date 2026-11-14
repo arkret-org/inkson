@@ -8,3 +8,10 @@
 .sapid-command-option { width: 100%; padding: 10px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: start; cursor: pointer; }
 .sapid-command-option:hover, .sapid-command-option[aria-selected=true] { background: var(--accent-soft); color: var(--accent-ink); }
 .sapid-command-close { align-self: flex-end; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); font: inherit; cursor: pointer; }
+
+/* Semantic host layout and control integration. */
+/* The original search form uses a named placeholder input, without an extra field label. */
+.global-search-form { gap: 8px; }
+.global-search-form .global-search-input { width: 100%; min-width: 0; }
+
+.global-search-form > .global-search-input { flex: 1; min-width: 280px; }

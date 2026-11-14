@@ -550,3 +550,9 @@
     padding-inline: 16px;
   }
 }
+
+.card-detail-field-group { display: grid; gap: 10px; min-width: 0; }
+.card-detail-field-group-title { margin: 0; color: var(--text); font-size: 13px; font-weight: 700; }
+.card-detail-side-fields { display: grid; gap: 22px; }
+.card-detail-access > .sapid-collapsible-trigger { width: 100%; padding: 8px 0; text-align: start; border: 0; background: none; color: var(--text-2); font: inherit; font-size: 13px; cursor: pointer; }
+.card-detail-summary-add { padding: 0; }

@@ -1312,6 +1312,7 @@ fn contact_row(
             ] {
                 let ctx = context.clone();
                 let principal = principal.clone();
+                let call_realm = shared.as_ref().map(ToString::to_string).unwrap_or_default();
                 actions.push(action(
                     scope,
                     context.clone(),
@@ -1327,7 +1328,7 @@ fn contact_row(
                         ctx.navigate(Route::Call {
                             call_id: String::new(),
                             peer: principal.clone(),
-                            realm_id: String::new(),
+                            realm_id: call_realm.clone(),
                             video: if video { "1" } else { "0" }.into(),
                             incoming: "0".into(),
                         })

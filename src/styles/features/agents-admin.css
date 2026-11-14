@@ -381,3 +381,7 @@
     max-height: none;
   }
 }
+
+.agent-permission-overview { display: grid; gap: 8px; }
+.permission-source-json { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 420px; overflow: auto; }
+.agent-admin-exact-permissions > .sapid-collapsible-trigger, .permission-source > .sapid-collapsible-trigger { width: 100%; padding: 8px 0; text-align: start; background: none; border: 0; color: var(--text-2); font: inherit; cursor: pointer; }

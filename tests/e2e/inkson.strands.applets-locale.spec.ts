@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { inputByClass } from "./uiControl";
 import { byClass } from "./strandsHarness";
 import { expect, test, type Page } from "@playwright/test";
@@ -32,7 +33,6 @@ test("applet registry and install form copy follow the active language without a
   await refreshServer(page);
   const literalManifest = '{"description":"applets.registry {value} 原文"}';
   const literalCircle = "ak:circle:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
-  const literalActions = "ak.message.create,\nak.applet.ghost.provision";
 
   for (const language of ["en", "zh", "en"] as const) {
     await openSettings(page);
@@ -63,16 +63,13 @@ test("applet registry and install form copy follow the active language without a
     await expect(toggle).toHaveText(zh ? "关闭安装表单" : "Close install");
     const manifest = inputByClass(panel, "applet-install-manifest-input");
     const circle = inputByClass(panel, "applet-install-circle-input");
-    const actions = inputByClass(panel, "applet-install-approve-actions-input");
-    await expect(byClass(panel, "applet-install-manifest-input-prompt").locator(".input-empty-prompt")).toHaveText( zh ? "清单网址或 JSON 内容" : "manifest URL or JSON body");
-    await expect(byClass(panel, "applet-install-circle-input-prompt").locator(".input-empty-prompt")).toHaveText( zh ? "可选 Circle 标识（ak:circle:…）；留空表示整个 Realm" : "optional Circle id (ak:circle:…) — blank = Realm-wide");
-    await expect(byClass(panel, "applet-install-approve-actions-input-prompt").locator(".input-empty-prompt")).toHaveText( zh ? "获批操作，以逗号或换行分隔" : "approved actions, comma or newline separated");
+    await expect(manifest).toHaveAttribute("placeholder", zh ? "完整注册材料 JSON（AppletInstallPreviewRequestBody）" : "Complete registration material JSON (AppletInstallPreviewRequestBody)");
+    await expect(circle).toHaveAttribute("placeholder", zh ? "可选 Circle 标识（ak:circle:…）；留空表示整个 Realm" : "optional Circle id (ak:circle:…) — blank = Realm-wide");
+    await expect(panel.locator(".applet-permission-choice")).toHaveCount(0);
     await expect(manifest).toHaveValue("");
     await expect(circle).toHaveValue("");
-    await expect(actions).toHaveValue("");
     await manifest.fill(literalManifest);
     await circle.fill(literalCircle);
-    await actions.fill(literalActions);
     const ghost = byClass(panel, "applet-install-allow-ghost").getByRole("checkbox");
     await expect(ghost).not.toBeChecked();
     await ghost.click();
@@ -88,7 +85,6 @@ test("applet registry and install form copy follow the active language without a
     await toggle.click();
     await expect(manifest).toHaveValue(literalManifest);
     await expect(circle).toHaveValue(literalCircle);
-    await expect(actions).toHaveValue(literalActions);
     await expect(ghost).toBeChecked();
     await expect(confirm).toBeDisabled();
     await ghost.click();
@@ -113,7 +109,6 @@ test("applet preview validation follows the selected language and preserves lite
   await refreshServer(page);
   const literalManifest = '{"description":"applets.feedback.invalid_manifest {error} 原文"}';
   const literalCircle = "applets.registry {value} 原文";
-  const literalActions = "ak.message.create,\nak.applet.ghost.provision";
   for (const language of ["en", "zh", "en"] as const) {
     await openSettings(page);
     await byClass(page, "settings-nav-item-theme").click();
@@ -127,10 +122,8 @@ test("applet preview validation follows the selected language and preserves lite
     await toggle.click();
     const manifest = inputByClass(panel, "applet-install-manifest-input");
     const circle = inputByClass(panel, "applet-install-circle-input");
-    const actions = inputByClass(panel, "applet-install-approve-actions-input");
     await manifest.fill(literalManifest);
     await circle.fill(literalCircle);
-    await actions.fill(literalActions);
     const ghost = byClass(panel, "applet-install-allow-ghost").getByRole("checkbox");
     await ghost.click();
     await expect(ghost).toBeChecked();
@@ -145,7 +138,6 @@ test("applet preview validation follows the selected language and preserves lite
     await expect(status).toHaveText(expected);
     await expect(manifest).toHaveValue(literalManifest);
     await expect(circle).toHaveValue(literalCircle);
-    await expect(actions).toHaveValue(literalActions);
     await expect(ghost).toBeChecked();
     await expect(confirm).toBeDisabled();
     await expect(byClass(panel, "applet-row")).toHaveCount(0);
@@ -155,9 +147,34 @@ test("applet preview validation follows the selected language and preserves lite
     await expect(status).toHaveText(expected);
     await expect(manifest).toHaveValue(literalManifest);
     await expect(circle).toHaveValue(literalCircle);
-    await expect(actions).toHaveValue(literalActions);
     await expect(ghost).toBeChecked();
     await expect(confirm).toBeDisabled();
   }
   expect(sideEffects).toEqual([]);
+});
+
+
+test("applet permissions are explicit unverified package choices and never imply installation", async ({ page }, info) => {
+  await refreshServer(page);await openApplets(page);
+  const panel=byClass(page,"applets-panel");await byClass(panel,"applet-install-button").click();
+  // Structural disclosure fixture only. No signature, admission or grant is accepted by this test.
+  const material=JSON.parse(readFileSync(new URL("./fixtures/applet-permission-proposal.json", import.meta.url),"utf8"));
+  const manifest=inputByClass(panel,"applet-install-manifest-input");
+  let writes=0;page.on("request",request=>{if(request.method()==="POST"&&request.url().includes("/_arkret/"))writes++;});
+  await manifest.fill(JSON.stringify(material));
+  const proposal=panel.locator(".applet-permission-proposal");
+  await expect(proposal).toContainText(material.applet_package.service_id);
+  await expect(proposal).toContainText("package requests, not granted permissions");
+  await expect(proposal).toContainText("2026-12-31");
+  const choices=proposal.getByRole("checkbox");await expect(choices).toHaveCount(2);
+  await expect(choices.first()).not.toBeChecked();await choices.first().check();
+  await expect(byClass(panel,"applet-install-confirm-button")).toBeDisabled();
+  await page.screenshot({path:info.outputPath("applet-permission-choices.png"),fullPage:true});
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await proposal.screenshot({path:info.outputPath("applet-permission-choices-mobile.png")});
+  await manifest.fill(JSON.stringify({...material,applet_package:{...material.applet_package,package_id:"different-package"}}));
+  await expect(proposal.getByRole("checkbox").first()).not.toBeChecked();
+  await manifest.fill("{}");await expect(panel.locator(".applet-permission-choice")).toHaveCount(0);
+  expect(writes).toBe(0);
 });

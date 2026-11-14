@@ -75,8 +75,7 @@ pub fn call_panel(scope: &Scope, context: Rc<InksonContext>, props: CallPanelPro
     let call_seq = scope.cage(0_u64);
     let active_realm = scope.cage(selected_realm_id.clone());
     let peer_input = scope.cage(peer.clone());
-    let group_input =
-        scope.cage("ak:did_core:web:bob.example\nak:did_core:web:carol.example".to_owned());
+    let group_input = scope.cage(String::new());
     let want_video_signal = scope.cage(want_video);
     let media_plaintext_confirmed = scope.cage(false);
 

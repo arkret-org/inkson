@@ -44,7 +44,11 @@ pub fn result_snippet(result: &Value) -> Option<String> {
 
 // Resolve UI defaults only while rendering. Search projections remain literal.
 fn render_result_snippet(result: &Value) -> String {
-    result_snippet(result).unwrap_or_else(|| tr("search.no_body"))
+    match result_snippet(result) {
+        Some(value) if value.trim().is_empty() => tr("search.empty_body"),
+        Some(value) => value,
+        None => tr("search.metadata_only"),
+    }
 }
 
 fn render_result_kind(result: &Value) -> String {
@@ -373,7 +377,7 @@ async fn search_local_with_clock(
                 "realm_id": message.realm_id, "strand_id": message.strand_id,
                 "kind": "message", "surface": "message", "event_id": message.id,
                 "message_id": message.id, "actor_id": original.event.actor_id,
-                "covering_commit": original.commit, "content": {"body": body},
+                "covering_commit": original.commit, "content": {"body": body}, "created_at": original.event.created_at.to_rfc3339(),
                 "source_event_id": body_source.event.event_id, "source_commit": body_source.commit,
                 "index_profile": arkret_sdk::ProfileId::SEARCH_CLIENT_INDEX_V1,
                 "index_source": "local_decrypted_client_index"
@@ -1043,6 +1047,8 @@ pub fn global_search_panel(
                                 ),
                             ],
                         )];
+                        let timestamp = string_field(&row, &["occurred_at", "created_at", "timestamp"]).unwrap_or_else(|| tr("search.time_unknown"));
+                        nodes.push(paragraph("muted global-search-result-time", timestamp));
                         if !actor.is_empty() {
                             nodes.push(paragraph(
                                 "muted",
@@ -1318,16 +1324,16 @@ mod locale_tests {
             json!({"realm_id": realm_id, "kind": "search.kind.message", "title": "{query} / 原文"}),
         ];
         let english = [
-            "Message | <no body> | Open | ",
+            "Message | Metadata only; no readable body available | Open | ",
             "Message | search.no_body | Open task | task{seal}",
-            "Message |  | Open message | message{seal}",
+            "Message | Empty body | Open message | message{seal}",
             "search.kind.message | {query} / 原文 | Open | ",
             "The active account is unavailable. Sign in again to search.",
         ];
         let chinese = [
-            "消息 | <无正文> | 打开 | ",
+            "消息 | 仅有元数据，当前没有可显示的正文 | 打开 | ",
             "消息 | search.no_body | 打开任务 | task{seal}",
-            "消息 |  | 打开消息 | message{seal}",
+            "消息 | 正文为空 | 打开消息 | message{seal}",
             "search.kind.message | {query} / 原文 | 打开 | ",
             "当前账号不可用。请重新登录后搜索。",
         ];
