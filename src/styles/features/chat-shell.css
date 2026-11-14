@@ -13,12 +13,12 @@
 
 .discussion-shell {
   display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(260px, 320px);
+  grid-template-columns: minmax(200px, 240px) minmax(0, 1fr) minmax(260px, 300px);
   grid-template-rows: minmax(0, 1fr) auto;
   gap: 12px;
   width: 100%;
-  height: calc(100vh - 132px);
-  min-height: 560px;
+  height: calc(100dvh - 92px);
+  min-height: 0;
   padding: 12px;
   box-sizing: border-box;
   overflow: hidden;
@@ -110,7 +110,7 @@
 }
 
 .discussion-shell.right-collapsed {
-  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(200px, 240px) minmax(0, 1fr);
 }
 
 .discussion-shell.left-collapsed.right-collapsed {
@@ -171,7 +171,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   overflow-wrap: anywhere;
-  gap: 10px;
+  gap: 6px;
   padding: 12px;
 }
 

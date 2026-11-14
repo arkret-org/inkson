@@ -147,6 +147,7 @@ pub(super) fn upload_dropped_attachments(
     files: Vec<super::files::AttachmentFile>,
 ) {
     let status = controller.compose_upload_status;
+    let failed = controller.compose_upload_failed;
     let Some(scope) = scope else {
         {
             let next_value = "Attachment upload requires a verified conversation scope.".into();
@@ -181,6 +182,7 @@ pub(super) fn upload_dropped_attachments(
     let selection_revision = controller.selection_revision.get_untracked();
     let account = session.active_account.get_untracked().clone();
     let store = session.state_store.handle();
+    failed.revise(|value| *value = false);
     super::super::task::dispatch(async move {
         let result = async {
             let account = account.ok_or_else(|| anyhow::anyhow!("no active attachment account"))?;
@@ -363,11 +365,16 @@ pub(super) fn upload_dropped_attachments(
         }
         match result {
             Ok(()) => {
-                let next_value =
-                    format!("{} attachment(s) ready", attachments.get_untracked().len());
+                let count = attachments.get_untracked().len();
+                let next_value = if count == 0 {
+                    String::new()
+                } else {
+                    format!("{count} attachment(s) ready")
+                };
                 status.revise(|value| *value = next_value);
             }
             Err(e) => {
+                failed.revise(|value| *value = true);
                 let next_value = format!("Attachment upload: {e:#}");
                 status.revise(|value| *value = next_value);
             }

@@ -408,6 +408,7 @@ pub(super) struct ChatController {
     pub typing_throttle: crate::perf::TypingThrottle,
     pub compose_dragover: Cage<bool>,
     pub compose_upload_status: Cage<String>,
+    pub compose_upload_failed: Cage<bool>,
     pub attachments: Cage<Vec<crate::attachments::DraftAttachment>>,
     pub attachment_target_key: Cage<String>,
     pub attachment_target_revision: Cage<u64>,
@@ -659,6 +660,7 @@ impl ChatController {
         self.edit_draft = composer.edit_draft;
         self.compose_dragover = composer.compose_dragover;
         self.compose_upload_status = composer.compose_upload_status;
+        self.compose_upload_failed = composer.compose_upload_failed;
         self.attachments = composer.attachments;
         self.attachment_target_key = composer.attachment_target_key;
         self.attachment_target_revision = composer.attachment_target_revision;
@@ -2659,6 +2661,7 @@ pub(super) struct ComposerState {
     pub(super) edit_draft: Cage<String>,
     pub(super) compose_dragover: Cage<bool>,
     pub(super) compose_upload_status: Cage<String>,
+    pub(super) compose_upload_failed: Cage<bool>,
     pub(super) attachments: Cage<Vec<crate::attachments::DraftAttachment>>,
     pub(super) attachment_target_key: Cage<String>,
     pub(super) attachment_target_revision: Cage<u64>,
@@ -2809,6 +2812,7 @@ fn composer_state(
         edit_draft: scope.cage(String::new()),
         compose_dragover: scope.cage(false),
         compose_upload_status: scope.cage(String::new()),
+        compose_upload_failed: scope.cage(false),
         attachments: scope.cage(Vec::new()),
         attachment_target_key: scope.cage(String::new()),
         attachment_target_revision: scope.cage(0),
@@ -3077,6 +3081,7 @@ pub(super) fn chat_controller_for_initial_target(
         typing_throttle: crate::perf::typing_throttle(scope, 3_000, 4_000),
         compose_dragover: composer.compose_dragover,
         compose_upload_status: composer.compose_upload_status,
+        compose_upload_failed: composer.compose_upload_failed,
         attachments: composer.attachments,
         attachment_target_key: composer.attachment_target_key,
         attachment_target_revision: composer.attachment_target_revision,

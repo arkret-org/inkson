@@ -80,6 +80,19 @@ pub(super) fn toolbar_popover(
     )
 }
 
+fn toolbar_disclosure(scope: &Scope, key: &str, label: glory::Vary<String>, body: View) -> View {
+    let mut body = Some(body);
+    Box::new(
+        sapid::collapsible(format!("board-{key}-{}", scope.id().slot()))
+            .unstyled()
+            .class(format!("board-toolbar-disclosure board-toolbar-{key}"))
+            .label(label)
+            .default_open(false)
+            .content_policy(sapid::ContentPolicy::KeepMounted)
+            .content(move || body.take().unwrap_or_else(empty)),
+    )
+}
+
 fn board_allowed(scope: &Scope, board: Board) -> View {
     let app = board.app.clone();
     let c = board.controller;
@@ -208,7 +221,8 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
                 let write_ready = board.ready;
                 let add_list_ready =
                     scope.bond(move || write_ready.get() && c.selected_board.get().is_some());
-                line(
+                let label = board.app.translated(scope, "kanban.add_list").into();
+                let content = line(
                     "actions board-list-compose board-add-list",
                     vec![
                         Box::new(
@@ -237,7 +251,8 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
                             move || board.add_column(),
                         ),
                     ],
-                )
+                );
+                toolbar_disclosure(scope, "add-list", label, content)
             } else {
                 empty()
             }
@@ -309,19 +324,24 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
                         add_list,
                     ],
                 ),
-                line(
-                    "actions board-toolbar-actions",
-                    vec![
-                        archive,
-                        toolbar_popover(
-                            scope,
-                            c.board_popover,
-                            BoardToolbarPopover::CreateBoard,
-                            app.translated(scope, "kanban.ui.new_board").into(),
-                            plain(app.translated(scope, "kanban.ui.new_board")),
-                            create_panel,
-                        ),
-                    ],
+                toolbar_disclosure(
+                    scope,
+                    "options",
+                    app.translated(scope, "kanban.ui.board_options").into(),
+                    line(
+                        "actions board-toolbar-actions",
+                        vec![
+                            archive,
+                            toolbar_popover(
+                                scope,
+                                c.board_popover,
+                                BoardToolbarPopover::CreateBoard,
+                                app.translated(scope, "kanban.ui.new_board").into(),
+                                plain(app.translated(scope, "kanban.ui.new_board")),
+                                create_panel,
+                            ),
+                        ],
+                    ),
                 ),
             ],
         )],
@@ -899,9 +919,34 @@ fn card_tile(
     }
     let mut meta = vec![];
     if !card.assignee.trim().is_empty() && card.assignee.trim() != "—" {
-        meta.push(super::card_detail_surface::inline_label(
+        let actors = card_assigned_actor_ids(&card);
+        let app = board.app.clone();
+        let realm = board.local_realm.clone();
+        let label = scope.bond(move || {
+            let _ = app.state_revision.get();
+            let names = app.state_store.read(|store| {
+                let members = card_member_roster(store, &realm);
+                actors
+                    .iter()
+                    .map(|actor| {
+                        let name = assignee_label_for_actor(store, &realm, &members, actor);
+                        if name.starts_with("ak:") || name.starts_with("did:") {
+                            short_protocol_id(&name)
+                        } else {
+                            name
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            });
+            format!(
+                "{}: {}",
+                crate::i18n::tr("kanban.ui.assignees"),
+                names.join(", ")
+            )
+        });
+        meta.push(paragraph(
             "board-card-meta-item kanban-card-assignee",
-            format!("assignees {}", card.assignee),
+            label,
         ));
     }
     if !card.due.trim().is_empty()

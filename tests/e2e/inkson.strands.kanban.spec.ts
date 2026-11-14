@@ -23,6 +23,11 @@ import {
 
 registerStrandsBeforeEach();
 
+async function openBoardOptions(page: import("@playwright/test").Page) {
+  const trigger = page.locator(".board-toolbar-options > .sapid-collapsible-trigger");
+  if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click();
+}
+
 test("kanban coalesces delayed inventory reads into one worker", async ({ page }, testInfo) => {
   const projectionStarted = Date.now();
   const projectionTimeline: Array<{ elapsed: number; kind: string; value: string }> = [];
@@ -245,6 +250,7 @@ test("fresh Sidecar rejection preserves its bound draft without publishing to th
   await detailPopup.locator(".card-detail-sidebar-content").getByRole("tab", { name: /^Members/ }).click();
   await byClass(byClass(detailPopup, "card-detail-agent-row"), "card-detail-member-mention-button")
     .click();
+  await expect(inputByClass(detailPopup, "chat-input")).toHaveValue("@me/assistant ");
   await inputByClass(detailPopup, "chat-input").fill("@me/assistant hello");
 
   await expect(detailPopup.getByText(
@@ -318,11 +324,13 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
     "No board selected",
   );
   await expect(byClass(page, "add-column-button")).toHaveCount(0);
+  await expect(page.locator(".board-toolbar-add-list")).toHaveCount(0);
   await expect(byClass(page, "view-renderer-switcher")).toHaveCount(0);
   await expect(byClass(page, "board-space-selector")).not.toContainText(
     "BOARD",
   );
 
+  await openBoardOptions(page);
   await page.locator(".board-popover-host .sapid-popover-trigger").click();
   await expect(inputByClass(page, "new-board-title-input")).toBeVisible();
   await page.mouse.click(12, 12);
@@ -346,9 +354,11 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
     await route.fallback();
   });
 
+  await openBoardOptions(page);
   await page.locator(".board-popover-host .sapid-popover-trigger").click();
   await inputByClass(page, "new-board-title-input").fill("Design board");
   await byClass(page, "create-board-space-button").click();
+  await page.locator(".board-toolbar-add-list > .sapid-collapsible-trigger").click();
   await expect(byClass(page, "add-column-button")).toBeVisible();
   await expect(byClass(page, "add-column-button")).toBeDisabled();
   await expect(byClass(page, "board-space-selector")).toContainText(

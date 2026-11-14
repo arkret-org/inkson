@@ -37,6 +37,42 @@
   justify-content: flex-start;
 }
 
+.board-toolbar-disclosure {
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.board-toolbar-disclosure > .sapid-collapsible-trigger {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.board-toolbar-disclosure > .sapid-collapsible-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.board-toolbar-disclosure [data-state="open"],
+.board-toolbar-disclosure > .sapid-collapsible-panel {
+  min-width: 0;
+}
+.board-toolbar-disclosure > .sapid-collapsible-panel:not([hidden]) {
+  padding-top: 8px;
+}
+.board-card .kanban-card-assignee {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  font-size: 12px;
+}
+
 .board-toolbar-controls,
 .board-list-compose {
   align-items: center;

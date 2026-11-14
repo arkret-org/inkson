@@ -387,14 +387,24 @@
   }
 
   .board-toolbar-main,
-  .board-toolbar-controls,
+  .board-toolbar-controls {
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: 100%;
+    gap: 8px;
+  }
+
   .board-list-compose {
     align-items: stretch;
     flex-direction: column;
     width: 100%;
   }
 
-  .board-toolbar-controls > *,
+  .board-toolbar-controls > .board-select-label { display: none; }
+  .board-toolbar-controls > .board-select-menu-host { flex: 1 1 180px; }
+  .board-toolbar-disclosure > .sapid-collapsible-trigger { min-height: 44px; }
+
   .board-list-compose > * {
     width: 100%;
     max-width: 100%;
@@ -418,7 +428,7 @@
   .discussion-shell.right-collapsed,
   .discussion-shell.left-collapsed.right-collapsed {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 190px) minmax(180px, 28vh) auto;
+    grid-template-rows: minmax(260px, 52dvh) auto auto auto;
     height: auto;
     min-height: 0;
     overflow: visible;
@@ -427,18 +437,22 @@
 
   .discussion-sidebar-panel {
     max-height: 190px;
+    grid-column: 1;
+    grid-row: 3;
   }
 
   .discussion-main-panel {
     grid-column: 1;
-    grid-row: 2;
-    min-height: 180px;
+    grid-row: 1;
+    min-height: 260px;
   }
 
   .discussion-details-panel,
   .discussion-composer {
+    grid-row: 2;
     grid-column: 1;
   }
+  .discussion-details-panel { grid-row: 4; }
 
   .discussion-composer {
     position: sticky;

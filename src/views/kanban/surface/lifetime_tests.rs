@@ -117,6 +117,30 @@ async fn accepted_card_updates_keep_the_open_card_composer_and_save_button() {
     }))
     .unwrap();
     pump(&app, &executor);
+    let disclosure = nodes(&app, "board-toolbar-add-list")[0];
+    let trigger = {
+        let tree = app.tree();
+        tree.node(disclosure)
+            .unwrap()
+            .children
+            .iter()
+            .copied()
+            .find(|id| {
+                tree.node(*id)
+                    .unwrap()
+                    .descriptor
+                    .view()
+                    .classes
+                    .iter()
+                    .any(|class| class == "sapid-collapsible-trigger")
+            })
+            .expect("the real List disclosure trigger")
+    };
+    assert!(
+        app.dispatch(trigger, glory::render::Event::Activate)
+            .unwrap()
+    );
+    pump(&app, &executor);
     let list_input = nodes(&app, "new-column-input")[0];
     write_ready.revise(|ready| *ready = false);
     pump(&app, &executor);
@@ -147,6 +171,17 @@ async fn accepted_card_updates_keep_the_open_card_composer_and_save_button() {
         controller.new_column_title.get_untracked(),
         "Next local List"
     );
+    assert!(
+        app.dispatch(trigger, glory::render::Event::Activate)
+            .unwrap()
+    );
+    pump(&app, &executor);
+    assert!(
+        app.dispatch(trigger, glory::render::Event::Activate)
+            .unwrap()
+    );
+    pump(&app, &executor);
+    assert_eq!(nodes(&app, "new-column-input"), vec![list_input]);
     let submit = nodes(&app, "add-column-button")[0];
     {
         let tree = app.tree();

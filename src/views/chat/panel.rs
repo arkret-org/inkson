@@ -298,20 +298,7 @@ pub(super) fn target(
             frontier_state: timeline_context.frontier_state,
         }
     });
-    let right_panel = scope.cage(
-        if super::snapshot::active_sidecar(
-            &context,
-            &props,
-            &account.authority,
-            &controller.selected_channel.get_untracked(),
-        )
-        .is_some()
-        {
-            None
-        } else {
-            Some(DiscussionSidePanel::Users)
-        },
-    );
+    let right_panel = scope.cage(None::<DiscussionSidePanel>);
     let effect_context = context.clone();
     let effect_props = props.clone();
     let effect_account = account.clone();

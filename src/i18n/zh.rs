@@ -300,6 +300,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.ui.archived_lists", "{count} 个列表");
     dict.set("kanban.ui.asia_shanghai", "例如：Asia/Shanghai");
     dict.set("kanban.ui.assignees", "负责人");
+    dict.set("kanban.ui.board_options", "看板选项");
+    dict.set("chat.composer.retry_attachments", "重试上传");
     dict.set("kanban.ui.board_title", "看板标题");
     dict.set("kanban.ui.boards", "看板");
     dict.set("kanban.ui.calendar", "日程");
@@ -2366,7 +2368,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.composer.search_members", "搜索成员");
     dict.set("chat.composer.mention_member", "提及成员");
     dict.set("chat.composer.add_attachment", "添加附件");
-    dict.set("chat.composer.drop_attachment", "拖放文件到此处或选择附件");
+    dict.set("chat.composer.drop_attachment", "选择或拖入文件");
     dict.set("chat.composer.choose_files", "选择文件");
     dict.set("chat.composer.schedule_message", "定时发送消息");
     dict.set("chat.composer.poll_question", "问题");

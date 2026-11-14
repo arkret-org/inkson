@@ -1104,21 +1104,30 @@ pub(super) fn chat_composer(
         )
     });
     let retry_app = app.clone();
-    let retry: View = Box::new(
-        sapid::button()
-            .unstyled()
-            .label("Retry attachments")
-            .class("retry-attachment-upload")
-            .on(glory::render::EventKind::Activate, move |_| {
-                commands::upload_dropped_attachments(
-                    controller,
-                    retry_app.base_url.get_untracked(),
-                    context.get_untracked().token.get_untracked(),
-                    preview.get_untracked().upload_scope,
-                    Vec::new(),
+    let retry = reactive_distinct(controller.compose_upload_failed, move |scope, failed| {
+        if !failed {
+            return empty();
+        }
+        let retry_app = retry_app.clone();
+        Box::new(
+            sapid::button()
+                .unstyled()
+                .label(retry_app.translated(scope, "chat.composer.retry_attachments"))
+                .class("secondary retry-attachment-upload")
+                .enabled(
+                    scope.bond(move || preview.get().upload_scope.is_some() && available.get()),
                 )
-            }),
-    );
+                .on(glory::render::EventKind::Activate, move |_| {
+                    commands::upload_dropped_attachments(
+                        controller,
+                        retry_app.base_url.get_untracked(),
+                        context.get_untracked().token.get_untracked(),
+                        preview.get_untracked().upload_scope,
+                        Vec::new(),
+                    )
+                }),
+        ) as View
+    });
     let upload_status = line(
         "compose-upload-progress",
         vec![
@@ -1256,6 +1265,7 @@ pub(super) fn chat_composer(
     );
     #[cfg(not(target_arch = "wasm32"))]
     let drop_target = empty();
+    tools.insert(0, drop_target);
     block(
         "discussion-composer chat-composer",
         vec![
@@ -1269,7 +1279,6 @@ pub(super) fn chat_composer(
             block(
                 "composer-input-surface",
                 vec![
-                    drop_target,
                     storage_error,
                     input,
                     mentions,

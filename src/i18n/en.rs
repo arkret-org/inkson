@@ -190,6 +190,8 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.ui.archived_lists", "{count} list(s)");
     dict.set("kanban.ui.asia_shanghai", "Asia/Shanghai");
     dict.set("kanban.ui.assignees", "Assignees");
+    dict.set("kanban.ui.board_options", "Board options");
+    dict.set("chat.composer.retry_attachments", "Retry uploads");
     dict.set("kanban.ui.board_title", "Board title");
     dict.set("kanban.ui.boards", "Boards");
     dict.set("kanban.ui.calendar", "Calendar");
@@ -2614,10 +2616,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.composer.search_members", "Search members");
     dict.set("chat.composer.mention_member", "Mention member");
     dict.set("chat.composer.add_attachment", "Add attachment");
-    dict.set(
-        "chat.composer.drop_attachment",
-        "Drop files here or choose attachments",
-    );
+    dict.set("chat.composer.drop_attachment", "Choose or drop files");
     dict.set("chat.composer.choose_files", "Choose files");
     dict.set("chat.composer.schedule_message", "Schedule message");
     dict.set("chat.composer.poll_question", "Question");

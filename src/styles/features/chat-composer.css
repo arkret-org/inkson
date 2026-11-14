@@ -228,19 +228,55 @@
 }
 
 .discussion-composer textarea {
-  min-height: 72px;
+  width: 100%;
+  min-height: 64px;
   max-height: 180px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
   resize: vertical;
+}
+
+.discussion-composer textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.discussion-composer .composer-send-scope {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.discussion-composer .compose-upload-progress:has(> :first-child:empty):not(:has(button)) {
+  display: none;
+}
+
+.discussion-composer .compose-upload-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  font-size: 12px;
 }
 
 .discussion-composer .compose-drop-zone {
   position: relative;
   display: grid;
   gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-2) 44%, var(--surface));
+  padding: 4px 8px;
+  min-height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
 }
 
 .discussion-composer .compose-drop-zone:focus-within {
@@ -326,9 +362,14 @@
 
 .discussion-composer > .actions {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.discussion-composer > .actions > button {
+  width: auto;
 }
 
 /* Private-state revalidation is busy, not a loss of the public MLS state.

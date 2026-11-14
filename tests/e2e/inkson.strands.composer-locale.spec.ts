@@ -12,7 +12,7 @@ registerStrandsBeforeEach();
 
 async function expectEmptyPrompt(input: Locator, text: string) {
   await expect(input).toHaveAccessibleName(text);
-  await expect(input.locator("xpath=..").locator(":scope > .input-empty-prompt")).toHaveText(text);
+  await expect(input).toHaveAttribute("placeholder", text);
 }
 
 async function expectSendReady(composer: Locator, send: Locator) {
