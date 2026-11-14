@@ -1,6 +1,7 @@
 //! Exact history exchanges through accepted own-Station Events. Public leaf
 //! selection, native authorization and secret custody remain separate gates.
 
+mod idle;
 mod pending;
 mod selected;
 use arkret_event_draft::{EventContentEnvelopesExt as _, EventPayloadExt as _};
@@ -10,6 +11,7 @@ use arkret_sdk::{
     ActorId, CommittedEventFullView, CommittedEventRef, Event, EventKind, RealmId, ScopeRef,
 };
 use garth::mls::content_history::{HistoryExchangeVault, PendingHistoryRequest};
+pub(crate) use idle::IdleReconciliations;
 pub(crate) use selected::read_attachment_key;
 
 use crate::runtime::input::StateStoreHandle;
@@ -134,6 +136,7 @@ pub(crate) async fn reconcile(
     source: &OwnStationStateClient,
     state: &StateStoreHandle,
     realm: &RealmId,
+    snapshot: &crate::realm_events_engine::CreatorOwnSnapshot,
 ) -> anyhow::Result<()> {
     let active = require_reader(source, state)?;
     let actor = ActorId::account(active.authority.clone());
@@ -153,6 +156,17 @@ pub(crate) async fn reconcile(
             store.history_control_originals(realm),
         )
     });
+    anyhow::ensure!(
+        snapshot.value()?.realm_id == *realm,
+        "history current Realm differs"
+    );
+    let input = idle::Input::capture(source, state, snapshot, &originals)?;
+    if cache
+        .idle_history_exchanges
+        .begin(realm, &input, controls.is_empty())
+    {
+        return Ok(());
+    }
     observe_exchange("accepted_controls_loaded", controls.len(), None);
     let mut missing = false;
     let mut cut = None::<CommittedEventRef>;
@@ -199,6 +213,11 @@ pub(crate) async fn reconcile(
         }
     }
     if !missing && controls.is_empty() {
+        // A concurrent new original/key/current input must get its own pass.
+        let latest = state.read(|store| store.encrypted_originals_for(realm.as_str()));
+        if idle::Input::capture(source, state, snapshot, &latest)? == input {
+            cache.idle_history_exchanges.finish(realm, input);
+        }
         return Ok(());
     }
     let current = crate::mls::send_gate::read_durable_mls_current(

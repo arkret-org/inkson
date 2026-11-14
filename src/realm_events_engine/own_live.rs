@@ -751,7 +751,7 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
     if is_active() {
         *current = replica;
         if let Err(error) = crate::runtime_helpers::boxed_future(|| {
-            crate::mls::history_exchange::reconcile(client, &projector.state_store, realm)
+            crate::mls::history_exchange::reconcile(client, &projector.state_store, realm, snapshot)
         })
         .await
         {
@@ -1540,6 +1540,104 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn idle_history_exchange_does_not_reread_originals_on_twenty_same_cut_wakeups() {
+        let account = arkret_sdk::AccountId::new(
+            "ak:did_core:web:alice.example".parse().unwrap(),
+            "ak:did_core:web:station.example".parse().unwrap(),
+        );
+        let device =
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001").unwrap();
+        let _scope = DeviceSeedScopeTestGuard::replace(Some((&account, &device)));
+        let _secure = crate::secure_key_store::DefaultSecureKeyStoreTestGuard::replace(Arc::new(
+            garth::MemorySecureKeyStore::default(),
+        ));
+        let (rows, snapshot, key) = content_burst_fixture();
+        let realm = snapshot.realm_id.clone();
+        let original = rows[2].clone();
+        let original_event = match &original {
+            CommittedEventView::Full(full) => full.event.clone(),
+            _ => panic!("fixture requires an original"),
+        };
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let (client, _, server) = http_for_account_observed(
+            vec![
+                serde_json::to_value(&snapshot).unwrap(),
+                serde_json::json!({"__event_get":original}),
+                serde_json::json!({
+                    "__scan_request": StreamScanRequestBody {
+                        realm_id: realm.clone(), stream_ref: original.commit().stream_ref.clone(),
+                        direction: arkret_sdk::StreamScanDirection::Before(Some(original.commit().stream_position + 1)),
+                        limit: 1,
+                    },
+                    "response": {
+                        "committed_events":[original],
+                        "readable_floor":{"oldest_position":0,
+                            "floor_commit_id":rows[0].commit().commit_id,"floor_reason":"stream_start"},
+                        "truncated":true
+                    }
+                }),
+                serde_json::json!({"__signer_key":key}),
+            ],
+            account,
+            None,
+            Some(observed.clone()),
+        );
+        let snapshot = client.snapshot_head(&realm).await.unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let account = crate::test_support::AccountFixture::new("did:web:alice.example")
+            .station("ak:did_core:web:station.example")
+            .build();
+        let mut local =
+            crate::state::LocalStateStore::with_path(directory.path().join("idle.json"));
+        local.switch_active_account(&account).unwrap();
+        local.retain_encrypted_original(&original_event);
+        let store = Arc::new(Mutex::new(local));
+        let projector = test_projector(store.clone(), &realm);
+        crate::mls::history_exchange::reconcile(&client, &projector.state_store, &realm, &snapshot)
+            .await
+            .unwrap();
+        server.join().unwrap();
+        // The real HTTP source is now closed. Repeating native GET/scan would
+        // fail; successful no-work passes cannot hide any extra requests.
+        for _ in 0..20 {
+            crate::mls::history_exchange::reconcile(
+                &client,
+                &projector.state_store,
+                &realm,
+                &snapshot,
+            )
+            .await
+            .unwrap();
+        }
+        let requests = observed.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|row| row.contains("/self/streams/scan "))
+                .count(),
+            1
+        );
+        drop(requests);
+        store
+            .lock()
+            .unwrap()
+            .historical_content_rosters
+            .note_keys_changed();
+        assert!(
+            crate::mls::history_exchange::reconcile(
+                &client,
+                &projector.state_store,
+                &realm,
+                &snapshot
+            )
+            .await
+            .is_err(),
+            "a key change must reenter the native original read"
+        );
+    }
+
+    #[tokio::test]
     async fn twenty_separate_batches_reuse_only_durably_admitted_content_at_the_same_cut() {
         let _scope = DeviceSeedScopeTestGuard::replace(None);
         let (rows, snapshot, key) = content_burst_fixture();
@@ -1980,6 +2078,9 @@ pub(super) mod tests {
                         serde_json::from_slice(&bytes[end..end + len]).unwrap();
                     assert_eq!(serde_json::to_value(request).unwrap(), *expected);
                     body = body["response"].clone();
+                } else if let Some(original) = body.get("__event_get") {
+                    assert!(headers.starts_with("get /_arkret/self/committed-events/"));
+                    body = original.clone();
                 } else if let Some(key) = body.get("__signer_key") {
                     use arkret_models_identity::signer_key_operations::{
                         SignerKeyQueryResponseBody, SignerKeyResolution, SignerKeysQueryRequestBody,

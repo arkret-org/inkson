@@ -1367,6 +1367,9 @@ impl LocalStateStore {
     }
 
     pub(super) fn clear_e2ee_plaintext_from_memory(&mut self) {
+        self.historical_content_rosters
+            .idle_history_exchanges
+            .clear();
         self.ensure_cached_loaded();
         self.absorb_mls_receive_overlay();
         self.cached.mls_private_plaintext.clear();

@@ -506,10 +506,11 @@ async fn verified_creator_create_at_cut(
     Ok((accepted, response.into_value()?, client))
 }
 
-type CreatorOwnSnapshot = arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
-    arkret_sdk::RealmId,
-    arkret_sdk::RealmStateSnapshot,
->;
+pub(crate) type CreatorOwnSnapshot =
+    arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+        arkret_sdk::RealmId,
+        arkret_sdk::RealmStateSnapshot,
+    >;
 
 async fn creator_own_station_cut(
     http: &arkret_sdk::http_client::Client,

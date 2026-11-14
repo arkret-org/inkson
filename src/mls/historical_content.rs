@@ -25,6 +25,7 @@ type EpochMap = BTreeMap<Hash, SharedEpoch>;
 
 #[derive(Clone, Default)]
 pub(crate) struct HistoricalContentRosters {
+    pub(crate) idle_history_exchanges: super::history_exchange::IdleReconciliations,
     #[cfg(not(target_arch = "wasm32"))]
     epochs: Arc<Mutex<EpochMap>>,
     revision: Arc<AtomicU64>,
@@ -52,6 +53,7 @@ impl std::fmt::Debug for HistoricalContentRosters {
 
 impl HistoricalContentRosters {
     pub(crate) fn note_keys_changed(&self) {
+        self.idle_history_exchanges.clear();
         self.content_key_revision.fetch_add(1, Ordering::Release);
         self.note_install();
     }
