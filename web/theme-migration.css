@@ -14,7 +14,7 @@
   background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text);
   box-shadow: none;
 }
-.theme-switcher .theme-switcher-option.primary { background: var(--accent); color: white; }
+.theme-switcher .theme-switcher-option.primary { background: var(--accent); color: var(--text-on-accent); }
 .theme-switcher .theme-switcher-option input[type=radio] {
   position: absolute; inset: 0; width: 100%; height: 100%; margin: 0;
   opacity: 0; cursor: pointer;

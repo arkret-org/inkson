@@ -4,6 +4,39 @@ import { registerStrandsBeforeEach, openKanban, dismissBlockingRecoveryModal, di
 
 registerStrandsBeforeEach();
 
+test("theme text and action colors retain contrast on their surfaces", async ({ page }, testInfo) => {
+  await openKanban(page);
+  const measurements: unknown[] = [];
+  for (let index = 0; index < 2; index++) {
+    const palette = await page.locator(".board-toolbar").evaluate(element => {
+      const style = getComputedStyle(element);
+      const read = (name: string) => style.getPropertyValue(name).trim();
+      return Object.fromEntries(["--text-3", "--surface-solid", "--surface-2", "--surface-3", "--accent", "--accent-2", "--text-on-accent", "--nav-muted", "--nav-bg-2", "--success", "--warning", "--danger", "--info"].map(name => [name, read(name)]));
+    });
+    const luminance = (hex: string) => {
+      expect(hex).toMatch(/^#[\da-f]{6}$/i);
+      return [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16) / 255)
+        .map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+        .reduce((sum, channel, channelIndex) => sum + channel * [0.2126, 0.7152, 0.0722][channelIndex], 0);
+    };
+    const check = (foreground: string, background: string) => {
+      const [low, high] = [luminance(palette[foreground]), luminance(palette[background])].sort((a, b) => a - b);
+      const ratio = (high + 0.05) / (low + 0.05);
+      measurements.push({ palette: index, foreground, background, ratio });
+      expect(ratio, `${foreground} against ${background}`).toBeGreaterThanOrEqual(4.5);
+    };
+    for (const surface of ["--surface-solid", "--surface-2", "--surface-3"]) {
+      check("--text-3", surface);
+      for (const foreground of ["--accent", "--success", "--warning", "--danger", "--info"]) check(foreground, surface);
+    }
+    check("--text-on-accent", "--accent");
+    check("--text-on-accent", "--accent-2");
+    check("--nav-muted", "--nav-bg-2");
+    await page.locator(".theme-toggle-button:visible").click();
+  }
+  await testInfo.attach("computed-palette-contrast", { body: JSON.stringify(measurements, null, 2), contentType: "application/json" });
+});
+
 for (const width of [1280, 390]) {
   test(`work surfaces prioritize content and retain drafts at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 720 });
