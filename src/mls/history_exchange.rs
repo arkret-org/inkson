@@ -252,7 +252,7 @@ pub(crate) async fn reconcile(
                 .await?;
             old = None;
         }
-        let valid = old.as_ref().is_some_and(|old| {
+        let pending = if let Some(old) = old.filter(|old| {
             old.has_private_key()
                 && old.event().as_mls_history_request().is_ok_and(|request| {
                     request.recipient == recipient
@@ -261,9 +261,8 @@ pub(crate) async fn reconcile(
                             .validate_at(old.event().created_at, crate::clock::now_utc())
                             .is_ok()
                 })
-        });
-        let pending = if valid {
-            old.unwrap()
+        }) {
+            old
         } else {
             let keys = arkret_crypto::hpke::generate_x25519_keypair()?;
             let payload = HistoryRequest {

@@ -349,7 +349,7 @@ fn capture_state_is_active(row: &CurrentState) -> anyhow::Result<bool> {
 
 pub(crate) enum CallCaptureStopOutcome {
     ObservedStopped,
-    Submitted(EventSubmissionProgress),
+    Submitted(Box<EventSubmissionProgress>),
 }
 
 pub(crate) fn capture_progress_is_committed(progress: &EventSubmissionProgress) -> bool {
@@ -544,9 +544,9 @@ pub(crate) async fn submit_call_capture_stop(
         .build_sdk_event("inkson")?;
     response.value()?;
     own.check_session()?;
-    Ok(CallCaptureStopOutcome::Submitted(
+    Ok(CallCaptureStopOutcome::Submitted(Box::new(
         submitter.submit_sdk_event(&event).await?,
-    ))
+    )))
 }
 
 #[cfg(test)]

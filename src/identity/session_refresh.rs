@@ -279,74 +279,72 @@ impl SessionGrantStore for PersistedSessionGrantStore {
         }
     }
 
-    fn compare_exchange<'a>(
+    async fn compare_exchange<'a>(
         &'a self,
         expected: &'a SessionGrantState,
         next: &'a SessionGrantState,
-    ) -> impl std::future::Future<Output = garth::Result<bool>> + garth::MaybeSend + 'a {
-        async move {
-            let _write = session_credential_mutation_lock().lock().await;
-            self.ensure_current()?;
-            let key = self
-                .user_store
-                .secret_key(LocalStateStore::SECURE_SESSION_GRANT_KEY);
-            let previous = self
-                .secure_store
-                .read_secret_bytes_durable(&key)
-                .await
+    ) -> garth::Result<bool> {
+        let _write = session_credential_mutation_lock().lock().await;
+        self.ensure_current()?;
+        let key = self
+            .user_store
+            .secret_key(LocalStateStore::SECURE_SESSION_GRANT_KEY);
+        let previous = self
+            .secure_store
+            .read_secret_bytes_durable(&key)
+            .await
+            .map_err(|error| garth::Error::Storage(error.to_string()))?;
+        let Some(previous) = previous else {
+            session_grant_runtime().reset();
+            return Err(garth::Error::OwnStationSessionChanged);
+        };
+        let persisted: PersistedSessionGrant = serde_json::from_slice(&previous)
+            .map_err(|error| garth::Error::Storage(error.to_string()))?;
+        let mut actual =
+            session_grant_state_from_persisted(&persisted, &self.device_handle, Utc::now())
                 .map_err(|error| garth::Error::Storage(error.to_string()))?;
-            let Some(previous) = previous else {
-                session_grant_runtime().reset();
-                return Err(garth::Error::OwnStationSessionChanged);
-            };
-            let persisted: PersistedSessionGrant = serde_json::from_slice(&previous)
-                .map_err(|error| garth::Error::Storage(error.to_string()))?;
-            let mut actual =
-                session_grant_state_from_persisted(&persisted, &self.device_handle, Utc::now())
-                    .map_err(|error| garth::Error::Storage(error.to_string()))?;
-            // The holder's public JWK is optional local state; if retained, it
-            // must be exactly the key this already-bound host actually holds.
-            if let Some(public) = &expected.session_public_key {
-                let held = self
-                    .device_handle
-                    .canonical_session_public_jwk()
-                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-                if public != held.as_str() {
-                    return Err(garth::Error::OwnStationSessionChanged);
-                }
-                actual.session_public_key = Some(public.clone());
-            }
-            if actual != *expected {
-                session_grant_runtime().reset();
+        // The holder's public JWK is optional local state; if retained, it
+        // must be exactly the key this already-bound host actually holds.
+        if let Some(public) = &expected.session_public_key {
+            let held = self
+                .device_handle
+                .canonical_session_public_jwk()
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+            if public != held.as_str() {
                 return Err(garth::Error::OwnStationSessionChanged);
             }
-            let replacement =
-                persisted_session_grant_from_state(next, &self.station_url, &self.device_handle)
-                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-            let bytes = zeroize::Zeroizing::new(
-                serde_json::to_vec(&replacement)
-                    .map_err(|error| garth::Error::Storage(error.to_string()))?,
-            );
-            let replaced = match self
-                .secure_store
-                .compare_exchange_secret_bytes_durable(&key, Some(&previous), &bytes)
-                .await
-            {
-                Ok(replaced) => replaced,
-                Err(error) => {
-                    session_grant_runtime().reset();
-                    return Err(garth::Error::Storage(error.to_string()));
-                }
-            };
-            if !replaced {
-                session_grant_runtime().reset();
-                return Err(garth::Error::OwnStationSessionChanged);
-            }
-            // A retired runtime may leave its valid captured-account record,
-            // but it cannot publish the result into the new account lifetime.
-            self.ensure_current()?;
-            Ok(true)
+            actual.session_public_key = Some(public.clone());
         }
+        if actual != *expected {
+            session_grant_runtime().reset();
+            return Err(garth::Error::OwnStationSessionChanged);
+        }
+        let replacement =
+            persisted_session_grant_from_state(next, &self.station_url, &self.device_handle)
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let bytes = zeroize::Zeroizing::new(
+            serde_json::to_vec(&replacement)
+                .map_err(|error| garth::Error::Storage(error.to_string()))?,
+        );
+        let replaced = match self
+            .secure_store
+            .compare_exchange_secret_bytes_durable(&key, Some(&previous), &bytes)
+            .await
+        {
+            Ok(replaced) => replaced,
+            Err(error) => {
+                session_grant_runtime().reset();
+                return Err(garth::Error::Storage(error.to_string()));
+            }
+        };
+        if !replaced {
+            session_grant_runtime().reset();
+            return Err(garth::Error::OwnStationSessionChanged);
+        }
+        // A retired runtime may leave its valid captured-account record,
+        // but it cannot publish the result into the new account lifetime.
+        self.ensure_current()?;
+        Ok(true)
     }
 
     fn clear(&self) -> garth::Result<()> {

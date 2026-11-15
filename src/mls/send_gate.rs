@@ -895,17 +895,19 @@ mod tests {
             );
         }
         let envelope = encrypted(EventKind::ReactionAdd.as_str());
-        let routing_tag = envelope
+        let routing = envelope
             .encryption_context
             .routing_context()
-            .expect("encrypted reaction fixture has routing context")
-            .routing_tag
-            .clone();
+            .expect("encrypted reaction fixture has routing context");
+        assert_eq!(routing.target_ref, event(3));
+        let payload = json!({
+            "target_ref": arkret_sdk::MessageId::from_event_id(&routing.target_ref),
+            "key": routing.routing_tag,
+            "encrypted_payload": envelope,
+        });
         assert_payload_body(
             EventKind::ReactionAdd,
-            json!({
-                "target_ref": arkret_sdk::MessageId::from_event_id(&event(3)), "key": routing_tag, "encrypted_payload": envelope
-            }),
+            payload,
             Some(ApplicationBody::Encrypted(vec![envelope])),
         );
     }

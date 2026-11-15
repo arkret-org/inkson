@@ -536,7 +536,7 @@ fn stop_submits_only_its_native_axis_without_retired_guard_or_start_grant() {
         assert_eq!(event.payload[axis]["from"], from);
         assert_eq!(event.payload[axis]["to"], "stopped");
         assert!(event.payload[axis].get("expected_commit_id").is_none());
-        assert!(event.payload.get(other).is_none());
+        assert!(!event.payload.contains_key(other));
         let mut rows = current();
         let selector = if kind == RecordingCaptureKind::Recording {
             CurrentSelector::CallRecordingState {
@@ -554,8 +554,10 @@ fn stop_submits_only_its_native_axis_without_retired_guard_or_start_grant() {
         rows.push(entry(selector, 7, json!(from)));
         assert!(!capture_segment_is_stopped(&realm(), &call(), &rows, &id, kind).unwrap());
         assert_eq!(
-            active_capture_segments(&realm(), &call(), &rows, kind).unwrap(),
-            [id.clone()]
+            active_capture_segments(&realm(), &call(), &rows, kind)
+                .unwrap()
+                .as_slice(),
+            std::slice::from_ref(&id)
         );
         replace_value(&mut rows, capture_index, json!("stopped"));
         assert!(capture_segment_is_stopped(&realm(), &call(), &rows, &id, kind).unwrap());
@@ -571,14 +573,14 @@ fn stop_submits_only_its_native_axis_without_retired_guard_or_start_grant() {
 fn queued_or_rejected_stop_never_reports_native_stopped() {
     let id = event_id(10).to_string();
     assert!(
-        !CallCaptureStopOutcome::Submitted(EventSubmissionProgress::queued(id.clone()))
+        !CallCaptureStopOutcome::Submitted(Box::new(EventSubmissionProgress::queued(id.clone())))
             .is_stopped()
     );
     assert!(
-        !CallCaptureStopOutcome::Submitted(EventSubmissionProgress::rejected(
+        !CallCaptureStopOutcome::Submitted(Box::new(EventSubmissionProgress::rejected(
             id,
             "forbidden".to_owned()
-        ))
+        )))
         .is_stopped()
     );
     assert!(CallCaptureStopOutcome::ObservedStopped.is_stopped());
@@ -588,7 +590,7 @@ fn queued_or_rejected_stop_never_reports_native_stopped() {
         commit: None,
         rejection_reason_code: None,
     };
-    assert!(!CallCaptureStopOutcome::Submitted(missing_commit).is_stopped());
+    assert!(!CallCaptureStopOutcome::Submitted(Box::new(missing_commit)).is_stopped());
     let operation = crate::webrtc::build_call_capture_stop(
         &ScopeRef::Realm { realm_id: realm() },
         &account_actor("ak:did_core:web:station.example"),
@@ -610,17 +612,17 @@ fn queued_or_rejected_stop_never_reports_native_stopped() {
         "2026-11-15T00:00:02Z".parse().unwrap(),
     );
     assert!(
-        !CallCaptureStopOutcome::Submitted(EventSubmissionProgress::committed(
+        !CallCaptureStopOutcome::Submitted(Box::new(EventSubmissionProgress::committed(
             event_id(99).to_string(),
             commit.clone(),
-        ))
+        )))
         .is_stopped()
     );
     assert!(
-        CallCaptureStopOutcome::Submitted(EventSubmissionProgress::committed(
+        CallCaptureStopOutcome::Submitted(Box::new(EventSubmissionProgress::committed(
             event.event_id().to_string(),
             commit,
-        ))
+        )))
         .is_stopped()
     );
 }

@@ -469,9 +469,8 @@ pub(crate) async fn resolve_public_root_context(
     let (strategy, strategy_ref) = if principal.value()?.principal_control_realm_id
         == *scope.realm_id()
     {
-        let pcr =
-            garth::own_station_results::read_own_station_human_pcr_genesis(&source, principal)
-                .await?;
+        let pcr = garth::own_station_results::read_own_station_human_pcr_genesis(source, principal)
+            .await?;
         let original = pcr.genesis()?;
         (
             original

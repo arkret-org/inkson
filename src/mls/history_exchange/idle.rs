@@ -69,8 +69,11 @@ impl IdleReconciliations {
             return false;
         };
         let previous = entries.remove(realm);
-        if no_controls && previous.as_ref() == Some(input) {
-            entries.insert(realm.clone(), previous.unwrap());
+        if no_controls
+            && let Some(previous) = previous
+            && &previous == input
+        {
+            entries.insert(realm.clone(), previous);
             true
         } else {
             false

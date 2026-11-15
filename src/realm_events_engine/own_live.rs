@@ -1609,16 +1609,17 @@ pub(super) mod tests {
             .await
             .unwrap();
         }
-        let requests = observed.lock().unwrap();
-        assert_eq!(requests.len(), 4);
-        assert_eq!(
-            requests
-                .iter()
-                .filter(|row| row.contains("/self/streams/scan "))
-                .count(),
-            1
-        );
-        drop(requests);
+        {
+            let requests = observed.lock().unwrap();
+            assert_eq!(requests.len(), 4);
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|row| row.contains("/self/streams/scan "))
+                    .count(),
+                1
+            );
+        }
         store
             .lock()
             .unwrap()
