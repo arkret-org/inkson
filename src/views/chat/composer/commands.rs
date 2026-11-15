@@ -118,15 +118,13 @@ struct AttachmentUploadTarget {
 }
 
 impl AttachmentUploadTarget {
-    fn is_current(
+    fn owns_upload(
         &self,
         session: &crate::presentation::InksonContext,
         controller: ChatController,
     ) -> bool {
         session.session_generation.get_untracked() == self.generation
             && controller.attachment_upload_revision.get_untracked() == self.upload_revision
-            && controller.selected_channel.get_untracked() == self.strand
-            && controller.selection_revision.get_untracked() == self.selection_revision
             && controller.attachment_target_revision.get_untracked() == self.target_revision
             && session
                 .active_account
@@ -135,6 +133,42 @@ impl AttachmentUploadTarget {
                 .is_some_and(|account| {
                     account.authority == self.authority && account.device_id == self.device
                 })
+    }
+
+    fn is_current(
+        &self,
+        session: &crate::presentation::InksonContext,
+        controller: ChatController,
+    ) -> bool {
+        self.owns_upload(session, controller)
+            && controller.selected_channel.get_untracked() == self.strand
+            && controller.selection_revision.get_untracked() == self.selection_revision
+    }
+
+    fn mark_interrupted(
+        &self,
+        session: &crate::presentation::InksonContext,
+        controller: ChatController,
+    ) -> bool {
+        // Only the retained owning composer may offer a retry. This does not
+        // revive the old upload or publish any result from its stale response.
+        if !self.owns_upload(session, controller)
+            || controller.draft_strand_id.get_untracked() != self.strand
+            || !controller
+                .attachments
+                .get_untracked()
+                .iter()
+                .any(|draft| draft.pending)
+        {
+            return false;
+        }
+        controller
+            .compose_upload_failed
+            .revise(|value| *value = true);
+        controller.compose_upload_status.revise(|value| {
+            *value = "Attachment upload interrupted; retry to continue.".into();
+        });
+        true
     }
 }
 
@@ -181,21 +215,22 @@ pub(super) fn upload_dropped_attachments(
     };
     let selection_revision = controller.selection_revision.get_untracked();
     let account = session.active_account.get_untracked().clone();
+    let target = account.as_ref().map(|account| AttachmentUploadTarget {
+        generation,
+        upload_revision: run,
+        selection_revision,
+        target_revision,
+        strand: selected.clone(),
+        authority: account.authority.clone(),
+        device: account.device_id.clone(),
+    });
     let store = session.state_store.handle();
     failed.revise(|value| *value = false);
     super::super::task::dispatch(async move {
         let result = async {
             let account = account.ok_or_else(|| anyhow::anyhow!("no active attachment account"))?;
             let strand = arkret_sdk::StrandId::new(selected.clone())?;
-            let target = AttachmentUploadTarget {
-                generation,
-                upload_revision: run,
-                selection_revision,
-                target_revision,
-                strand: selected.clone(),
-                authority: account.authority.clone(),
-                device: account.device_id.clone(),
-            };
+            let target = target.as_ref().ok_or_else(|| anyhow::anyhow!("no active attachment target"))?;
             let active = || target.is_current(&session, controller);
             anyhow::ensure!(active(), "attachment session or target changed");
             let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
@@ -346,6 +381,9 @@ pub(super) fn upload_dropped_attachments(
             || controller.selected_channel.get_untracked() != selected
             || controller.selection_revision.get_untracked() != selection_revision
         {
+            if let Some(target) = &target {
+                target.mark_interrupted(&session, controller);
+            }
             #[cfg(any(
                 feature = "spec-conformance",
                 all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")

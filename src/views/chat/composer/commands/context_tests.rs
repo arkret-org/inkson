@@ -157,19 +157,48 @@ fn attachment_upload_keeps_caption_edits_and_rejects_target_or_session_changes()
         !target.is_current(&context, controller),
         "A-B-A cannot revive an old upload"
     );
+    controller
+        .draft_strand_id
+        .revise(|value| *value = target.strand.clone());
+    controller.attachments.revise(|drafts| {
+        drafts.push(crate::attachments::DraftAttachment {
+            id: "retained-upload".into(),
+            scope: arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+                    arkret_sdk::DigestSuite::Sha256,
+                    [49; 32],
+                )),
+            },
+            content: arkret_sdk::ContentBlock::new(
+                arkret_sdk::ContentBlockKind::File,
+                "retained.png",
+            ),
+            pending: true,
+        });
+    });
+    assert!(target.mark_interrupted(&context, controller));
+    assert!(controller.compose_upload_failed.get_untracked());
+    assert!(controller.attachments.get_untracked()[0].pending);
+    assert!(!target.is_current(&context, controller));
+    controller
+        .compose_upload_failed
+        .revise(|value| *value = false);
     let target = snapshot();
     controller
         .attachment_target_revision
         .revise(|value| *value += 1);
     assert!(!target.is_current(&context, controller));
+    assert!(!target.mark_interrupted(&context, controller));
     let target = snapshot();
     controller
         .attachment_upload_revision
         .revise(|value| *value += 1);
     assert!(!target.is_current(&context, controller));
+    assert!(!target.mark_interrupted(&context, controller));
     let target = snapshot();
     context.session_generation.revise(|value| *value += 1);
     assert!(!target.is_current(&context, controller));
+    assert!(!target.mark_interrupted(&context, controller));
     let target = snapshot();
     let mut other_device = account.clone();
     other_device.device_id = "ak:device:01964137-0000-7000-8000-000000000002"
@@ -179,12 +208,23 @@ fn attachment_upload_keeps_caption_edits_and_rejects_target_or_session_changes()
         .active_account
         .revise(|value| *value = Some(other_device));
     assert!(!target.is_current(&context, controller));
+    assert!(!target.mark_interrupted(&context, controller));
     context
         .active_account
         .revise(|value| *value = Some(account.clone()));
     let target = snapshot();
     context.active_account.revise(|value| *value = None);
     assert!(!target.is_current(&context, controller));
+    assert!(!target.mark_interrupted(&context, controller));
+    assert!(!controller.compose_upload_failed.get_untracked());
+    context
+        .active_account
+        .revise(|value| *value = Some(account.clone()));
+    let target = snapshot();
+    controller
+        .attachments
+        .revise(|drafts| drafts[0].pending = false);
+    assert!(!target.mark_interrupted(&context, controller));
 }
 
 #[tokio::test(flavor = "current_thread")]
