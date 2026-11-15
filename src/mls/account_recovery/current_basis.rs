@@ -68,7 +68,7 @@ impl ConfirmedBackupBasis {
 
     pub(super) fn check_auth(
         &self,
-        auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+        auth: &arkret_crypto::backup::KeyBackupAuthorizationBinding,
     ) -> Result<()> {
         self.check()?;
         anyhow::ensure!(
@@ -554,7 +554,7 @@ mod tests {
             .unwrap(),
         };
         assert!(authorize.commit.producer_signer_fact_digest.is_none());
-        let auth = arkret_crypto::backup::KeyBackupAuthBinding {
+        let auth = arkret_crypto::backup::KeyBackupAuthorizationBinding {
             device_id: fixture.device_id.clone(),
             verification_method: fixture.device_verification_method.clone(),
             signature_algorithm: arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,

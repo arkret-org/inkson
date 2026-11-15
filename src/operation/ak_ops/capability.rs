@@ -210,7 +210,13 @@ pub fn capability_revoke_from_owned_current(
             "owned Agent revoke requires the original issuer's exact nonterminal current"
         );
     }
-    capability_revoke_exact(realm.as_str(), actor, &row.value.id, &row.revision.commit_id, reason)
+    capability_revoke_exact(
+        realm.as_str(),
+        actor,
+        &row.value.id,
+        &row.revision.commit_id,
+        reason,
+    )
 }
 
 /// Author an Applet revoke Event by copying the exact revision and reason from

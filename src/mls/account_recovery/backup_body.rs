@@ -50,7 +50,7 @@ pub fn build_mls_account_secret_backup_body_with_kek(
     device_id: &str,
     kek: &VaultKek,
     account_secret: &str,
-    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    auth: &arkret_crypto::backup::KeyBackupAuthorizationBinding,
     sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {
@@ -76,7 +76,7 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
     kek: &VaultKek,
     account_secret: &str,
     account_secret_version: u32,
-    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    auth: &arkret_crypto::backup::KeyBackupAuthorizationBinding,
     sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {
@@ -114,7 +114,7 @@ pub fn build_mls_account_secret_backup_successor_body_with_kek_and_version(
     kek: &VaultKek,
     account_secret: &str,
     account_secret_version: u32,
-    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    auth: &arkret_crypto::backup::KeyBackupAuthorizationBinding,
     sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {
@@ -177,7 +177,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
     account_secret_version: u32,
     recovery_policy_ref: (&str, u64),
     previous_series_tail: Option<&Value>,
-    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    auth: &arkret_crypto::backup::KeyBackupAuthorizationBinding,
     sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {

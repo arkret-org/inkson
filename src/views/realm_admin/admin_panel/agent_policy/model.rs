@@ -24,7 +24,7 @@ pub(super) struct RuleDraft {
     pub actions: String,
     pub resources: Vec<ResourceDraft>,
     pub approvers: String,
-    pub threshold: String,
+    pub min_approver_count: String,
     pub max_age: String,
 }
 impl Default for RuleDraft {
@@ -40,7 +40,7 @@ impl Default for RuleDraft {
             actions: String::new(),
             resources: Vec::new(),
             approvers: String::new(),
-            threshold: "1".into(),
+            min_approver_count: "1".into(),
             max_age: "3600".into(),
         }
     }
@@ -52,7 +52,7 @@ pub(super) struct Draft {
     pub default_effect: String,
     pub default_operations: Vec<String>,
     pub default_approvers: String,
-    pub default_threshold: String,
+    pub default_min_approver_count: String,
     pub default_max_age: String,
     pub priority: String,
     pub not_before: String,
@@ -67,7 +67,7 @@ impl Default for Draft {
             default_effect: "allow".into(),
             default_operations: vec!["join".into()],
             default_approvers: String::new(),
-            default_threshold: "1".into(),
+            default_min_approver_count: "1".into(),
             default_max_age: "3600".into(),
             priority: String::new(),
             not_before: String::new(),
@@ -92,12 +92,12 @@ fn optional_timestamp(text: &str) -> anyhow::Result<Option<chrono::DateTime<chro
 }
 fn review(
     approvers: &str,
-    threshold: &str,
+    min_approver_count: &str,
     max_age: &str,
 ) -> anyhow::Result<ManagementReviewRequirement> {
     let value = ManagementReviewRequirement {
         approver_actor_ids: serde_json::from_str(approvers)?,
-        min_approver_count: threshold.parse()?,
+        min_approver_count: min_approver_count.parse()?,
         max_age_seconds: max_age.parse()?,
     };
     value.validate()?;
@@ -160,7 +160,7 @@ impl RuleDraft {
             applet_target: None,
             applet_operations: None,
             review_requirement: (effect == PolicyEffect::RequireReview)
-                .then(|| review(&self.approvers, &self.threshold, &self.max_age))
+                .then(|| review(&self.approvers, &self.min_approver_count, &self.max_age))
                 .transpose()?,
             priority: self.priority.parse()?,
             actions: words(&self.actions),
@@ -231,7 +231,7 @@ impl RuleDraft {
         }
         if let Some(r) = &rule.review_requirement {
             form.approvers = serde_json::to_string_pretty(&r.approver_actor_ids)?;
-            form.threshold = r.min_approver_count.to_string();
+            form.min_approver_count = r.min_approver_count.to_string();
             form.max_age = r.max_age_seconds.to_string();
         }
         Ok(form)
@@ -287,7 +287,7 @@ impl Draft {
                 .then(|| {
                     review(
                         &self.default_approvers,
-                        &self.default_threshold,
+                        &self.default_min_approver_count,
                         &self.default_max_age,
                     )
                 })
@@ -355,7 +355,7 @@ impl Draft {
         };
         if let Some(r) = &policy.default_review_requirement {
             form.default_approvers = serde_json::to_string_pretty(&r.approver_actor_ids)?;
-            form.default_threshold = r.min_approver_count.to_string();
+            form.default_min_approver_count = r.min_approver_count.to_string();
             form.default_max_age = r.max_age_seconds.to_string();
         }
         form.default_operations = policy
@@ -490,6 +490,14 @@ mod tests {
         draft.rules[0].effect = "require_review".into();
         draft.rules[0].approvers = serde_json::to_string(&vec![approver]).unwrap();
         let p = draft.build(&realm(), &actor, None, None).unwrap();
+        let PolicySetValue::Governance(policy) = &p.value else {
+            panic!()
+        };
+        let requirement = policy.rules[0].review_requirement.as_ref().unwrap();
+        assert_eq!(requirement.min_approver_count, 1);
+        let wire = serde_json::to_value(requirement).unwrap();
+        assert_eq!(wire["min_approver_count"], 1);
+        assert!(wire.get("threshold").is_none());
         assert!(supported_by_current_backend(
             &p,
             &ScopeRef::Realm { realm_id: realm() }
@@ -514,7 +522,7 @@ mod tests {
         draft.rules[0].operations = vec!["execute".into()];
         assert!(draft.build(&realm(), &actor, None, None).is_err());
         draft.rules[0].operations = vec!["join".into()];
-        draft.rules[0].threshold = "2".into();
+        draft.rules[0].min_approver_count = "2".into();
         assert!(draft.build(&realm(), &actor, None, None).is_err());
     }
     #[test]

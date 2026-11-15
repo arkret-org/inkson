@@ -71,7 +71,7 @@ export function remainingOperationMock(context: Context) {
       if (operation.endsWith("protocol_metadata.v1")) {
         if (decodeURIComponent(url.pathname.split("/").at(-1)!) !== "contract") return fail("not_found", "protocol not found");
         return respond({ protocol: "contract", display_name: "Contract protocol",
-          field_definitions: { external_id: { required: true, value_kind: "string" } } });
+          field_definitions: { external_id: { field_required: true, value_kind: "string" } } });
       }
       if (operation === "ak.edge.applet.realm.read.resolve.v1" || operation === "ak.edge.applet.third_party_locations.read.list.v1") {
         let external = decodeURIComponent(url.pathname.split("/").at(-1)!);

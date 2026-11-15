@@ -89,18 +89,31 @@ fn account(label: &str, principal: &str) -> ActiveAccountContext {
     })).unwrap()
 }
 
+fn secret(label: &str) -> arkret_sdk::SessionGrantSecret {
+    arkret_sdk::SessionGrantSecret::from_bytes(arkret_sdk::canonical::sha256_bytes(
+        label.as_bytes(),
+    ))
+}
+
 fn grant(account: &ActiveAccountContext, token: &str) -> PersistedSessionGrant {
     PersistedSessionGrant {
-        grant_jwt: token.into(),
+        session_grant: secret(token),
         session_private_key_pem: String::new(),
-        grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".into(),
+        grant_ref: arkret_sdk::SessionGrantRef::new(
+            account.authority.station_id.clone(),
+            arkret_sdk::SessionGrantId::new(
+                "ak:session_grant:01904100-0000-7000-8000-000000000001",
+            )
+            .unwrap(),
+        ),
         audience_id: account.authority.station_id.clone(),
         granted_scope: vec![],
         account_id: account.authority.clone(),
         device_id: account.device_id.clone(),
         station_url: account.server_url.clone(),
-        grant_expires_at: None,
+        grant_expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
         stored_at: chrono::Utc::now(),
+        pending_refresh: None,
     }
 }
 
@@ -235,11 +248,13 @@ async fn browser_warm_switch_a_b_a_keeps_exact_accounts_keys_and_rejects_late_de
         assert!(old_store.flush().is_err());
     };
     assert_eq!(
-        browser_switch_grant(&b, None).await.unwrap().grant_jwt,
-        "browser-grant-b"
+        browser_switch_grant(&b, None).await.unwrap().session_grant,
+        secret("browser-grant-b")
     );
     assert!(!element.text_content().unwrap().contains("private-a"));
-    assert!(!element.inner_html().contains("browser-grant"));
+    for label in ["browser-grant-a", "browser-grant-b"] {
+        assert!(!element.inner_html().contains(secret(label).as_str()));
+    }
     assert!(!element.inner_html().contains("browser-credential"));
     choose(&element, &a, "private-a").await;
     assert_eq!(
@@ -251,8 +266,8 @@ async fn browser_warm_switch_a_b_a_keeps_exact_accounts_keys_and_rejects_late_de
         a.authority
     );
     assert_eq!(
-        browser_switch_grant(&a, None).await.unwrap().grant_jwt,
-        "browser-grant-a"
+        browser_switch_grant(&a, None).await.unwrap().session_grant,
+        secret("browser-grant-a")
     );
     let drops: u32 = element
         .query_selector(".control-drops")
@@ -334,8 +349,8 @@ async fn browser_add_account_can_return_without_promoting_pending_secrets() {
             .contains("pending-b-private")
     );
     assert_eq!(
-        browser_switch_grant(&a, None).await.unwrap().grant_jwt,
-        "browser-grant-a"
+        browser_switch_grant(&a, None).await.unwrap().session_grant,
+        secret("browser-grant-a")
     );
     drop(abort);
     gloo_timers::future::TimeoutFuture::new(0).await;

@@ -229,7 +229,7 @@ pub async fn effective_grants(
     realm_id: &arkret_sdk::RealmId,
     subject: &arkret_sdk::ActorId,
 ) -> anyhow::Result<EffectiveGrantSnapshot> {
-    // Deliberately no `at` parameter: historical evaluation is not an
+    // Deliberately no `evaluation_at` parameter: historical evaluation is not an
     // authoring basis. Settings relinquish and manual admin revoke consume
     // only the exact row revision from this current read.
     http.get(&effective_grants_path(realm_id, subject)?)

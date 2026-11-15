@@ -895,7 +895,10 @@ mod tests {
             );
         }
         let envelope = encrypted(EventKind::ReactionAdd.as_str());
-        let routing = envelope.encryption_context.routing_context().unwrap();
+        let routing = envelope
+            .encryption_context
+            .routing_context()
+            .expect("encrypted reaction fixture has routing context");
         assert_eq!(routing.target_ref, event(3));
         let payload = json!({
             "target_ref": arkret_sdk::MessageId::from_event_id(&routing.target_ref),

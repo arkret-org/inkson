@@ -153,7 +153,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/arkret-spec
           path: arkret-spec
-          ref: 66c9261b58fa211505ce8a710c1464bdc4a63dc8
+          ref: fa57d06e1aec58970e588d503621e65ba3445a32
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout arkret-rust-sdk
@@ -161,7 +161,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/arkret-rust-sdk
           path: arkret-rust-sdk
-          ref: e84ab4be3f1004ef5f48ea2250cd403787c4e706
+          ref: 5a2d1665e1831ff6e6cefe8a0b09a4d37989b611
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout garth
@@ -169,7 +169,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/garth
           path: garth
-          ref: 0df727f46130ea18673785952846ee250724fdc6
+          ref: 960e007b4905f91b2ffc52ccf91db0b3cf5ca44d
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout chime
@@ -177,7 +177,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/chime
           path: chime
-          ref: aa8e2afc78fa35c6248c1a1016280b22d7502645
+          ref: fed3a6c08501ecb2e02fa0b10f6c152b07b8359e
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout Glory and Sapid
