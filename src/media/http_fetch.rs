@@ -42,52 +42,6 @@ fn url_host_is_safe_with_local(url: &str, local_development: bool) -> bool {
     host_is_safe_for_outbound(host) || local_development && loopback
 }
 
-#[cfg(test)]
-mod tests {
-    use super::url_host_is_safe_with_local;
-
-    #[test]
-    fn browser_did_egress_allows_loopback_only_in_explicit_local_mode() {
-        for url in [
-            "https://localhost/did.jsonl",
-            "https://coauth.localhost/did.jsonl",
-            "https://127.0.0.1/did.jsonl",
-            "https://[::1]/did.jsonl",
-        ] {
-            assert!(!url_host_is_safe_with_local(url, false), "{url}");
-            assert!(url_host_is_safe_with_local(url, true), "{url}");
-        }
-        for local in [false, true] {
-            assert!(url_host_is_safe_with_local(
-                "https://identity.example/did.jsonl",
-                local
-            ));
-            for url in [
-                "https://10.0.0.1/did.jsonl",
-                "https://169.254.169.254/did.jsonl",
-                "https://[fd00::1]/did.jsonl",
-                "https://host.local/did.jsonl",
-            ] {
-                assert!(!url_host_is_safe_with_local(url, local), "{url}");
-            }
-        }
-    }
-
-    #[test]
-    fn browser_did_egress_requires_credential_free_https_in_both_modes() {
-        for local in [false, true] {
-            for url in [
-                "http://identity.example/did.jsonl",
-                "http://localhost/did.jsonl",
-                "https://user@identity.example/did.jsonl",
-                "https://user:password@localhost/did.jsonl",
-            ] {
-                assert!(!url_host_is_safe_with_local(url, local), "{url}");
-            }
-        }
-    }
-}
-
 /// Fetch `url` over `http` with an enforced response-size ceiling and a JSON
 /// content-type check. Cross-platform: `bytes()` works on both the native and
 /// the wasm browser-fetch reqwest backends (the wasm backend does not expose
@@ -222,4 +176,50 @@ pub(crate) async fn fetch_did_web_document(
         content_type,
         body,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::url_host_is_safe_with_local;
+
+    #[test]
+    fn browser_did_egress_allows_loopback_only_in_explicit_local_mode() {
+        for url in [
+            "https://localhost/did.jsonl",
+            "https://coauth.localhost/did.jsonl",
+            "https://127.0.0.1/did.jsonl",
+            "https://[::1]/did.jsonl",
+        ] {
+            assert!(!url_host_is_safe_with_local(url, false), "{url}");
+            assert!(url_host_is_safe_with_local(url, true), "{url}");
+        }
+        for local in [false, true] {
+            assert!(url_host_is_safe_with_local(
+                "https://identity.example/did.jsonl",
+                local
+            ));
+            for url in [
+                "https://10.0.0.1/did.jsonl",
+                "https://169.254.169.254/did.jsonl",
+                "https://[fd00::1]/did.jsonl",
+                "https://host.local/did.jsonl",
+            ] {
+                assert!(!url_host_is_safe_with_local(url, local), "{url}");
+            }
+        }
+    }
+
+    #[test]
+    fn browser_did_egress_requires_credential_free_https_in_both_modes() {
+        for local in [false, true] {
+            for url in [
+                "http://identity.example/did.jsonl",
+                "http://localhost/did.jsonl",
+                "https://user@identity.example/did.jsonl",
+                "https://user:password@localhost/did.jsonl",
+            ] {
+                assert!(!url_host_is_safe_with_local(url, local), "{url}");
+            }
+        }
+    }
 }

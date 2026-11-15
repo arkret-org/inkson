@@ -1453,7 +1453,7 @@ mod input_lifetime_tests {
         let sibling = pool
             .inputs(
                 &context,
-                &arkret_sdk::RealmId::from_event_id(&event(86)).to_string(),
+                arkret_sdk::RealmId::from_event_id(&event(86)).as_ref(),
                 "ak:did_core:web:another-agent.example",
             )
             .unwrap();

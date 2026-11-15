@@ -2316,7 +2316,6 @@ async fn publish_realm_security_view(
 }
 
 /// Rows per bounded index read while installing the product view.
-
 fn scope_rotate_realm_ids(
     response: &AccountFrameStep,
     state_store: &LocalStateStore,

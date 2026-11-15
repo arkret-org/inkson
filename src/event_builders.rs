@@ -1487,21 +1487,45 @@ mod genesis_authority_tests {
     #[test]
     fn realm_owner_transfer_and_relinquish_builders_keep_distinct_payload_commitments() {
         let realm = "ak:realm:ASxFeEp6tO9V7cjI3A4hL2nyI_lMtmbnR6TzaYTi-EgH";
-        let transfer: arkret_sdk::RealmOwnerTransferPayload = serde_json::from_value(json!({
-            "realm_id": realm,
-            "expected_state_digest": format!("sha256:{}", "1".repeat(64)),
-            "patch": {
-                "controller_actor_id": {
-                    "kind": "account",
-                    "account_id": {
-                        "principal_id": "ak:did_core:web:bob.example",
-                        "station_id": "ak:did_core:web:principal.example"
+        let unsigned: arkret_models_crypto::RealmOwnerTransferUnsignedPayload =
+            serde_json::from_value(json!({
+                "realm_id": realm,
+                "expected_state_digest": format!("sha256:{}", "1".repeat(64)),
+                "patch": {
+                    "controller_actor_id": {
+                        "kind": "account",
+                        "account_id": {
+                            "principal_id": "ak:did_core:web:bob.example",
+                            "station_id": "ak:did_core:web:principal.example"
+                        }
                     }
                 }
-            },
-            "successor_acceptance": "successor-detached-proof"
-        }))
-        .unwrap();
+            }))
+            .unwrap();
+        let (scope_ref, actor_id) =
+            realm_authority_builder_context(&unsigned.realm_id, "did:web:alice.example").unwrap();
+        let finite_intent = arkret_models_crypto::RealmOwnerTransferAcceptanceIntent {
+            scope_ref,
+            actor_id,
+            payload_without_successor_acceptance: unsigned.clone(),
+        };
+        let successor_acceptance =
+            arkret_signatures::realm_owner_transfer::sign_realm_owner_transfer_acceptance(
+                &finite_intent,
+                arkret_sdk::DidUrl::new(
+                    "did:web:bob.example#ak:device:0199bbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb",
+                )
+                .unwrap(),
+                event_timestamp(),
+                &ed25519_dalek::SigningKey::from_bytes(&[42; 32]),
+            )
+            .unwrap();
+        let transfer = arkret_sdk::RealmOwnerTransferPayload {
+            realm_id: unsigned.realm_id,
+            expected_state_digest: unsigned.expected_state_digest,
+            patch: unsigned.patch,
+            successor_acceptance,
+        };
         let intent =
             build_realm_owner_transfer_control_intent("did:web:alice.example", transfer).unwrap();
         assert_eq!(intent.kind().as_str(), "ak.realm.owner.transfer");

@@ -26,21 +26,21 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/arkret-rust-sdk
           path: arkret-rust-sdk
-          ref: d5a2ec492b343bfe3a3e1be33e36713ed154fc59
+          ref: 819fc97ca2356cd0ed467864babfaca93e0b5494
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
       - name: Checkout garth
         uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/garth
           path: garth
-          ref: 60b40c9dc27a2c3e9af0946b004bc23777e87803
+          ref: 8c35acec7c6d8c79b61c06855367340f0a17da78
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
       - name: Checkout chime
         uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/chime
           path: chime
-          ref: 18c27e22eb07574e3847e4a9936eab1f19f35af3
+          ref: aa8e2afc78fa35c6248c1a1016280b22d7502645
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
       - name: Checkout arkret-spec
         uses: actions/checkout@v7

@@ -827,7 +827,7 @@ pub(super) fn sidebar(scope: &Scope, context: Rc<InksonContext>) -> View {
             internal_link()
                 .target(target.to_string())
                 .class(class)
-                .name(name.clone())
+                .name(name)
                 .semantics(scope.bond(move || {
                     Some(Box::new(Semantics {
                         current: class

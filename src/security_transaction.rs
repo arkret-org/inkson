@@ -333,49 +333,41 @@ impl SecurityTransactionStore for InksonSecurityTransactionStore {
         }
     }
 
-    fn load_committed<'a>(
+    async fn load_committed<'a>(
         &'a self,
         id: &'a arkret_sdk::TransactionId,
-    ) -> impl std::future::Future<Output = garth::Result<Option<DurableSecurityTransaction>>>
-    + garth::MaybeSend
-    + 'a {
-        async move {
-            let key = Self::storage_key(id)?;
-            self.secure_store
-                .read_secret_bytes_durable(&key)
-                .await
-                .map_err(|e| garth::Error::Protocol(e.to_string()))?
-                .map(|bytes| {
-                    serde_json::from_slice(&bytes)
-                        .map_err(|e| garth::Error::Protocol(e.to_string()))
-                })
-                .transpose()
-        }
+    ) -> garth::Result<Option<DurableSecurityTransaction>> {
+        let key = Self::storage_key(id)?;
+        self.secure_store
+            .read_secret_bytes_durable(&key)
+            .await
+            .map_err(|e| garth::Error::Protocol(e.to_string()))?
+            .map(|bytes| {
+                serde_json::from_slice(&bytes).map_err(|e| garth::Error::Protocol(e.to_string()))
+            })
+            .transpose()
     }
-    fn compare_exchange<'a>(
+    async fn compare_exchange<'a>(
         &'a self,
         expected: Option<&'a DurableSecurityTransaction>,
         next: &'a DurableSecurityTransaction,
-    ) -> impl std::future::Future<Output = garth::Result<bool>> + garth::MaybeSend + 'a {
-        async move {
-            if expected.is_some_and(|old| old.transaction_id != next.transaction_id) {
-                return Err(garth::Error::Protocol(
-                    "security record CAS changed transaction identity".into(),
-                ));
-            }
-            audit_public_transaction_state(next)?;
-            let key = Self::storage_key(&next.transaction_id)?;
-            let old = expected
-                .map(serde_json::to_vec)
-                .transpose()
-                .map_err(|e| garth::Error::Protocol(e.to_string()))?;
-            let bytes =
-                serde_json::to_vec(next).map_err(|e| garth::Error::Protocol(e.to_string()))?;
-            self.secure_store
-                .compare_exchange_secret_bytes_durable(&key, old.as_deref(), &bytes)
-                .await
-                .map_err(|e| garth::Error::Protocol(e.to_string()))
+    ) -> garth::Result<bool> {
+        if expected.is_some_and(|old| old.transaction_id != next.transaction_id) {
+            return Err(garth::Error::Protocol(
+                "security record CAS changed transaction identity".into(),
+            ));
         }
+        audit_public_transaction_state(next)?;
+        let key = Self::storage_key(&next.transaction_id)?;
+        let old = expected
+            .map(serde_json::to_vec)
+            .transpose()
+            .map_err(|e| garth::Error::Protocol(e.to_string()))?;
+        let bytes = serde_json::to_vec(next).map_err(|e| garth::Error::Protocol(e.to_string()))?;
+        self.secure_store
+            .compare_exchange_secret_bytes_durable(&key, old.as_deref(), &bytes)
+            .await
+            .map_err(|e| garth::Error::Protocol(e.to_string()))
     }
 
     fn clear_staged_secret(&self, reference: &str) -> garth::Result<()> {

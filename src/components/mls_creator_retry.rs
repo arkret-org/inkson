@@ -279,10 +279,9 @@ mod tests {
                 .classes
                 .iter()
                 .any(|class| class == "creator-mls-retry-button")
+                && let glory::render::Props::Button(button) = &view.props
             {
-                if let glory::render::Props::Button(button) = &view.props {
-                    return Some((id, button.enabled));
-                }
+                return Some((id, button.enabled));
             }
             pending.extend(node.children.iter().copied());
         }

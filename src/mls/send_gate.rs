@@ -895,11 +895,16 @@ mod tests {
             );
         }
         let envelope = encrypted(EventKind::ReactionAdd.as_str());
+        let routing = envelope.encryption_context.routing_context().unwrap();
+        assert_eq!(routing.target_ref, event(3));
+        let payload = json!({
+            "target_ref": arkret_sdk::MessageId::from_event_id(&routing.target_ref),
+            "key": routing.routing_tag,
+            "encrypted_payload": envelope,
+        });
         assert_payload_body(
             EventKind::ReactionAdd,
-            json!({
-                "target_ref": arkret_sdk::MessageId::from_event_id(&event(3)), "key": "+1", "encrypted_payload": envelope
-            }),
+            payload,
             Some(ApplicationBody::Encrypted(vec![envelope])),
         );
     }

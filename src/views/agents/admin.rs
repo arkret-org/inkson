@@ -1095,45 +1095,6 @@ fn capability_row(
     )
 }
 
-#[cfg(test)]
-mod retained_creation_tests {
-    use std::cell::RefCell;
-
-    use super::*;
-
-    #[test]
-    fn unrelated_agent_refresh_retains_the_live_creation_owner() {
-        let app = glory::App::memory();
-        let scope = app.scope();
-        let agents = scope.cage(Vec::<AgentView>::new());
-        let selected = scope.cage(String::new());
-        let create = scope.cage(true);
-        let filter = scope.cage("all".to_owned());
-        let owners = Rc::new(RefCell::new(Vec::new()));
-        let rendered = owners.clone();
-        app.mount(reactive(
-            agent_detail_source(scope, agents, selected, create, filter),
-            move |scope, _| {
-                rendered.borrow_mut().push(scope.downgrade());
-                paragraph("", "retained Agent creation")
-            },
-        ))
-        .unwrap();
-        let owner = owners.borrow()[0].clone();
-        agents.revise(Vec::clear);
-        selected.revise(|value| *value = "another Agent".into());
-        filter.revise(|value| *value = "paused".into());
-        app.flush().unwrap();
-        assert_eq!(owners.borrow().len(), 1);
-        assert!(owner.upgrade().is_some());
-
-        create.revise(|value| *value = false);
-        app.flush().unwrap();
-        assert_eq!(owners.borrow().len(), 2);
-        assert!(owner.upgrade().is_none());
-    }
-}
-
 fn permission_overview(scope: &Scope, context: Rc<InksonContext>, view: &AgentAdminView) -> View {
     let labels = |presets: &[AgentGrantPreset]| {
         view.selected_content_capabilities
@@ -1252,4 +1213,43 @@ fn permission_overview(scope: &Scope, context: Rc<InksonContext>, view: &AgentAd
         ));
     }
     stack("agent-admin-section agent-permission-overview", rows)
+}
+
+#[cfg(test)]
+mod retained_creation_tests {
+    use std::cell::RefCell;
+
+    use super::*;
+
+    #[test]
+    fn unrelated_agent_refresh_retains_the_live_creation_owner() {
+        let app = glory::App::memory();
+        let scope = app.scope();
+        let agents = scope.cage(Vec::<AgentView>::new());
+        let selected = scope.cage(String::new());
+        let create = scope.cage(true);
+        let filter = scope.cage("all".to_owned());
+        let owners = Rc::new(RefCell::new(Vec::new()));
+        let rendered = owners.clone();
+        app.mount(reactive(
+            agent_detail_source(scope, agents, selected, create, filter),
+            move |scope, _| {
+                rendered.borrow_mut().push(scope.downgrade());
+                paragraph("", "retained Agent creation")
+            },
+        ))
+        .unwrap();
+        let owner = owners.borrow()[0].clone();
+        agents.revise(Vec::clear);
+        selected.revise(|value| *value = "another Agent".into());
+        filter.revise(|value| *value = "paused".into());
+        app.flush().unwrap();
+        assert_eq!(owners.borrow().len(), 1);
+        assert!(owner.upgrade().is_some());
+
+        create.revise(|value| *value = false);
+        app.flush().unwrap();
+        assert_eq!(owners.borrow().len(), 2);
+        assert!(owner.upgrade().is_none());
+    }
 }

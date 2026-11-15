@@ -23,12 +23,11 @@ pub(crate) fn retain_accepted_page_encrypted_originals(
         return Err("history page belongs to another active account".into());
     }
     for row in page.accepted_rows()? {
-        if let arkret_sdk::CommittedEventView::Full(full) = row {
-            if arkret_event_draft::event_plain_content_blocks(&full.event)
+        if let arkret_sdk::CommittedEventView::Full(full) = row
+            && arkret_event_draft::event_plain_content_blocks(&full.event)
                 .is_ok_and(|blocks| !blocks.is_empty())
-            {
-                store.retain_encrypted_original(&full.event);
-            }
+        {
+            store.retain_encrypted_original(&full.event);
         }
     }
     let originals = page
