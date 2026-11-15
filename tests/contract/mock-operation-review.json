@@ -21,7 +21,7 @@
     {
       "operation_id": "ak.edge.applet.command.transaction.v1",
       "verification_need": "native_authority",
-      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "reason": "Ordinary business transactions still require the real accepted installation, selected grant, exact current cut and independent administrator/runtime/governor identities. The disjoint native realm_actor_backup maintenance branch is limited to the current manager Service and original active-series source, registration, recipients, signatures, pending/status/lifecycle and scoped CAS gates; paused business or disabled identity recovery does not become Device PUT or business authority. HTTP success never proves native admission.",
       "normative_documents": [
         "zh/extensions/applet-management-source.md",
         "zh/extensions/realm-actors.md"
@@ -31,7 +31,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:d4f1503050549494f0b1dcd8794ef40c6d3007219b697b169d33542af95f4744"
+      "contract_digest": "sha256:ff0c9a080f2eafff6d09fda711c8e7eeff2d4541278c15b0f8f0ed9055ab7e4a"
     },
     {
       "operation_id": "ak.edge.applet.managed_actor.command.author.v1",
@@ -46,7 +46,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:cd969070a67731945c977cc53794d1f3444df7e5a0b51e9eb7ef1d56191f9167"
+      "contract_digest": "sha256:877512ca108af7790cb8922b31b425126f4f2290d578772347e43159e9d8b3fa"
     },
     {
       "operation_id": "ak.edge.applet.read.describe.v1",
@@ -61,7 +61,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.edge.applet.read.describe.v1"
       },
-      "contract_digest": "sha256:391cb09725977e1579d92ff7292cb12d53661337f6a33b7b8db1954efda757ba"
+      "contract_digest": "sha256:5235f213c25e6a042440e3e248333b66a0678bd82772b072932ce79e14dcf46a"
     },
     {
       "operation_id": "ak.edge.applet.read.ping.v1",
@@ -91,7 +91,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.edge.applet.read.protocol_metadata.v1"
       },
-      "contract_digest": "sha256:f9ca911f162bca366416678b813e7645cf6d88518007dcc006bf22e9538c4609"
+      "contract_digest": "sha256:948dfc42bd22f2cae1984984bcf37effa6555f8c5b72fc43895b1dde1e18c47d"
     },
     {
       "operation_id": "ak.edge.applet.realm.read.resolve.v1",
@@ -121,7 +121,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.edge.applet.third_party_locations.read.list.v1"
       },
-      "contract_digest": "sha256:f9663211bfac1348a751489f9456d9a47c3078d14a41b0221cacc46c6f712631"
+      "contract_digest": "sha256:ea2cbead857b27ff267d801896eb7e7e78b56f94a4bc6ad7609f2a28320f19d9"
     },
     {
       "operation_id": "ak.edge.applet.third_party_users.read.list.v1",
@@ -139,7 +139,7 @@
         "file": "tests/contract/native-read-evidence.spec.ts",
         "name": "native accepted read replay preserves original contract: ak.edge.applet.third_party_users.read.list.v1"
       },
-      "contract_digest": "sha256:945ae975a8d35fc0bbfb95117c333016414eaed5df8731db074f721b5cda3988"
+      "contract_digest": "sha256:f74ad4ff94143300ac0ab016f4735c581fe2f465af5ccde42918e9c747644d70"
     },
     {
       "operation_id": "ak.edge.push.command.apply_registration.v1",
@@ -181,7 +181,7 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:40f87ffe0d0f6c5f6c83a74db2ca41c2ce63025595364fcd95e4e0edec3d4151"
+      "contract_digest": "sha256:cfe40e31cc95388d562f3ce553ce7ec8fae63d83add348fa90aee96d536c1736"
     },
     {
       "operation_id": "ak.gate.account.command.finalize_device_pairing.v1",
@@ -197,7 +197,7 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:60d80949b71fd3851cac971365775398dd2f98e6cb9e8f1dcf77234aa55f93d0"
+      "contract_digest": "sha256:205218b107d3bd9f8ac3099eaeb6bf21597fe9b969b90ce6d4f9cbd1c89911bd"
     },
     {
       "operation_id": "ak.gate.account.command.issue_did_binding_challenge.v1",
@@ -213,7 +213,7 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:4f938a30c2dfc6c734a7cbea76c3e0a1085d3a94a004ab0fa9c3f127e1b71bb5"
+      "contract_digest": "sha256:cb0a3184e64877f38ec06bdc1f7b0f6bfb37a553c2b204c52cc6ac55d73cc3e1"
     },
     {
       "operation_id": "ak.gate.account.command.issue_identity_binding_challenge.v1",
@@ -229,12 +229,12 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:16bec845267022a9eadcc4ea5a36bd87ddab9a81516d5f88493f2e5124ced9c6"
+      "contract_digest": "sha256:0b2e34cdf8774e002e5034a76c48e3d58b335811da484298edf481162b0db5b8"
     },
     {
       "operation_id": "ak.gate.account.command.issue_recovery_completion_grant.v1",
       "verification_need": "native_authority",
-      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "reason": "Requires the original accepted signed R and C from the origin Station, full Account/current replacement Device, fresh handoff and real candidate possession for first issuance. Exact same-business-key replay returns the frozen issuer result without reapplying expired old proof windows; re-signing is allowed only after the issuer's typed serialized no-accepted expired-proof rejection. PCR completion is not Standard or historical-key authority.",
       "normative_documents": [
         "zh/identity/account-lifecycle.md",
         "zh/crypto-media/device-lifecycle.md"
@@ -245,12 +245,12 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:9084b9955011f7b94c2b5dc5f07bfe0d504d369aa0b53050155e7ae79e113cef"
+      "contract_digest": "sha256:87c5c8c21439161a5e0a40b4856a20dc7ab3e26c8d7ad388aa8316038749acc0"
     },
     {
       "operation_id": "ak.gate.account.command.issue_session_grant.v1",
       "verification_need": "native_authority",
-      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "reason": "Requires the Account Authority's actual onboarding/session/device/revocation ledger and authenticated Account/holder/DPoP input. A random canonical opaque credential binds by exact bytes to one issuer-scoped UUIDv7 record and immutable typed metadata; no client token decoding or content-derived ID supplies issuer authority. Single-successor refresh, frozen original response, current qualification and accepted-device proof must be exercised on native paths.",
       "normative_documents": [
         "zh/identity/account-lifecycle.md",
         "zh/crypto-media/device-lifecycle.md"
@@ -261,7 +261,7 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:44440399b9ac9818b5732dcd43265acb5bff3e622fedbf58b52554959a442d28"
+      "contract_digest": "sha256:b1f59878149f5db02c35e3d59bdcc9d4571ce2b3aaa9d41762c60c81db30987f"
     },
     {
       "operation_id": "ak.gate.account.command.logout.v1",
@@ -282,7 +282,7 @@
     {
       "operation_id": "ak.gate.account.command.refresh_session_grant.v1",
       "verification_need": "native_authority",
-      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "reason": "Requires the Account Authority's actual onboarding/session/device/revocation ledger and authenticated Account/holder/DPoP input. A random canonical opaque credential binds by exact bytes to one issuer-scoped UUIDv7 record and immutable typed metadata; no client token decoding or content-derived ID supplies issuer authority. Single-successor refresh, frozen original response, current qualification and accepted-device proof must be exercised on native paths.",
       "normative_documents": [
         "zh/identity/account-lifecycle.md",
         "zh/crypto-media/device-lifecycle.md"
@@ -293,12 +293,12 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:e7c4547eee3ba1ede6c5d8811244861a9823c658d083aee9c9573621782992f6"
+      "contract_digest": "sha256:368cd2b1950e72c019af981ab66c90f18a015065283431c76b8bc507bf06b612"
     },
     {
       "operation_id": "ak.gate.account.command.register.v1",
       "verification_need": "native_authority",
-      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "reason": "Requires the Account Authority's actual onboarding/session/device/revocation ledger and authenticated Account/holder/DPoP input. A random canonical opaque credential binds by exact bytes to one issuer-scoped UUIDv7 record and immutable typed metadata; no client token decoding or content-derived ID supplies issuer authority. Single-successor refresh, frozen original response, current qualification and accepted-device proof must be exercised on native paths.",
       "normative_documents": [
         "zh/identity/account-lifecycle.md",
         "zh/crypto-media/device-lifecycle.md"
@@ -309,7 +309,7 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:8a72456dcac46367b309320b6ba0c10e86bc937cad89fbe257263fec4588adef"
+      "contract_digest": "sha256:6b1710ddf20335b6c167b91ca20770c6fa207511b80b7b03c008c391da274880"
     },
     {
       "operation_id": "ak.gate.account.command.request_erasure.v1",
@@ -325,12 +325,12 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:fa0436a4739499cc443bae928973c7f0c5fc392438ea492075a82ff99d9c217e"
+      "contract_digest": "sha256:6136e7c457343d5b46e3ba85957e1c946bbe83dac4207cc39f19e3698477942b"
     },
     {
       "operation_id": "ak.gate.account.exchange.create_handoff.v1",
       "verification_need": "native_authority",
-      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "reason": "Requires the Account Authority's actual onboarding/session/device/revocation ledger and authenticated Account/holder/DPoP input. A random canonical opaque credential binds by exact bytes to one issuer-scoped UUIDv7 record and immutable typed metadata; no client token decoding or content-derived ID supplies issuer authority. Single-successor refresh, frozen original response, current qualification and accepted-device proof must be exercised on native paths.",
       "normative_documents": [
         "zh/identity/account-lifecycle.md",
         "zh/crypto-media/device-lifecycle.md"
@@ -341,7 +341,7 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:f600d7d56a82ce53520d0847c2bd4c7317be7916905c3a59a67dfc7152b820d1"
+      "contract_digest": "sha256:edebcec9993473ca66b35a5e6407f7224552f134b7d81c4366cebcf43aafc000"
     },
     {
       "operation_id": "ak.gate.account.read.claim_device_pairing_code.v1",
@@ -511,7 +511,7 @@
         "coland/crates/http/src/state/authority_mimi_unit.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:87ed06a762d9f1cf9f2f79e28a9a6670b0fbeff99439af1a38c206ea3c2ae70b"
+      "contract_digest": "sha256:8c4bf2b27c0460ebd79217b1cc437eb3d9dd33cc51ecf7a46376da10f14d4f8c"
     },
     {
       "operation_id": "ak.open.mimi.command.update_room.v1",
@@ -525,7 +525,7 @@
         "coland/crates/http/src/state/authority_mimi_unit.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:6845b5fa5bf76583934319c9740816d631c7482b227b6941c8c4db00cf965970"
+      "contract_digest": "sha256:72e01555b64d63e342be33e62960fbbf905a3950712c8889cdea797177d842d1"
     },
     {
       "operation_id": "ak.open.mimi.exchange.request_key_material.v1",
@@ -539,7 +539,7 @@
         "coland/crates/http/src/state/authority_mimi_unit.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:0e54bac98e174cc59fb702604a2259fff99df2d4c318ff4715350350eb94e6e7"
+      "contract_digest": "sha256:633671663fdc7d72b8fc9edda8b5e3b92bb3108968f251c10fc7a5063a132b3e"
     },
     {
       "operation_id": "ak.open.mimi.read.identifiers.v1",
@@ -568,7 +568,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.open.realm_authority.read.bundle.v1"
       },
-      "contract_digest": "sha256:20333022c2bbec284b97cc23ab2797a85487889e35404592b94ba5ff8d5511ce"
+      "contract_digest": "sha256:8ee910e137b427ef265e5df0706b7d993d062ef7efe53055423c346986eda6cd"
     },
     {
       "operation_id": "ak.peer.account_status.command.submit.v1",
@@ -607,7 +607,7 @@
         "coland/crates/http/src/routing/events/peer.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:a8f3eaec696f772f57c6ab7b59b78d7af2500e0ea9c954288b2fb322e965fd22"
+      "contract_digest": "sha256:2214e455bd7ec4b9459c645d882cc34ca66dd9fd9b2647063f27bcb941734176"
     },
     {
       "operation_id": "ak.peer.erasure_receipt.command.submit.v1",
@@ -646,7 +646,7 @@
         "coland/crates/http/src/routing/events/peer.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:4741845a86ddcae70cdfd9565ef62767ad1f63a7620c17cd27dde6978ced3210"
+      "contract_digest": "sha256:7d8e007d9e74cb559414f508eccb26e140d7cb119eeb698b4c837e95b3525e05"
     },
     {
       "operation_id": "ak.peer.committed_event.read.scan.v1",
@@ -663,7 +663,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.peer.committed_event.read.scan.v1"
       },
-      "contract_digest": "sha256:f4a0c51ac829e55cc74f9b5b31245901476ef931f69aec03b17e161d08f80e1f"
+      "contract_digest": "sha256:9080497268eb14e2709ad3591c0086f8db3436580e27be889b8eed07ed8c8d76"
     },
     {
       "operation_id": "ak.peer.invites.command.submit.v1",
@@ -677,7 +677,7 @@
         "coland/crates/http/src/routing/invites.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:4a048e889820aa63ab7360d812da7a5a5f4fa55b38a618a5e4947a5f1bb5f064"
+      "contract_digest": "sha256:0bc1d7d606239b657679b84e69f1299c67f867229e02d88be8aad6d4334b84eb"
     },
     {
       "operation_id": "ak.peer.keys.keypackages.command.claim.v1",
@@ -691,7 +691,7 @@
         "coland/crates/http/src/routing/mls/mls_keypackage_upload.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:5e4dc2dd1ee3b2297b0bf403bd094db6adb3accb825957c7fc01a497f1cf6a7f"
+      "contract_digest": "sha256:11b0ce96dd69293663f1295f20ebd5e208ce6131210a004ebd45fe9e8d1f47c6"
     },
     {
       "operation_id": "ak.peer.keys.keypackages.read.claim.v1",
@@ -705,12 +705,12 @@
         "coland/crates/http/src/routing/mls/mls_keypackage_upload.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:6e4cf891a1c0d9f142e79f043e0b2b1002887edf89009d194c07775c51626bec"
+      "contract_digest": "sha256:7c61fd4fe96a41f78f8b72616e416ca55e50cf993939d4d62d6958ea4ad0e180"
     },
     {
       "operation_id": "ak.peer.keys.read.lookup.v1",
       "verification_need": "native_authority",
-      "reason": "Requires the destination Station's own current accepted Contact or joined-Realm relationship, purpose gate, target device material and original key attestation. Foreign user credentials must never be forwarded. Existing local device fixture cannot prove destination authorization, omission privacy or final delivery fences.",
+      "reason": "Requires the destination Station's own current accepted Contact or joined-Realm relationship, purpose gate, target device material and original key attestation. Foreign user credentials must never be forwarded. Existing local device fixture cannot prove destination authorization, omission privacy or final delivery fences. The finite OwnerTransfer-acceptance purpose requires C's actual current native Human Device/scopes and B's original intent-bound signature; the signed short observation is neither a remote lease nor a replacement for the ordinary producer proof.",
       "normative_documents": [
         "zh/identity/key-management.md"
       ],
@@ -718,7 +718,7 @@
         "coland/crates/http/src/routing/mls/mls_keypackage_native.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:fb9fb19f2fcf25794e1c0f63c698f6eaedfd390004bfa1ac005a6fb58095a96d"
+      "contract_digest": "sha256:dba344a075d5f955e104d65a09c636072dbc91943ea1fa0d74d47c09ce7d3c22"
     },
     {
       "operation_id": "ak.peer.mls.command.attest_add.v1",
@@ -731,7 +731,7 @@
         "coland/crates/http/src/routing/mls/mls_keypackage_native.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:16b22209958c8a645a6a7da7a6e8699749b78df5214ece9ea7a883edbe2eb3a9"
+      "contract_digest": "sha256:164dfbe765487be293bb25df2fc53bddad7a11d6984d388ead86dc68071dad04"
     },
     {
       "operation_id": "ak.peer.mls.read.group_state_material.v1",
@@ -748,7 +748,7 @@
         "file": "tests/contract/native-read-evidence.spec.ts",
         "name": "native accepted read replay preserves original contract: ak.peer.mls.read.group_state_material.v1"
       },
-      "contract_digest": "sha256:469b3a923db0f68f125028b93dfaba348b15edf07d467c42e46daacf64cbc93b"
+      "contract_digest": "sha256:0bdaebf39c06570047581b6ce5b67ccd4e411f43f6d872fc353ca9d5f7a5f7b2"
     },
     {
       "operation_id": "ak.peer.mls.read.roster_authority.v1",
@@ -765,12 +765,12 @@
         "file": "tests/contract/native-read-evidence.spec.ts",
         "name": "native accepted read replay preserves original contract: ak.peer.mls.read.roster_authority.v1"
       },
-      "contract_digest": "sha256:0614d659864073dc52c8d17da5abd6702bc2946d8ef0e3eb6798e2acc7866e4a"
+      "contract_digest": "sha256:18389b9ee7bffd7466fe0dae698dc0f3503076fe1b7bc0f944b87f30de53c83c"
     },
     {
       "operation_id": "ak.peer.realm_authority.command.handoff.v1",
       "verification_need": "native_authority",
-      "reason": "Requires eligible immutable genesis purpose, both old and new governance authorities, complete imported snapshot/stream heads and original dual-signed handoff transaction. Human and user-managed Agent PCRs must reject before any effects. A public bundle or standalone DID is not handoff permission.",
+      "reason": "Requires eligible immutable genesis purpose, both old and new governance authorities, complete imported snapshot/stream heads and original dual-signed handoff transaction. Human and user-managed Agent PCRs must reject before any effects. A public bundle or standalone DID is not handoff permission. Management-private transfer of accepted OwnerTransfer successor evidence must preserve exact Event/Commit-bound W1 without exposing it in ordinary Full/current snapshots; import and historical verification do not grant fresh current permission.",
       "normative_documents": [
         "zh/sync/authority-commit-log.md"
       ],
@@ -778,7 +778,7 @@
         "coland/crates/http/src/routing/events/peer.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:477224af354680f282c114a740f63641396a0ea8d9c82bfb9240ea978b896a7e"
+      "contract_digest": "sha256:ebff515413f93cbeaa07d45f4ebdeef1d410f9f7578faf09e8d098c1277c68d3"
     },
     {
       "operation_id": "ak.peer.realm_join.read.bootstrap.v1",
@@ -791,7 +791,7 @@
         "coland/crates/http/src/routing/events/peer.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:57775d4ae262f1b8269085e3f381a60988a932e901b301d31179cdfba4945931"
+      "contract_digest": "sha256:9abb2b9d462fe3fa4158c749d32ac4de01ae4123ced08aadc88aff344021c550"
     },
     {
       "operation_id": "ak.peer.realm_join.read.preview.v1",
@@ -804,7 +804,7 @@
         "coland/crates/http/src/routing/events/peer.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:f4b775159a3f54cb5e43402e0ccee862bc0b99a8c71a949e96ef16eff5805309"
+      "contract_digest": "sha256:938f3a0cc941dc0240f3395f870800617bfd857b2f1286d13fad0fab1c452d8a"
     },
     {
       "operation_id": "ak.peer.signal.command.relay.v1",
@@ -817,7 +817,7 @@
         "coland/crates/http/src/routing/events/sync/signal.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:8783d0fe679438b44968a941e3035d6cb2ab5fe7fa102629aae8e2375d1dee25"
+      "contract_digest": "sha256:f68dcf9cfedad90a44470aaa50d296b6816e51b46996e744b8abebc512d184a7"
     },
     {
       "operation_id": "ak.root.identity.command.submit_did_operation.v1",
@@ -957,7 +957,7 @@
     {
       "operation_id": "ak.root.identity.recovery_session.command.create.v1",
       "verification_need": "native_authority",
-      "reason": "A native durable recovery/rotation resource, immutable prepared plan, exact grant/device binding and accepted step prefix are required. Progress cannot be inferred from a short-lived UI cache; completion consumes the session and activates the device atomically.",
+      "reason": "Requires the actual durable recovery session, current policy and candidate proof bound to the complete Account, Device and issuer-scoped recovery credential. This admission resource is not a prepared Recovery transaction or a generic rotation plan. Reading it or obtaining a completion artifact never restores Standard, MLS or historical-content authority by itself.",
       "normative_documents": [
         "zh/identity/key-management.md",
         "zh/crypto-media/device-lifecycle.md"
@@ -967,7 +967,7 @@
         "coauth/crates/backend/src/handlers/arkret/recovery_authority.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:81e408fc1ae301a0a95a697c26c985f8df5336fce76da29497aceb8313151386"
+      "contract_digest": "sha256:7b5d76d869cc1322ccdb8bb3401ff440b0a7faae5d1b52e61c7956eaf162ca0e"
     },
     {
       "operation_id": "ak.root.identity.recovery_session.command.submit_proof.v1",
@@ -987,7 +987,7 @@
     {
       "operation_id": "ak.root.identity.recovery_session.resource.get.v1",
       "verification_need": "native_authority",
-      "reason": "A native durable recovery/rotation resource, immutable prepared plan, exact grant/device binding and accepted step prefix are required. Progress cannot be inferred from a short-lived UI cache; completion consumes the session and activates the device atomically.",
+      "reason": "Requires the actual durable recovery session, current policy and candidate proof bound to the complete Account, Device and issuer-scoped recovery credential. This admission resource is not a prepared Recovery transaction or a generic rotation plan. Reading it or obtaining a completion artifact never restores Standard, MLS or historical-content authority by itself.",
       "normative_documents": [
         "zh/identity/key-management.md",
         "zh/crypto-media/device-lifecycle.md"
@@ -997,7 +997,7 @@
         "coauth/crates/backend/src/handlers/arkret/recovery_authority.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:81bc3f8992eff8dbae60fda0f5efed4fc7c6f2dceead71d88dd1123282ffb0c9"
+      "contract_digest": "sha256:b64c956e71fa9dc41102e95b225a3c28031e6c2bd3b5c6000abd0a55843a6fca"
     },
     {
       "operation_id": "ak.root.identity.service_registration.command.ensure.v1",
@@ -1012,7 +1012,7 @@
         "coland/crates/http/src/routing/identity/organization_registration.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:fe0a3837ae763502e036091b2021685b89fd94acc44fe5f8ef9295840df0c966"
+      "contract_digest": "sha256:473b4db0dece51ef07b162bb95cfbb45759362dbf71123827299f6907e341a47"
     },
     {
       "operation_id": "ak.root.identity.service_registration.resource.get.v1",
@@ -1027,7 +1027,7 @@
         "coland/crates/http/src/routing/identity/organization_registration.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:59fd02eacd81f7ad48edcc90a000e45e03a3613f8943560f79e5d65c787200ed"
+      "contract_digest": "sha256:8963464c1b89ef95c21ca882f21c6307cadd9fc7757427b936ac2df76f0eab3a"
     },
     {
       "operation_id": "ak.self.account.command.revoke_cursor.v1",
@@ -1057,7 +1057,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.self.account_data.read.list.v1"
       },
-      "contract_digest": "sha256:d01fd64654746bf144b8fb849bb9f94e19d923ea859b5902ca5e9cd864f415e0"
+      "contract_digest": "sha256:e28f5375d0717f38ffbb2f662912a186ac78efba95b9c5ace3b6548a4e710491"
     },
     {
       "operation_id": "ak.self.account_data.resource.delete.v1",
@@ -1074,7 +1074,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.self.account_data.resource.delete.v1"
       },
-      "contract_digest": "sha256:61e8819d67778224cfc87179e7edd4a36d6c169b5766a5b76b2e8629c20f40b6"
+      "contract_digest": "sha256:300810b406b3cd9e65b15e409dbd6a5ff8ec967e9ace34f65ff90767be8bcb03"
     },
     {
       "operation_id": "ak.self.account_data.resource.replace.v1",
@@ -1091,7 +1091,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.self.account_data.resource.replace.v1"
       },
-      "contract_digest": "sha256:13b5f192a4ed6f018ef065df0bb5f12f0cda77a353aae6ea73c6207012427be3"
+      "contract_digest": "sha256:eff167fe3d1d7e57a1a1f55c1b97406607a724a9613bfb05fa22cd0df977837b"
     },
     {
       "operation_id": "ak.self.actor_private_events.command.submit.v1",
@@ -1104,7 +1104,7 @@
         "coland/crates/http/src/routing/events/peer.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:c09f8508c1d5ed511de9536814eafaa55e8726cdf2776213f0986feaddba85b6"
+      "contract_digest": "sha256:bee1d3c06937ace1b523aa92258df7a4e802a744495744fe147738a03236235f"
     },
     {
       "operation_id": "ak.self.actor_profile.read.resolve.v1",
@@ -1121,7 +1121,7 @@
         "file": "tests/contract/native-read-evidence.spec.ts",
         "name": "native accepted read replay preserves original contract: ak.self.actor_profile.read.resolve.v1"
       },
-      "contract_digest": "sha256:5a4c5b28f51aec751c98c772ccd2ac482806998d4255c0a02590c55ba8527590"
+      "contract_digest": "sha256:606977a772dcb0b469334a6e742264547f43f16f421789e7775f485db2513ae1"
     },
     {
       "operation_id": "ak.self.agent.participation.resource.replace.v1",
@@ -1136,7 +1136,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.self.agent.participation.resource.replace.v1"
       },
-      "contract_digest": "sha256:a0161b4e020e4415b7ca93a8d6a6b6963c76d3209b3a7b536fd57dae682b87f5"
+      "contract_digest": "sha256:5112ca1ea6702c5f43fa5c7d059d40f67c03bebc2119390712a71d1c1d0e5dde"
     },
     {
       "operation_id": "ak.self.applet.command.install.v1",
@@ -1151,7 +1151,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:d2eb898dbbf5dcaf64b06997b70fc1a686c9feb5ad5f2e8cd81c49dea488c773"
+      "contract_digest": "sha256:3773f94c8a217f53750311e57454f168348a1346d9fb1dd36e6b1e73fd78fc28"
     },
     {
       "operation_id": "ak.self.applet.command.revoke.v1",
@@ -1166,7 +1166,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:f5b4207e61833571a5656bf08797dc60aa91cc3cece3832ce0715f11c868daf3"
+      "contract_digest": "sha256:859cc757d8a4efa063d7dd9a09693195c8ffa72289f406d4681251de3337dbfc"
     },
     {
       "operation_id": "ak.self.applet.ghost.command.preview.v1",
@@ -1196,7 +1196,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:4fc9c87cc44e40cc6637ba2b04bb24e13d1120137b204b7d012cd92492d7b141"
+      "contract_digest": "sha256:2fd5caae11339d5d19a6a12d47fb788d5e9cf22e61ba69fc41a3ae37c41d14a3"
     },
     {
       "operation_id": "ak.self.applet.revoke.command.preview.v1",
@@ -1211,7 +1211,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:8ad8a08e7bcc44c9e19e24b4075f63faff91eb3e130a09af18e6f029b8f622a8"
+      "contract_digest": "sha256:a18ee64313b9e427c9d882c92460ac1403918ab86f07de758765c667e6be561e"
     },
     {
       "operation_id": "ak.self.blob.command.presign.v1",
@@ -1253,7 +1253,7 @@
         "coland/crates/http/src/routing/mod.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:5da36f9ff69101c703d4f59a3aaf771d087d4953fca754e15606ffa89cda0e8c"
+      "contract_digest": "sha256:aea2f519a8fba11a4337f4ae2af11fe0352e9c65ee83df6de6cfcf1d5c42def8"
     },
     {
       "operation_id": "ak.self.circle.command.rotate_scope.v1",
@@ -1281,7 +1281,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.self.circle.resource.get.v1"
       },
-      "contract_digest": "sha256:a4ba7c59fd32ee3f5b884b899cbf5f931f1307f585c4d31a65f92ec017331edc"
+      "contract_digest": "sha256:d6e4c267eb1d69989891844b71e72d4c7f17bda3e9610c70a1e93e0b95fdc5fe"
     },
     {
       "operation_id": "ak.self.consent.command.replace.v1",
@@ -1295,7 +1295,7 @@
         "coland/crates/http/src/routing/consent_private.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:50a6d8e7d41807a74e3f299144a0efb44e955e000a2dca61d4de401f15f7714d"
+      "contract_digest": "sha256:e0a917126100cd3a781a7f69ec493e90d07c36b18e1f6751e313d043a3d69373"
     },
     {
       "operation_id": "ak.self.consent.command.request.v1",
@@ -1375,12 +1375,12 @@
         "file": "tests/contract/native-read-evidence.spec.ts",
         "name": "native accepted read replay preserves original contract: ak.self.identity.read.resolution_audit.v1"
       },
-      "contract_digest": "sha256:0213e0250806b858f3d82aa25b61e17b220e4d072f41f5da764d892e7bbff876"
+      "contract_digest": "sha256:db11058d51f27c7855cc8bc8a5f2f256a5878322c3f616864f77e020d89069a5"
     },
     {
       "operation_id": "ak.self.keys.backups.command.issue_delete_challenge.v1",
       "verification_need": "native_authority",
-      "reason": "Existing UI fixtures contain backup summaries, not the durable current-device/high-risk challenge and unlock ledger. A positive case needs the real signed challenge/proof, opaque encrypted backup and one-use/replay transaction; a guessed nonce or empty acknowledgement would skip that contract.",
+      "reason": "Requires the real current-device or recovery authority, signed server challenge/proof, opaque encrypted backup and durable single-consumption ledger. Delete/native unlock use one exact server challenge, not an additional challenge nonce; encryption nonces remain independent cryptographic inputs. Holder/body/idempotency binding, concurrent consumption, response-loss and post-restart exact outcome are native obligations, not mock success.",
       "normative_documents": [
         "zh/identity/key-management.md"
       ],
@@ -1388,12 +1388,12 @@
         "coland/crates/http/src/routing/identity/key_backup.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:eadc90de94eb28189d45f241f775d2e0616d41577ec5ac7d72d0ce10d977dac9"
+      "contract_digest": "sha256:6c46ba99a3798d60fe784339d562701f7f44af7d41a686c99c23ce527ffaca14"
     },
     {
       "operation_id": "ak.self.keys.backups.command.issue_unlock_challenge.v1",
       "verification_need": "native_authority",
-      "reason": "Existing UI fixtures contain backup summaries, not the durable current-device/high-risk challenge and unlock ledger. A positive case needs the real signed challenge/proof, opaque encrypted backup and one-use/replay transaction; a guessed nonce or empty acknowledgement would skip that contract.",
+      "reason": "Requires the real current-device or recovery authority, signed server challenge/proof, opaque encrypted backup and durable single-consumption ledger. Delete/native unlock use one exact server challenge, not an additional challenge nonce; encryption nonces remain independent cryptographic inputs. Holder/body/idempotency binding, concurrent consumption, response-loss and post-restart exact outcome are native obligations, not mock success.",
       "normative_documents": [
         "zh/identity/key-management.md"
       ],
@@ -1401,12 +1401,12 @@
         "coland/crates/http/src/routing/identity/key_backup.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:d0b097afc256db90c894946bb494ea35bf72e1c1d1c670f29a15c848865f54cb"
+      "contract_digest": "sha256:388cefdd6d9c948a6ad90cd48e50df2c6ac0f5027ffdb7d808f5e6829e4dd219"
     },
     {
       "operation_id": "ak.self.keys.backups.command.unlock.v1",
       "verification_need": "native_authority",
-      "reason": "Existing UI fixtures contain backup summaries, not the durable current-device/high-risk challenge and unlock ledger. A positive case needs the real signed challenge/proof, opaque encrypted backup and one-use/replay transaction; a guessed nonce or empty acknowledgement would skip that contract.",
+      "reason": "Requires the real current-device or recovery authority, signed server challenge/proof, opaque encrypted backup and durable single-consumption ledger. Delete/native unlock use one exact server challenge, not an additional challenge nonce; encryption nonces remain independent cryptographic inputs. Holder/body/idempotency binding, concurrent consumption, response-loss and post-restart exact outcome are native obligations, not mock success.",
       "normative_documents": [
         "zh/identity/key-management.md"
       ],
@@ -1414,7 +1414,7 @@
         "coland/crates/http/src/routing/identity/key_backup.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:313cad83efcb29804fac5290fb6f816f75cbdb445fe0bd56fcd0878271eb1d8c"
+      "contract_digest": "sha256:143c233b525586b0155f987b303277c2ece7b57b8d653ccc96367d1b64be23f2"
     },
     {
       "operation_id": "ak.self.keys.backups.resource.delete.v1",
@@ -1441,7 +1441,7 @@
         "coland/crates/http/src/routing/mls/mls_keypackage_upload.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:6caa6c185c0e7687e8ef69baffe532fcb22c4ef3facc7fb131d6c02bba7e5da3"
+      "contract_digest": "sha256:bbb17b4d8dbba42bcfa320ed1918eaa7fde87bb4b26a169b69c48032c84ec42e"
     },
     {
       "operation_id": "ak.self.keys.keypackages.command.consume.v1",
@@ -1483,7 +1483,7 @@
         "coland/crates/http/src/routing/mls/mls_keypackage_upload.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:2341c59a1fa747c330c72e790c1450c83d1b68a01c28d55ac0cad1016a4ec324"
+      "contract_digest": "sha256:66e7f020db2b16f093c3dbbdd604f447c67e7513f928d92fab851c7f512d9514"
     },
     {
       "operation_id": "ak.self.media_service_binding.read.resolve.v1",
@@ -1543,7 +1543,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.self.read_cursor.command.advance.v1"
       },
-      "contract_digest": "sha256:47f9d6f1202ec78d7ea0f08ed6a0d5bd0717c159aedb235cdb06be48215c7bdc"
+      "contract_digest": "sha256:46be4d310461dacc4ab8f5ff73a8637f7b634ff6c964ad16d1903807608a3010"
     },
     {
       "operation_id": "ak.self.read_cursor.read.list.v1",
@@ -1576,7 +1576,7 @@
         "file": "tests/contract/native-read-evidence.spec.ts",
         "name": "native accepted read replay preserves original contract: ak.self.mls.read.group_state_material.v1"
       },
-      "contract_digest": "sha256:3a356e0a716f997694b94d7edc384004002b05f0cd3c1b9a095db9af35a1cb2f"
+      "contract_digest": "sha256:543067639b5482b0586890ca56ccfebaaf1e5aa674163e072cd7d3aac23dcbad"
     },
     {
       "operation_id": "ak.self.mls.read.roster_authority.v1",
@@ -1593,7 +1593,7 @@
         "file": "tests/contract/native-read-evidence.spec.ts",
         "name": "native accepted read replay preserves original contract: ak.self.mls.read.roster_authority.v1"
       },
-      "contract_digest": "sha256:e6d6279d3ae7d48a0f23e173fc94511d0d14568cc1f58fc9e7e9379b165db66b"
+      "contract_digest": "sha256:40325f32ee91f32a27f88f8a3c1d93821c3597099ee3c502fa9143011b80d50c"
     },
     {
       "operation_id": "ak.self.realm.read.export.v1",
@@ -1637,7 +1637,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.self.realm_link.read.list.v1"
       },
-      "contract_digest": "sha256:ff43c2547567f94452f5c20084a8fbad9df8414305730ff9f30ccd687bea5d5d"
+      "contract_digest": "sha256:0f78833afe1c0f2510b0c74a576ee9215b097a23de97316f4a06424fa4d104c5"
     },
     {
       "operation_id": "ak.self.realm_organization.read.list.v1",
@@ -1651,12 +1651,12 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.self.realm_organization.read.list.v1"
       },
-      "contract_digest": "sha256:08e125f196af5c196e7c4c69d1f4296d19ba94fbaf559f233e53b76787f3a6ee"
+      "contract_digest": "sha256:5511f6dcb1399fa31586e253aca182a1b02d7b299818047bfb390886a95c4ad1"
     },
     {
       "operation_id": "ak.self.security_transaction.command.continue.v1",
       "verification_need": "native_authority",
-      "reason": "A native durable recovery/rotation resource, immutable prepared plan, exact grant/device binding and accepted step prefix are required. Progress cannot be inferred from a short-lived UI cache; completion consumes the session and activates the device atomically.",
+      "reason": "Recovery and Rotation are distinct typed resources. Recovery first creation submits the complete signed R and fixed two-Event unit atomically; its completed original and C remain immutable. Only Rotation uses its independent registered continue steps and local-commit artifacts. Exact accepted replay, account/holder/source binding, current qualification and zero-effect failures require real native storage and service paths.",
       "normative_documents": [
         "zh/identity/key-management.md",
         "zh/crypto-media/device-lifecycle.md"
@@ -1666,12 +1666,12 @@
         "coauth/crates/backend/src/handlers/arkret/recovery_authority.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:b17bf5b32b04d5aaeb1c37ab9daa8b4f48da8fa7a0750b86acfc689911165d7e"
+      "contract_digest": "sha256:0f07c713b62dc72695dec3fc7327967eed9e4ab5acc1b0ff9dae1ecfb8d3d704"
     },
     {
       "operation_id": "ak.self.security_transaction.command.create.v1",
       "verification_need": "native_authority",
-      "reason": "A native durable recovery/rotation resource, immutable prepared plan, exact grant/device binding and accepted step prefix are required. Progress cannot be inferred from a short-lived UI cache; completion consumes the session and activates the device atomically.",
+      "reason": "Recovery and Rotation are distinct typed resources. Recovery first creation submits the complete signed R and fixed two-Event unit atomically; its completed original and C remain immutable. Only Rotation uses its independent registered continue steps and local-commit artifacts. Exact accepted replay, account/holder/source binding, current qualification and zero-effect failures require real native storage and service paths.",
       "normative_documents": [
         "zh/identity/key-management.md",
         "zh/crypto-media/device-lifecycle.md"
@@ -1681,12 +1681,12 @@
         "coauth/crates/backend/src/handlers/arkret/recovery_authority.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:66b7433bf462bf09f23fc2a1bcaec98bd900c347c76bb6eef77630bedd0facce"
+      "contract_digest": "sha256:fcfbbdfcc5765d90219d2dda1feb37bb4e978f9ba89bde2903c76b8edfc2c369"
     },
     {
       "operation_id": "ak.self.security_transaction.resource.get.v1",
       "verification_need": "native_authority",
-      "reason": "A native durable recovery/rotation resource, immutable prepared plan, exact grant/device binding and accepted step prefix are required. Progress cannot be inferred from a short-lived UI cache; completion consumes the session and activates the device atomically.",
+      "reason": "Recovery and Rotation are distinct typed resources. Recovery first creation submits the complete signed R and fixed two-Event unit atomically; its completed original and C remain immutable. Only Rotation uses its independent registered continue steps and local-commit artifacts. Exact accepted replay, account/holder/source binding, current qualification and zero-effect failures require real native storage and service paths.",
       "normative_documents": [
         "zh/identity/key-management.md",
         "zh/crypto-media/device-lifecycle.md"
@@ -1696,7 +1696,7 @@
         "coauth/crates/backend/src/handlers/arkret/recovery_authority.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:9593bb4f41cfb8bcf7b8281ffbf4773324db94b00ac6c70cbf1e5d4911aabab9"
+      "contract_digest": "sha256:a66d1c406a337eecaa4994feae1dc37aacf771cf68ce27b46f6dcf5577d19524"
     },
     {
       "operation_id": "ak.self.applet.bot.command.preview.v1",
@@ -1726,7 +1726,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:8c77988d6abca18224603e9f216ffaa9883dc7e43738e182765366674d9ebd8e"
+      "contract_digest": "sha256:be723ce48b9dda6c6ac78cf81e3fc3afea70246245562ac41c5b49b091346936"
     },
     {
       "operation_id": "ak.self.management_review.command.request.v1",
@@ -1741,7 +1741,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:a5b0f117e9461e0acf156d3b37899eb5bcbc90696c2f5707bed33f0f445e4310"
+      "contract_digest": "sha256:da011389079584d3f3a00ce56a5aa47780452a2da806e9650164712306b77641"
     },
     {
       "operation_id": "ak.self.management_review.command.decide.v1",
@@ -1756,7 +1756,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:8c047601a47cca098e50b00de45defd278b7802d724c1691d8d18d32493f72fa"
+      "contract_digest": "sha256:b66b0a99ddbdfe96ca269598da2114377d3462df1cf34c910daeb3ff315fc0bd"
     },
     {
       "operation_id": "ak.self.management_review.read.status.v1",
@@ -1771,7 +1771,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:432e625bebf66437520db3a25f70583e3f5792af1c871c16218a67c98aa23536"
+      "contract_digest": "sha256:027dcad8c391673c06e47f911761a909e93db8d4e4f19c55e453e1259cd97695"
     },
     {
       "operation_id": "ak.self.call.invitation.command.send.v1",
@@ -1784,7 +1784,7 @@
         "coland/crates/http/src/routing/call_admission.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:5b9cd3f04438671a94cf353925ac2393a34321ce162b6d38f81c4200e28c495f"
+      "contract_digest": "sha256:3319f62bf06bf26d7dc7e11454ba51bd1290602ac333786ee18b918f1d1cd661"
     },
     {
       "operation_id": "ak.peer.call.invitation.command.relay.v1",
@@ -1797,7 +1797,7 @@
         "coland/crates/http/src/routing/call_admission.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:56c5097453e578dad3277101786556104c27b51a37dd624b26b2123a0e49edaf"
+      "contract_digest": "sha256:0a0261ce6fb7c8635843ea2f97a3bdcbefd548ecdffb209cce8932f9386028ad"
     },
     {
       "operation_id": "ak.peer.call.invitation.read.admission.v1",
@@ -1810,7 +1810,7 @@
         "coland/crates/http/src/routing/call_admission.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:64ca016818b27c159b767a47fa1ae82cc664d45e23c903fce459870050dea223"
+      "contract_digest": "sha256:15109a4229ec9337e9736ad4e89ca1ff8aa989618dc5ef981dda4698448953ca"
     },
     {
       "operation_id": "ak.peer.strand.watch.read.current.v1",
@@ -1868,7 +1868,7 @@
         "coland/crates/http/src/routing/events/peer.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:ab9129b5aaa88893cc60a24bc16566b0e56de1175e8b96bd7e4815dde04c1368"
+      "contract_digest": "sha256:b3b0740915a13650519586adc6246600de295123245578d85cfe171a4ae55280"
     },
     {
       "operation_id": "ak.peer.strand.watch.command.audit_read.v1",
@@ -1881,7 +1881,7 @@
         "coland/crates/http/src/routing/events/peer.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:f5c58e2a32baa4089ede1f8408de62ed7accf31396f41ecade24f5d52af47afa"
+      "contract_digest": "sha256:faf8bbad26f414298443921a633c7c6ecb19cfa0cdc81ef668f62156397a8b7b"
     },
     {
       "operation_id": "ak.peer.consent.command.proxy.v1",
@@ -1895,7 +1895,7 @@
         "coland/crates/http/src/routing/consent_private.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:773e60625177d88d4c6dfee2360d196e215796b48e5f92989489daf05a60b170"
+      "contract_digest": "sha256:38e8a91dd5305b5749bbf74a338a02d85fcf0065b88458d27140ba88df595306"
     },
     {
       "operation_id": "ak.peer.consent.command.publish_effects.v1",
@@ -1924,7 +1924,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:66f9cc4a625eaef67d5e1c5275d2348e0e3f922308fd5dabb85f14c881527d12"
+      "contract_digest": "sha256:eff832f4b07f172dc7ded26eed98b06f0741d301d2935058621807dd746422e5"
     },
     {
       "operation_id": "ak.peer.applet.configuration.command.submit.v1",
@@ -1939,7 +1939,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:dacc3bc07484159933364d56e450076668ae89e71c4e54fc204ed6f6fcb11345"
+      "contract_digest": "sha256:6737b2b70436d1a2e76b05187ab94de195e86a999f19ef89bf4f8e0f009ac857"
     },
     {
       "operation_id": "ak.edge.applet.configuration.command.execute.v1",
@@ -1954,7 +1954,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:fe82eb91eacffb9a6705647ac43ee757219d9e20765c47fd186199f000911853"
+      "contract_digest": "sha256:7e86e793d5f1a8e864f526233d95177b19186ae97b8369f981f4c9f1623cbed5"
     },
     {
       "operation_id": "ak.self.realm_actor.read.material.v1",
@@ -1972,7 +1972,7 @@
         "file": "tests/contract/native-read-evidence.spec.ts",
         "name": "native accepted read replay preserves original contract: ak.self.realm_actor.read.material.v1"
       },
-      "contract_digest": "sha256:d2dbf51d442390df7681c45a23dce0b020e6250ccc7266ac2ec2a65b2c9c0c74"
+      "contract_digest": "sha256:81b61987a27cf7f09083850362055c4cb2f18afb638ce2096335b8ead3037974"
     },
     {
       "operation_id": "ak.peer.realm_actor.read.material.v1",
@@ -1990,7 +1990,7 @@
         "file": "tests/contract/native-read-evidence.spec.ts",
         "name": "native accepted read replay preserves original contract: ak.peer.realm_actor.read.material.v1"
       },
-      "contract_digest": "sha256:8f3b4f73819c0c50c786567ddff363905538c28dd011cec3a80e0fa617b37f3e"
+      "contract_digest": "sha256:573aeb7f48f4aa44e8e7cef71b34b2ee3fd6bfe1d45f78ba124f7973c88b56e4"
     }
   ]
 }
