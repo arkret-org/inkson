@@ -4375,16 +4375,6 @@ impl EventSubmitter {
         Ok(envelope)
     }
 
-    /// `POST /_arkret/self/signal` — `ak.self.signal.command.send.v1`.
-    pub async fn submit_signal_envelope(
-        &self,
-        envelope: &arkret_wire::SignalEnvelope,
-    ) -> anyhow::Result<arkret_sdk::SignalSubmitResponseBody> {
-        self.submit_signal_envelope_with_transport_observation(envelope)
-            .await
-            .map(|(outcome, _observation)| outcome)
-    }
-
     pub async fn submit_signal_envelope_with_transport_observation(
         &self,
         envelope: &arkret_wire::SignalEnvelope,

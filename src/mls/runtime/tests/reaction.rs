@@ -118,7 +118,7 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
     overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
     state.save_mls_checkpoint(realm, overdue).unwrap();
 
-    assert!(!state.realm_projection_is_minimal_metadata(realm));
+    assert!(!state.realm_projection_has_retired_minimal_metadata_marker(realm));
     let target =
         arkret_sdk::EventId::new("ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM").unwrap();
     let _sealed = encrypt_reaction_with_device_snapshot(

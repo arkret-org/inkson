@@ -1342,19 +1342,8 @@ impl InksonAccountProjector {
                         store.invalidate_sidecar_current(Some(invalidation.realm_id.as_str()));
                     }
                 }
-                for basis in verified.authority_bases() {
-                    if !store.record_realm_authority_basis(basis.clone()) {
-                        return Err("verified Account authority generation regressed".to_owned());
-                    }
-                }
                 for (realm, role) in verified.genesis_roles() {
                     store.save_realm_collaboration_role(realm.clone(), *role);
-                }
-                for page in verified.pages() {
-                    store.ingest_verified_message_history(page)?;
-                    crate::identity::agent_signer_evidence::index_verified_committed_page(
-                        store, page,
-                    )?;
                 }
                 for snapshot in verified.current_snapshots().values() {
                     // Retain the highest observed signed cut even when its
@@ -1415,35 +1404,7 @@ impl InksonAccountProjector {
             // cache failure must not turn it into an uncommitted frame.
             tracing::warn!(%error, "current product view remains pending");
         }
-        let historical_content = self
-            .ctx
-            .state_store
-            .read(|store| store.historical_content_rosters.clone());
-        let historical_revision = historical_content.revision();
-        for page in verified.pages() {
-            crate::mls::historical_content::prepare_accepted_page_for_http(
-                self.transport.http().http(),
-                &self.ctx.state_store,
-                page,
-            )
-            .await;
-        }
-        self.ctx
-            .state_store
-            .read(|store| {
-                for page in verified.pages() {
-                    crate::identity::metadata::retain_accepted_page_encrypted_originals(
-                        store, page,
-                    )?;
-                }
-                Ok::<_, String>(())
-            })
-            .map_err(garth::Error::Storage)?;
-        if changed
-            || frame.realm_list.is_some()
-            || frame.realm_list_changes.is_some()
-            || historical_content.revision() != historical_revision
-        {
+        if changed || frame.realm_list.is_some() || frame.realm_list_changes.is_some() {
             self.ctx
                 .realm_live_epoch
                 .update(|epoch| *epoch = epoch.wrapping_add(1));

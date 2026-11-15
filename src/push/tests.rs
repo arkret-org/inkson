@@ -26,7 +26,6 @@ fn build_register_request_with_gateway(
         visible_notification_opt_in: false,
         idempotency_key: Some(&idempotency_key),
         request_id: None,
-        proof: None,
     };
     // Request/state tests must not depend on the build profile or ambient
     // INKSON_FLORIA_URL. This is explicit request data, never a network call.
