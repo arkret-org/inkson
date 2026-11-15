@@ -2182,7 +2182,7 @@ fn selected_account_filter(ctx: &SyncEngineContext) -> AccountFilter {
         .collect();
     AccountFilter {
         realm_ids: Some(realms),
-        window_limit: Some(20),
+        max_window_event_count: Some(20),
         lazy_load_members: Some(true),
         ..Default::default()
     }

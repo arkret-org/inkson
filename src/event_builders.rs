@@ -1487,21 +1487,60 @@ mod genesis_authority_tests {
     #[test]
     fn realm_owner_transfer_and_relinquish_builders_keep_distinct_payload_commitments() {
         let realm = "ak:realm:ASxFeEp6tO9V7cjI3A4hL2nyI_lMtmbnR6TzaYTi-EgH";
-        let transfer: arkret_sdk::RealmOwnerTransferPayload = serde_json::from_value(json!({
-            "realm_id": realm,
-            "expected_state_digest": format!("sha256:{}", "1".repeat(64)),
-            "patch": {
-                "controller_actor_id": {
-                    "kind": "account",
-                    "account_id": {
-                        "principal_id": "ak:did_core:web:bob.example",
-                        "station_id": "ak:did_core:web:principal.example"
-                    }
-                }
+        let realm_id = arkret_sdk::RealmId::new(realm).unwrap();
+        let (scope_ref, actor_id) =
+            realm_authority_builder_context(&realm_id, "did:web:alice.example").unwrap();
+        let acceptance_intent =
+            arkret_models_crypto::realm_owner_transfer::RealmOwnerTransferAcceptanceIntent {
+                scope_ref,
+                actor_id,
+                payload_without_successor_acceptance:
+                    arkret_models_crypto::realm_owner_transfer::RealmOwnerTransferUnsignedPayload {
+                        realm_id,
+                        expected_state_digest: arkret_sdk::Hash::new(format!(
+                            "sha256:{}",
+                            "1".repeat(64)
+                        ))
+                        .unwrap(),
+                        patch: arkret_sdk::RealmOwnerTransferPatch {
+                            controller_actor_id: crate::test_support::account_actor(
+                                "did:web:bob.example",
+                            ),
+                        },
+                    },
+            };
+        // This real signature proves the builder's finite intent binding;
+        // native successor Device eligibility remains the authority's concern.
+        let successor_key = ed25519_dalek::SigningKey::from_bytes(&[103; 32]);
+        let successor_acceptance =
+            arkret_signatures::realm_owner_transfer::sign_realm_owner_transfer_acceptance(
+                &acceptance_intent,
+                arkret_sdk::DidUrl::new(
+                    "did:web:bob.example#ak:device:0199bbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb",
+                )
+                .unwrap(),
+                "2026-09-22T00:00:00.000Z".parse().unwrap(),
+                &successor_key,
+            )
+            .unwrap();
+        arkret_signatures::realm_owner_transfer::verify_realm_owner_transfer_acceptance(
+            &acceptance_intent,
+            &successor_acceptance,
+            &arkret_signatures::PublicKeyMaterial::Ed25519Raw {
+                bytes: successor_key.verifying_key().to_bytes().to_vec(),
             },
-            "successor_acceptance": "successor-detached-proof"
-        }))
+        )
         .unwrap();
+        let transfer = arkret_sdk::RealmOwnerTransferPayload {
+            realm_id: acceptance_intent
+                .payload_without_successor_acceptance
+                .realm_id,
+            expected_state_digest: acceptance_intent
+                .payload_without_successor_acceptance
+                .expected_state_digest,
+            patch: acceptance_intent.payload_without_successor_acceptance.patch,
+            successor_acceptance,
+        };
         let intent =
             build_realm_owner_transfer_control_intent("did:web:alice.example", transfer).unwrap();
         assert_eq!(intent.kind().as_str(), "ak.realm.owner.transfer");

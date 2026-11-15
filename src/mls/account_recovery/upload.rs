@@ -404,7 +404,9 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
     .await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let auth = api.key_backup_auth_binding(authority, &signer).await?;
+    let auth = api
+        .key_backup_authorization_binding(authority, &signer)
+        .await?;
     basis.check_auth(&auth)?;
     let sign = |bytes: &[u8]| {
         signer.sign_raw(bytes).map_err(|error| {
@@ -554,7 +556,9 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     .await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let auth = api.key_backup_auth_binding(authority, &signer).await?;
+    let auth = api
+        .key_backup_authorization_binding(authority, &signer)
+        .await?;
     basis.check_auth(&auth)?;
     let sign = |bytes: &[u8]| {
         signer.sign_raw(bytes).map_err(|error| {
@@ -644,7 +648,7 @@ mod tests {
         use ed25519_dalek::Signer as _;
         let account = crate::test_support::authority("did:web:alice.example");
         let device = "ak:device:01964137-0000-7000-8000-000000000001";
-        let auth = arkret_crypto::backup::KeyBackupAuthBinding {
+        let auth = arkret_crypto::backup::KeyBackupAuthorizationBinding {
             device_id: arkret_sdk::DeviceId::new(device).unwrap(),
             verification_method: arkret_sdk::DidUrl::new(format!("did:web:alice.example#{device}"))
                 .unwrap(),

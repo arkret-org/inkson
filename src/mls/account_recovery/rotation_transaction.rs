@@ -69,7 +69,7 @@ pub(crate) fn prepare_rotation_backup_material(
 
     let kek = derive_vault_kek(normalized.as_bytes()).context("derive recovery KEK")?;
     let account_backup_id = fresh_backup_id()?;
-    let auth = rotation_key_backup_auth_binding(signer, trust_anchor)?;
+    let auth = rotation_key_backup_authorization_binding(signer, trust_anchor)?;
     let sign = |bytes: &[u8]| {
         signer.sign_raw(bytes).map_err(|error| {
             arkret_crypto::KeyBackupError::InvalidInput(format!(
@@ -109,14 +109,14 @@ pub(crate) fn prepare_rotation_backup_material(
     })
 }
 
-fn rotation_key_backup_auth_binding(
+fn rotation_key_backup_authorization_binding(
     signer: &std::sync::Arc<crate::event_signer::InksonEventSigner>,
     trust_anchor: &ControllerBackupTrustAnchor,
-) -> Result<arkret_crypto::backup::KeyBackupAuthBinding> {
+) -> Result<arkret_crypto::backup::KeyBackupAuthorizationBinding> {
     let device_id = signer
         .device_id()
         .ok_or_else(|| anyhow!("active key backup signer has no bound device id"))?;
-    Ok(arkret_crypto::backup::KeyBackupAuthBinding {
+    Ok(arkret_crypto::backup::KeyBackupAuthorizationBinding {
         device_id: arkret_sdk::DeviceId::new(device_id.to_owned())?,
         verification_method: arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
             .map_err(anyhow::Error::msg)?,

@@ -195,8 +195,8 @@ pub(crate) fn call_capture_source(
 
 fn capture_action(kind: RecordingCaptureKind) -> arkret_sdk::CapabilityActionId {
     match kind {
-        RecordingCaptureKind::Recording => arkret_sdk::CapabilityActionId::CALL_RECORD,
-        RecordingCaptureKind::Transcript => arkret_sdk::CapabilityActionId::CALL_TRANSCRIBE,
+        RecordingCaptureKind::Recording => arkret_sdk::CapabilityActionId::CallRecord,
+        RecordingCaptureKind::Transcript => arkret_sdk::CapabilityActionId::CallTranscribe,
     }
 }
 
@@ -457,7 +457,8 @@ async fn submit_call_capture_start(
         "Capture author differs from the captured complete Account"
     );
     let before = own.snapshot_head(&realm).await?;
-    let snapshot = garth::own_station_results::consume_bound_snapshot(&before, &realm)?;
+    garth::own_station_results::consume_bound_snapshot(&before, &realm)?;
+    let snapshot = before.value()?;
     let source = call_capture_source(&realm, &call, &snapshot.current_state_entries, capture_kind)?;
     anyhow::ensure!(
         active_capture_segments(&realm, &call, &snapshot.current_state_entries, capture_kind)?
@@ -468,7 +469,8 @@ async fn submit_call_capture_start(
     before.value()?;
     let grant = select_capture_grant(&grants, actor_id, &source.scope, capture_kind)?;
     let after = own.snapshot_head(&realm).await?;
-    let current = garth::own_station_results::consume_bound_snapshot(&after, &realm)?;
+    garth::own_station_results::consume_bound_snapshot(&after, &realm)?;
+    let current = after.value()?;
     let next = call_capture_source(&realm, &call, &current.current_state_entries, capture_kind)?;
     source.require_unchanged(&next)?;
     anyhow::ensure!(
@@ -512,7 +514,8 @@ pub(crate) async fn submit_call_capture_stop(
         "Capture Stop author differs from the captured complete Account"
     );
     let response = own.snapshot_head(&realm).await?;
-    let snapshot = garth::own_station_results::consume_bound_snapshot(&response, &realm)?;
+    garth::own_station_results::consume_bound_snapshot(&response, &realm)?;
+    let snapshot = response.value()?;
     let scope = call_scope(&realm, &call, &snapshot.current_state_entries)?;
     let segment = match recording_id {
         Some(id) => id.clone(),

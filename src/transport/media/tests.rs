@@ -298,7 +298,7 @@ fn transcript_has_its_own_action_and_does_not_borrow_recording_support() {
     let actor = account_actor("ak:did_core:web:station.example");
     let source =
         call_capture_source(&realm(), &call(), &rows, RecordingCaptureKind::Transcript).unwrap();
-    let recording = grant_snapshot(actor.clone(), arkret_sdk::CapabilityActionId::CALL_RECORD);
+    let recording = grant_snapshot(actor.clone(), arkret_sdk::CapabilityActionId::CallRecord);
     assert!(
         select_capture_grant(
             &recording,
@@ -484,7 +484,7 @@ fn circle_recording_uses_circle_winner_without_falling_back_to_realm_mls() {
 fn grant_selection_rejects_wrong_account_action_resource_or_missing_source() {
     let actor = account_actor("ak:did_core:web:station.example");
     let scope = ScopeRef::Realm { realm_id: realm() };
-    let rows = grant_snapshot(actor.clone(), arkret_sdk::CapabilityActionId::CALL_RECORD);
+    let rows = grant_snapshot(actor.clone(), arkret_sdk::CapabilityActionId::CallRecord);
     let foreign = account_actor("ak:did_core:web:other-station.example");
     assert!(
         select_capture_grant(&rows, &foreign, &scope, RecordingCaptureKind::Recording).is_err()

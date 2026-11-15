@@ -1519,7 +1519,7 @@ impl Builder {
                         head_commit_ref: head.commit_id.clone(),
                         next_position: head.stream_position + 1,
                         limited: false,
-                        window_limit: 100,
+                        max_window_event_count: 100,
                         complete: true,
                         preview_only: None,
                         window_start_basis: None,

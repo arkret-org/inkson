@@ -58,11 +58,11 @@ impl crate::transport::TransportClient {
         Ok((response, record))
     }
 
-    pub(crate) async fn key_backup_auth_binding(
+    pub(crate) async fn key_backup_authorization_binding(
         &self,
         account_id: &arkret_sdk::AccountId,
         signer: &Arc<crate::event_signer::InksonEventSigner>,
-    ) -> anyhow::Result<arkret_crypto::backup::KeyBackupAuthBinding> {
+    ) -> anyhow::Result<arkret_crypto::backup::KeyBackupAuthorizationBinding> {
         let signer_device_id = signer
             .device_id()
             .ok_or_else(|| anyhow::anyhow!("active key backup signer has no bound device id"))?;
@@ -104,7 +104,7 @@ impl crate::transport::TransportClient {
         let Some(event_id) = viewer_event_id.or(query_event_id) else {
             anyhow::bail!("current device has no accepted device.authorize event");
         };
-        Ok(arkret_crypto::backup::KeyBackupAuthBinding {
+        Ok(arkret_crypto::backup::KeyBackupAuthorizationBinding {
             device_id,
             verification_method: arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
                 .map_err(anyhow::Error::msg)?,

@@ -4532,7 +4532,7 @@ mod tests {
             "head_commit_ref":COMMIT,
             "next_position":2,
             "limited":true,
-            "window_limit":1,
+            "max_window_event_count":1,
             "complete":true,
             "preview_only":true
         });
@@ -4591,7 +4591,7 @@ mod tests {
                 "head_commit_ref":COMMIT,
                 "next_position":2,
                 "limited":preview,
-                "window_limit":1,
+                "max_window_event_count":1,
                 "complete":true
             });
             if preview {

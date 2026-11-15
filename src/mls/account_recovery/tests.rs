@@ -54,8 +54,8 @@ fn validate_wire_envelope(body: &Value, expected_kind: BackupKind) -> Result<(),
     envelope.validate().map_err(|error| error.to_string())
 }
 
-fn test_auth() -> arkret_crypto::backup::KeyBackupAuthBinding {
-    arkret_crypto::backup::KeyBackupAuthBinding {
+fn test_auth() -> arkret_crypto::backup::KeyBackupAuthorizationBinding {
+    arkret_crypto::backup::KeyBackupAuthorizationBinding {
         device_id: arkret_sdk::DeviceId::new(DEVICE.to_owned()).unwrap(),
         verification_method: arkret_sdk::DidUrl::new(format!("{ACTOR}#test-device")).unwrap(),
         signature_algorithm: arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,

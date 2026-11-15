@@ -300,7 +300,10 @@ impl EventSubmitter {
 }
 
 fn machine_field(key: &str) -> bool {
-    matches!(key, "wip_limit" | "wip_limit_enforcement" | "view_id")
+    matches!(
+        key,
+        "max_active_strand_count" | "active_strand_count_enforcement" | "view_id"
+    )
 }
 
 fn validate_plaintext_strand_profile(strand: &arkret_sdk::Strand) -> anyhow::Result<()> {
@@ -720,7 +723,11 @@ mod tests {
             .insert("custom".to_owned(), serde_json::json!("Private extension"));
         object
             .fields
-            .insert("wip_limit".to_owned(), serde_json::json!(3));
+            .insert("max_active_strand_count".to_owned(), serde_json::json!(3));
+        object.fields.insert(
+            "active_strand_count_enforcement".to_owned(),
+            serde_json::json!("reject"),
+        );
         let intent = arkret_sdk::TypedEventDraft::<event_spec::SpaceCreate>::new(
             scope(),
             actor(),
@@ -751,8 +758,9 @@ mod tests {
             .object;
         assert!(object.title.is_none() && object.summary.is_none() && object.labels.is_empty());
         assert!(object.encrypted_metadata.is_some());
-        assert_eq!(object.fields.len(), 1);
-        assert_eq!(object.fields["wip_limit"], 3);
+        assert_eq!(object.fields.len(), 2);
+        assert_eq!(object.fields["max_active_strand_count"], 3);
+        assert_eq!(object.fields["active_strand_count_enforcement"], "reject");
         assert_eq!(object.rank.as_deref(), Some("U"));
         assert_eq!(object.parent_space_id.unwrap().as_str(), SPACE);
         assert_eq!(prepared.actor_id(), intent.actor_id());
