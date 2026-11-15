@@ -895,10 +895,16 @@ mod tests {
             );
         }
         let envelope = encrypted(EventKind::ReactionAdd.as_str());
+        let routing_tag = envelope
+            .encryption_context
+            .routing_context()
+            .expect("encrypted reaction fixture has routing context")
+            .routing_tag
+            .clone();
         assert_payload_body(
             EventKind::ReactionAdd,
             json!({
-                "target_ref": arkret_sdk::MessageId::from_event_id(&event(3)), "key": "+1", "encrypted_payload": envelope
+                "target_ref": arkret_sdk::MessageId::from_event_id(&event(3)), "key": routing_tag, "encrypted_payload": envelope
             }),
             Some(ApplicationBody::Encrypted(vec![envelope])),
         );
