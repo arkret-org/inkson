@@ -544,7 +544,7 @@ fn service_resolution(input: Value) -> Result<arkret_sdk::AuthenticatedServiceRe
                     "publicKeyMultibase":arkret_sdk::ed25519_pubkey_to_did_key_multibase(key.verifying_key().as_bytes())}],
                 "assertionMethod":[method],
                 "service":[{"id":format!("{did}#arkret"),"type":"ArkretService",
-                    "serviceKind":kind.as_str(),"serviceEndpoint":format!("https://{host}/")}]
+                    "service_kind":kind.as_str(),"serviceEndpoint":format!("https://{host}/")}]
             }))?;
             // Metadata fixtures use independently fetched current did:web state;
             // they supply no historical signer or Realm authority evidence.

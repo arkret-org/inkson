@@ -52,7 +52,7 @@ impl FixtureStation {
                 "type":"Multikey", "publicKeyMultibase":key_multibase}],
             "authentication":[method], "assertionMethod":[method],
             "service":[{"id":format!("{STATION}#station"), "type":"ArkretService",
-                "serviceEndpoint":"https://station.example/", "serviceKind":"station"}]
+                "serviceEndpoint":"https://station.example/", "service_kind":"station"}]
         }))
         .unwrap();
         let service_id = DidCoreId::new("ak:did_core:web:station.example").unwrap();

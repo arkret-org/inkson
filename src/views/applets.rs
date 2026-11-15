@@ -280,7 +280,9 @@ fn build_formal_applet_install_events(
         let payload = arkret_sdk::CapabilityGrantPayload { grant };
         grant_events.push(
             operation_builder_for_scope::<arkret_sdk::event_spec::CapabilityGrant>(
-                effective_scope,
+                &ScopeRef::Realm {
+                    realm_id: realm_id.clone(),
+                },
                 actor_id,
                 payload,
             )
@@ -852,10 +854,6 @@ impl AppletPage {
                                                                        principal_id.as_str(),
                                                                        intent,
                                                                    )?;
-                                                                   let builder = match &effective_scope {
-                                                                       ScopeRef::Circle { circle_id, .. } => builder.circle_id(circle_id.to_string()),
-                                                                       _ => builder,
-                                                                   };
                                                                    revoke_events.push(builder.build_sdk_event("inkson")?);
                                                                }
                                                                let authored_revokes = submitter

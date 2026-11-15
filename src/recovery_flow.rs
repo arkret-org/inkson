@@ -808,7 +808,7 @@ mod tests {
                         "issuer_role": "identity_recovery",
                         "allowed_actions": ["ak.device.reanchor"],
                         "issuers": [{"verification_method": recovery_method}],
-                        "threshold": 1,
+                        "min_signature_count": 1,
                     }],
                 },
                 "allowed_actions": ["ak.device.reanchor"],

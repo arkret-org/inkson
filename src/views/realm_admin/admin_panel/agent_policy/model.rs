@@ -97,7 +97,7 @@ fn review(
 ) -> anyhow::Result<ManagementReviewRequirement> {
     let value = ManagementReviewRequirement {
         approver_actor_ids: serde_json::from_str(approvers)?,
-        threshold: threshold.parse()?,
+        min_approver_count: threshold.parse()?,
         max_age_seconds: max_age.parse()?,
     };
     value.validate()?;
@@ -231,7 +231,7 @@ impl RuleDraft {
         }
         if let Some(r) = &rule.review_requirement {
             form.approvers = serde_json::to_string_pretty(&r.approver_actor_ids)?;
-            form.threshold = r.threshold.to_string();
+            form.threshold = r.min_approver_count.to_string();
             form.max_age = r.max_age_seconds.to_string();
         }
         Ok(form)
@@ -355,7 +355,7 @@ impl Draft {
         };
         if let Some(r) = &policy.default_review_requirement {
             form.default_approvers = serde_json::to_string_pretty(&r.approver_actor_ids)?;
-            form.default_threshold = r.threshold.to_string();
+            form.default_threshold = r.min_approver_count.to_string();
             form.default_max_age = r.max_age_seconds.to_string();
         }
         form.default_operations = policy
@@ -560,7 +560,12 @@ mod tests {
             .build(&realm(), &account("admin", "home"), None, None)
             .unwrap();
         let value = serde_json::to_value(&payload).unwrap();
-        assert!(value.as_object().unwrap().contains_key("expected_commit_id"));
+        assert!(
+            value
+                .as_object()
+                .unwrap()
+                .contains_key("expected_commit_id")
+        );
         assert_eq!(value["expected_commit_id"], serde_json::Value::Null);
         let circle = arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
             arkret_sdk::DigestSuite::Sha256,

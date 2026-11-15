@@ -842,7 +842,7 @@ mod tests {
             catchup: Some(false),
             filter: Some(
                 serde_json::from_value(serde_json::json!({
-                    "realm_ids": [], "window_limit": 20, "lazy_load_members": true,
+                    "realm_ids": [], "max_window_event_count": 20, "lazy_load_members": true,
                 }))
                 .unwrap(),
             ),

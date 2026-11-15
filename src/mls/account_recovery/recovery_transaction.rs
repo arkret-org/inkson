@@ -306,7 +306,7 @@ async fn prepare_verified_pcr_policy_recovery(
         .iter()
         .find(|rule| rule.rule_id == "recovery_unlock")
         .ok_or_else(|| anyhow::anyhow!("verified recovery method has no publication authority"))?;
-    if recovery_rule.threshold != 1
+    if recovery_rule.min_signature_count != 1
         || recovery_rule.issuers.len() != 1
         || recovery_rule.issuers[0].verification_method != recovery_verification_method
     {

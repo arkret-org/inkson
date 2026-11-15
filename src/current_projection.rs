@@ -580,7 +580,7 @@ mod tests {
         let joined = assertion(
             1,
             revision(0).commit_id,
-            json!({"op":"join","participant":{"actor_id":actor,"device_id":device}}),
+            json!({"operation":"join","participant":{"actor_id":actor,"device_id":device}}),
         );
         let join_revision = CurrentRevision {
             commit_id: serde_json::from_value(joined["source_commit"]["commit_id"].clone())
@@ -590,7 +590,7 @@ mod tests {
         let left = assertion(
             2,
             join_revision.commit_id.clone(),
-            json!({"op":"leave","actor_id":actor,"device_id":device,"expected_commit_id":join_revision.commit_id}),
+            json!({"operation":"leave","actor_id":actor,"device_id":device,"expected_commit_id":join_revision.commit_id}),
         );
         let roster_revision = CurrentRevision {
             commit_id: serde_json::from_value(left["source_commit"]["commit_id"].clone()).unwrap(),
