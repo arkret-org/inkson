@@ -257,7 +257,9 @@ pub(crate) async fn ensure_content_root_backup(
             .await?;
             let signer = crate::event_signer::active_signer()
                 .ok_or_else(|| anyhow::anyhow!("root backup signer is unavailable"))?;
-            let auth = api.key_backup_auth_binding(account, &signer).await?;
+            let auth = api
+                .key_backup_authorization_binding(account, &signer)
+                .await?;
             basis.check_auth(&auth)?;
             anyhow::ensure!(
                 basis.state()?.secret_storage.series_id() == series.as_ref(),
@@ -402,7 +404,7 @@ mod tests {
             created_at: original.created_at,
             expires_at: original.expires_at.flatten(),
             author: ContentRootBackupAuthor::Device {
-                binding: arkret_crypto::backup::KeyBackupAuthBinding {
+                binding: arkret_crypto::backup::KeyBackupAuthorizationBinding {
                     device_id: original.signature_proof.device_id.unwrap(),
                     verification_method: original.signature_proof.verification_method,
                     signature_algorithm: original.signature_proof.signature_algorithm,

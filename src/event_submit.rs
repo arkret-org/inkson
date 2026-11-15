@@ -950,7 +950,10 @@ impl VerifiedRelationCurrent {
             &self.primary_conflict_domain == domain,
             "verified Relation current basis belongs to another primary conflict domain"
         );
-        Ok(self.revision.as_ref().map(|revision| revision.commit_id.clone()))
+        Ok(self
+            .revision
+            .as_ref()
+            .map(|revision| revision.commit_id.clone()))
     }
 
     pub(crate) fn present(

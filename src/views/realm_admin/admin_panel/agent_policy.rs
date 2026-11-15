@@ -922,13 +922,13 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, realm: String) -> 
             fields.push(draft_field(
                 scope,
                 context.clone(),
-                "policy-default-threshold".into(),
-                "Default approval threshold",
+                "policy-default-min-approver-count".into(),
+                "Default minimum approver count",
                 form,
                 enabled,
                 false,
-                |draft| draft.default_threshold.clone(),
-                |draft, value| draft.default_threshold = value,
+                |draft| draft.default_min_approver_count.clone(),
+                |draft, value| draft.default_min_approver_count = value,
             ));
             fields.push(draft_field(
                 scope,
@@ -1123,13 +1123,13 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, realm: String) -> 
                 children.push(draft_field(
                     scope,
                     context.clone(),
-                    format!("rule-{index}-threshold"),
-                    "Approval threshold",
+                    format!("rule-{index}-min-approver-count"),
+                    "Minimum approver count",
                     form,
                     enabled,
                     false,
-                    move |draft| draft.rules[index].threshold.clone(),
-                    move |draft, value| draft.rules[index].threshold = value,
+                    move |draft| draft.rules[index].min_approver_count.clone(),
+                    move |draft, value| draft.rules[index].min_approver_count = value,
                 ));
                 children.push(draft_field(
                     scope,

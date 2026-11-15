@@ -41,8 +41,8 @@ fn build_recovery_vault_backup_body(
     )
 }
 
-fn test_auth(verification_method: &str) -> arkret_crypto::backup::KeyBackupAuthBinding {
-    arkret_crypto::backup::KeyBackupAuthBinding {
+fn test_auth(verification_method: &str) -> arkret_crypto::backup::KeyBackupAuthorizationBinding {
+    arkret_crypto::backup::KeyBackupAuthorizationBinding {
         device_id: arkret_sdk::DeviceId::new(DEVICE.to_owned()).unwrap(),
         verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned()).unwrap(),
         signature_algorithm: arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,

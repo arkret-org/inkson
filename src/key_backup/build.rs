@@ -52,7 +52,7 @@ pub fn build_passphrase_kdf_backup_body(
     subdomain: &str,
     item: &SecretStorageContentIndex,
     secret_generation: Option<u64>,
-    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    auth: &arkret_crypto::backup::KeyBackupAuthorizationBinding,
     sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
@@ -94,7 +94,7 @@ pub fn build_passphrase_kdf_backup_successor_body(
     secret: &[u8],
     item: &SecretStorageContentIndex,
     secret_generation: Option<u64>,
-    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    auth: &arkret_crypto::backup::KeyBackupAuthorizationBinding,
     sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
@@ -173,7 +173,7 @@ pub fn build_recovery_public_key_backup_body_in_series(
     recovery_policy_ref: (&str, u64),
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
-    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    auth: &arkret_crypto::backup::KeyBackupAuthorizationBinding,
     sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
@@ -210,7 +210,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
     recovery_policy_ref: (&str, u64),
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
-    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    auth: &arkret_crypto::backup::KeyBackupAuthorizationBinding,
     sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
@@ -254,7 +254,7 @@ fn build_recovery_public_key_backup_body_for_items_and_index_in_series(
     recovery_policy_ref: (&str, u64),
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
-    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    auth: &arkret_crypto::backup::KeyBackupAuthorizationBinding,
     sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
@@ -321,7 +321,7 @@ fn build_recovery_public_key_backup_body_for_items_and_index_in_series(
             policy_id: arkret_sdk::PolicyId::new(recovery_policy_ref.0.to_owned())?,
             policy_version: recovery_policy_ref.1,
         }),
-        auth_binding: None,
+        authorization_binding: None,
         extra: Default::default(),
     };
     if let Some(previous) = previous_series_tail {
