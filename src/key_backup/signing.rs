@@ -126,61 +126,64 @@ pub fn build_key_backup_unlock_proof(
         "unlock signer device mismatch"
     );
     let issued_at = crate::clock::now_utc();
-    let (authority, challenge_bytes, expires_at, method) = if let Some(session) = recovery_session {
-        session.validate_shape()?;
-        anyhow::ensure!(
-            session.state == arkret_sdk::RecoverySessionState::Verified
-                && session.expires_at > issued_at
-                && session.account_id == account
-                && session.requesting_device_id == device_id,
-            "recovery unlock session is not current"
-        );
-        let multibase = signer
-            .public_key_multibase()
-            .ok_or_else(|| anyhow::anyhow!("replacement device identity key missing"))?;
-        let did = format!("did:key:{multibase}");
-        anyhow::ensure!(
-            session.requesting_device_public_key_did.as_str() == did,
-            "unlock signer differs from frozen replacement identity"
-        );
-        (
-            arkret_sdk::KeyBackupUnlockAuthority::RecoverySession {
-                recovery_session_id: session.recovery_session_id.clone(),
-            },
-            session.challenge.clone(),
-            session.expires_at,
-            format!("{did}#{multibase}"),
-        )
-    } else {
-        let challenge = challenge
-            .ok_or_else(|| anyhow::anyhow!("server-issued unlock challenge is required"))?;
-        anyhow::ensure!(
-            challenge.account_id == account
-                && challenge.requesting_device_id == device_id
-                && challenge.backup_id == backup.backup_id
-                && challenge.series_id == backup.series_id
-                && challenge.ciphertext_digest == backup.ciphertext_digest
-                && challenge.audience.as_str() == audience
-                && challenge.service_id == account.station_id
-                && challenge.subject_actor_id.is_none()
-                && challenge.custody_authorization_ref.is_none()
-                && challenge.content_history.is_none()
-                && challenge.operation
-                    == arkret_wire::ServiceOperationId::SELF_KEYS_BACKUPS_COMMAND_UNLOCK_V1
-                && challenge.issued_at <= issued_at
-                && challenge.expires_at > issued_at,
-            "server unlock challenge binding mismatch"
-        );
-        (
-            arkret_sdk::KeyBackupUnlockAuthority::CurrentDevice {
-                challenge_id: challenge.challenge_id.clone(),
-                nonce: challenge.nonce.clone(),
-            },
-            challenge.challenge.clone(),
-            challenge.expires_at,
-            signer.verification_method().to_owned(),
-        )
-    };
+    let (authority, challenge_bytes, expires_at, method, issued_at) =
+        if let Some(session) = recovery_session {
+            session.validate_shape()?;
+            anyhow::ensure!(
+                session.state == arkret_sdk::RecoverySessionState::Verified
+                    && session.expires_at > issued_at
+                    && session.account_id == account
+                    && session.requesting_device_id == device_id,
+                "recovery unlock session is not current"
+            );
+            let multibase = signer
+                .public_key_multibase()
+                .ok_or_else(|| anyhow::anyhow!("replacement device identity key missing"))?;
+            let did = format!("did:key:{multibase}");
+            anyhow::ensure!(
+                session.requesting_device_public_key_did.as_str() == did,
+                "unlock signer differs from frozen replacement identity"
+            );
+            (
+                arkret_sdk::KeyBackupUnlockAuthority::RecoverySession {
+                    recovery_session_id: session.recovery_session_id.clone(),
+                },
+                session.challenge.clone(),
+                session.expires_at,
+                format!("{did}#{multibase}"),
+                issued_at,
+            )
+        } else {
+            let challenge = challenge
+                .ok_or_else(|| anyhow::anyhow!("server-issued unlock challenge is required"))?;
+            challenge.validate_at(issued_at)?;
+            anyhow::ensure!(
+                challenge.account_id == account
+                    && challenge.requesting_device_id == device_id
+                    && challenge.backup_id == backup.backup_id
+                    && challenge.series_id == backup.series_id
+                    && challenge.ciphertext_digest == backup.ciphertext_digest
+                    && challenge.audience.as_str() == audience
+                    && challenge.service_id == account.station_id
+                    && challenge.subject_actor_id.is_none()
+                    && challenge.custody_authorization_ref.is_none()
+                    && challenge.content_history.is_none()
+                    && challenge.operation
+                        == arkret_wire::ServiceOperationId::SELF_KEYS_BACKUPS_COMMAND_UNLOCK_V1
+                    && challenge.issued_at <= issued_at
+                    && challenge.expires_at > issued_at,
+                "server unlock challenge binding mismatch"
+            );
+            (
+                arkret_sdk::KeyBackupUnlockAuthority::CurrentDevice {
+                    challenge_id: challenge.challenge_id.clone(),
+                },
+                challenge.challenge.clone(),
+                challenge.expires_at,
+                signer.verification_method().to_owned(),
+                challenge.issued_at,
+            )
+        };
     let mut proof = arkret_sdk::KeyBackupUnlockProof {
         schema: arkret_sdk::KeyBackupUnlockProof::SCHEMA.to_owned(),
         authority,
@@ -213,6 +216,11 @@ pub fn build_key_backup_unlock_proof(
     proof.signature_proof.signature =
         arkret_sdk::Base64UrlString::new(B64.encode(signature)).map_err(anyhow::Error::msg)?;
     proof.validate()?;
+    if recovery_session.is_none() {
+        proof.validate_for_challenge(
+            challenge.ok_or_else(|| anyhow::anyhow!("server challenge missing"))?,
+        )?;
+    }
     Ok(proof)
 }
 
@@ -625,7 +633,6 @@ mod tests {
             content_history: None,
             challenge_id: arkret_sdk::Base64UrlString::new("A".repeat(22)).unwrap(),
             challenge: arkret_sdk::Base64UrlString::new("A".repeat(43)).unwrap(),
-            nonce: arkret_sdk::Base64UrlString::new(B64.encode([1u8; 16])).unwrap(),
             operation: "ak.self.keys.backups.command.unlock.v1".to_owned(),
             account_id: account.clone(),
             requesting_device_id: arkret_sdk::DeviceId::new(
@@ -753,7 +760,7 @@ mod tests {
             "schema": "ak.schema.recovery_session.v1",
             "request_id": "ak:request:0198ff00-0000-7000-8000-00000000000b",
             "recovery_session_id": "ak:recovery_session:0198ff00-0000-7000-8000-00000000000c",
-            "session_grant_id": "ak:session_grant:Af0GheZX08ev4L1fQoFdngIpe5c_9Lk7SQqfN4jztzDW",
+            "session_grant_ref": crate::identity::account_auth::grant_dpop::test_session_grant_ref(account.station_id.clone()),
             "session_grant_cnf_jkt": "Q25mSmt0Rml4dHVyZVZhbHVlMDAwMDAwMDAwMDAwMDAwMDAwMA",
             "account_id": account,
             "requesting_device_id": "ak:device:0196419b-0000-7000-8000-000000000003",

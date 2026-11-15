@@ -883,9 +883,13 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
         .ensure_local_identity()
         .expect("ensure_local_identity should succeed in plaintext mode");
     let grant = PersistedSessionGrant {
-        grant_jwt: "alice.grant".to_owned(),
+        session_grant: crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+            "alice.grant",
+        ),
         session_private_key_pem: "pem".to_owned(),
-        grant_id: "g-alice".to_owned(),
+        grant_ref: crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+        ),
         audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
         granted_scope: Vec::new(),
         account_id: arkret_sdk::AccountId::new(
@@ -899,6 +903,7 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
         station_url: url::Url::parse("https://principal.example").unwrap(),
         grant_expires_at: None,
         stored_at: chrono::Utc::now(),
+        pending_refresh: None,
     };
     store.set_session_grant(Some(grant.clone()));
 
@@ -934,9 +939,13 @@ fn production_persist_policy_strips_session_credentials_from_account_state() {
     let state = ClientLocalState {
         sync_cursor: Some("ak:cursor:safe".to_owned()),
         session_grant: Some(PersistedSessionGrant {
-            grant_jwt: "secret.grant.jwt".to_owned(),
+            session_grant: crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+                "secret.grant.jwt",
+            ),
             session_private_key_pem: "secret-session-private-key".to_owned(),
-            grant_id: "grant-id".to_owned(),
+            grant_ref: crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+            ),
             audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             granted_scope: Vec::new(),
             account_id: arkret_sdk::AccountId::new(
@@ -950,6 +959,7 @@ fn production_persist_policy_strips_session_credentials_from_account_state() {
             station_url: url::Url::parse("https://principal.example").unwrap(),
             grant_expires_at: None,
             stored_at: chrono::Utc::now(),
+            pending_refresh: None,
         }),
         ..Default::default()
     };
@@ -979,9 +989,13 @@ fn account_switch_isolates_authority_namespaces() {
     store.save_sync_cursor("sx:alice");
     store.save_realm_tree_projection("ak:space:a", serde_json::json!({}));
     store.set_session_grant(Some(PersistedSessionGrant {
-        grant_jwt: "alice.grant".to_owned(),
+        session_grant: crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+            "alice.grant",
+        ),
         session_private_key_pem: "pem".to_owned(),
-        grant_id: "g-alice".to_owned(),
+        grant_ref: crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+        ),
         audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
         granted_scope: Vec::new(),
         account_id: arkret_sdk::AccountId::new(
@@ -995,6 +1009,7 @@ fn account_switch_isolates_authority_namespaces() {
         station_url: url::Url::parse("https://principal.example").unwrap(),
         grant_expires_at: None,
         stored_at: chrono::Utc::now(),
+        pending_refresh: None,
     }));
 
     // Re-adopting the same actor is a no-op and keeps alice's state.

@@ -6,6 +6,7 @@ import {
   CURRENT_ACCOUNT_ID,
   CURRENT_ACCOUNT_ACTOR_ID,
   CURRENT_ACCOUNT_RESOLUTION,
+  GATE_LOGOUT_FIXTURE,
   DEMO_BOARD_SPACE,
   DEMO_REALM,
   PRINCIPAL_CONTROL_REALM,
@@ -38,7 +39,7 @@ const DEFAULT_SERVER_AUDIENCE = CURRENT_STATION_ID;
 const DEFAULT_ACCOUNT_DID = CURRENT_PRINCIPAL_DID;
 const DEFAULT_ACCOUNT_CORE_ID = CURRENT_PRINCIPAL_CORE_ID;
 const DEFAULT_DEVICE_ID = "ak:device:01964137-0000-7000-8000-0000000000a1";
-const DEFAULT_SESSION_CREDENTIAL = "sx:e2e-token";
+const DEFAULT_SESSION_CREDENTIAL = GATE_LOGOUT_FIXTURE.grant;
 const TEST_SESSION_INJECTION_KEY = "inkson.test.session_injection.v1";
 const DEFAULT_DPOP_SEED_B64URL = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const DEFAULT_EVENT_SIGNING_SEED_B64URL =
@@ -421,8 +422,8 @@ export async function writeLocalConfig(
 
 function sessionInjectionRecord(
   overrides: Partial<{
-    grant_jwt: string;
-    grant_id: string;
+    session_grant: string;
+    grant_ref: { issuer_id: string; id: string };
     audience: string;
     account_id: { principal_id: string; station_id: string };
     dpop_seed_b64url: string;
@@ -432,10 +433,10 @@ function sessionInjectionRecord(
   }> = {},
 ) {
   return {
-    grant_jwt: DEFAULT_SESSION_CREDENTIAL,
+    session_grant: DEFAULT_SESSION_CREDENTIAL,
     expires_at: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
     granted_scope: [],
-    grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7",
+    grant_ref: { issuer_id: CURRENT_STATION_ID, id: "ak:session_grant:01964137-0000-7000-8000-0000000000a2" },
     audience: DEFAULT_SERVER_AUDIENCE,
     account_id: {
       principal_id: DEFAULT_ACCOUNT_CORE_ID,
@@ -450,8 +451,8 @@ function sessionInjectionRecord(
 export async function addSessionGrantInjection(
   page: import("@playwright/test").Page,
   overrides: Partial<{
-    grant_jwt: string;
-    grant_id: string;
+    session_grant: string;
+    grant_ref: { issuer_id: string; id: string };
     audience: string;
     account_id: { principal_id: string; station_id: string };
     dpop_seed_b64url: string;
@@ -477,8 +478,8 @@ export async function addSessionGrantInjection(
 export async function writeSessionGrantInjection(
   page: import("@playwright/test").Page,
   overrides: Partial<{
-    grant_jwt: string;
-    grant_id: string;
+    session_grant: string;
+    grant_ref: { issuer_id: string; id: string };
     audience: string;
     account_id: { principal_id: string; station_id: string };
     dpop_seed_b64url: string;

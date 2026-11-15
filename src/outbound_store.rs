@@ -2186,7 +2186,13 @@ mod tests {
                 .unwrap(),
             authentication_metadata: arkret_sdk::AuthenticationMetadata::minimal(),
         };
-        let grant = arkret_wire::SessionGrantId::from_issuance_digest([9; 32]);
+        let grant = arkret_wire::SessionGrantRef::new(
+            account.station_id.clone(),
+            arkret_wire::SessionGrantId::new(
+                "ak:session_grant:01904100-0000-7000-8000-000000000009",
+            )
+            .unwrap(),
+        );
         let session = |epoch| {
             OwnStationSessionSnapshot::new(
                 binding.clone(),

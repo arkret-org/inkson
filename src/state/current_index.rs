@@ -252,6 +252,8 @@ pub(crate) struct CurrentRealmProgress {
     #[serde(default)]
     pub governance_generation: Option<u64>,
     pub baseline: Option<RealmDetailBaseline>,
+    #[serde(default)]
+    pub baseline_started_generation: Option<u64>,
     pub invalidated_snapshot: Option<String>,
     pub invalidation_revision: u64,
     pub has_invalidation: bool,
@@ -320,6 +322,19 @@ fn progress_is_complete_cut(
     })
 }
 
+fn require_compatible_stream_coordinates(
+    previous: &arkret_wire::CommitStreamHead,
+    incoming: &arkret_wire::CommitStreamHead,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        previous.stream_ref != incoming.stream_ref
+            || (previous.commit_id == incoming.commit_id)
+                == (previous.stream_position == incoming.stream_position),
+        "current native stream coordinates conflict"
+    );
+    Ok(())
+}
+
 impl CurrentRealmProgress {
     pub(crate) fn exact_current_governance_generation(
         &self,
@@ -346,9 +361,15 @@ impl CurrentRealmProgress {
                     .map(|baseline| baseline.coverage.stream_heads.clone())
             })
             .unwrap_or_default();
+        let mut observed_heads = self.observed_heads.clone();
         for held in held_heads {
-            match self
-                .observed_heads
+            if let Some(old) = observed_heads
+                .iter()
+                .find(|old| old.stream_ref == held.stream_ref)
+            {
+                require_compatible_stream_coordinates(old, &held)?;
+            }
+            match observed_heads
                 .iter_mut()
                 .find(|old| old.stream_ref == held.stream_ref)
             {
@@ -360,9 +381,10 @@ impl CurrentRealmProgress {
                     );
                 }
                 Some(_) => {}
-                None => self.observed_heads.push(held),
+                None => observed_heads.push(held),
             }
         }
+        self.observed_heads = observed_heads;
         if let Some(held) = self.governance_generation {
             self.observed_governance_generation = Some(
                 self.observed_governance_generation
@@ -418,7 +440,7 @@ struct CurrentCoverageCleanup {
 struct CurrentInstallPlan {
     progress: CurrentRealmProgress,
     writes: Vec<CurrentState>,
-    seen_selectors: Vec<String>,
+    seen_selectors: Vec<(String, arkret_wire::Hash)>,
     cleanup: Option<CurrentCoverageCleanup>,
     /// An invalidated snapshot must not reach secondary product projections.
     discard_frame: bool,
@@ -440,6 +462,10 @@ fn plan_current_entry(
             .is_some_and(|old| old.snapshot_cursor == segment.snapshot_cursor && old.complete)
     });
     let seen = baseline.is_some() && !complete;
+    anyhow::ensure!(
+        !complete || old.is_some(),
+        "completed frozen baseline added an unknown selector"
+    );
     if let Some(old) = old {
         anyhow::ensure!(
             selector_of(old) == selector_of(entry),
@@ -458,6 +484,11 @@ fn plan_current_entry(
         anyhow::ensure!(
             old_source == new_source,
             "current result changed its source stream"
+        );
+        anyhow::ensure!(
+            old_revision.commit_id != new_revision.commit_id
+                || old_revision.stream_position == new_revision.stream_position,
+            "one current Commit changed its native stream position"
         );
         if old_revision.stream_position == new_revision.stream_position {
             anyhow::ensure!(
@@ -774,6 +805,8 @@ struct CoverageMark {
     /// Rows installed no later than this generation were part of the frozen
     /// baseline cut. Later live rows must not be compared across streams.
     generation: u64,
+    started_generation: u64,
+    stream_heads: Vec<arkret_wire::CommitStreamHead>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -850,9 +883,19 @@ const META_STREAMS: [&str; 7] = [
 const MARK_STREAMS: [&str; 2] = ["progress/", "coverage/"];
 
 #[derive(Clone, Debug)]
+#[cfg(any(test, target_arch = "wasm32", feature = "spec-conformance"))]
 pub(crate) struct CurrentTargetPage {
     pub entries: Vec<CurrentState>,
     pub next_cursor: Option<String>,
+}
+
+/// Host-only frozen read. Holding the existing publication lease keeps row
+/// versions and progress at this generation until the host finishes reading.
+pub(crate) struct CurrentRealmRead {
+    pub(crate) generation: u64,
+    pub(crate) complete: bool,
+    pub(crate) entries: Vec<CurrentState>,
+    _lease: CurrentLease,
 }
 
 #[derive(Clone)]
@@ -1228,6 +1271,24 @@ impl CurrentIndex {
             hash(selector)?
         ))
     }
+    async fn seen_digest(
+        &self,
+        snapshot: &str,
+        realm: &str,
+        selector: &CurrentSelector,
+        generation: u64,
+    ) -> anyhow::Result<Option<arkret_wire::Hash>> {
+        let digest = self
+            .latest::<arkret_wire::Hash>(&self.seen_prefix(snapshot, realm, selector)?, generation)
+            .await?;
+        if let Some(digest) = &digest {
+            anyhow::ensure!(
+                digest.digest_suite()? == arkret_sdk::DigestSuite::Sha256,
+                "frozen current row marker requires a canonical SHA256 digest"
+            );
+        }
+        Ok(digest)
+    }
     fn gc_state_key(&self) -> String {
         format!("{}gc-state", self.prefix)
     }
@@ -1337,12 +1398,31 @@ impl CurrentIndex {
             let row_generation = self
                 .latest_generation(&self.row_prefix(realm, selector)?, generation)
                 .await?;
-            if row_generation <= mark.generation
+            let CurrentState::Value {
+                source_stream_ref,
+                revision,
+                ..
+            } = &entry;
+            let covering_head = mark
+                .stream_heads
+                .iter()
+                .find(|head| &head.stream_ref == source_stream_ref);
+            if let Some(head) = covering_head {
+                require_compatible_stream_coordinates(
+                    head,
+                    &arkret_wire::CommitStreamHead {
+                        stream_ref: source_stream_ref.clone(),
+                        commit_id: revision.commit_id.clone(),
+                        stream_position: revision.stream_position,
+                    },
+                )?;
+            }
+            let newer_than_cut =
+                covering_head.is_some_and(|head| revision.stream_position > head.stream_position);
+            if row_generation <= mark.started_generation
+                && !newer_than_cut
                 && self
-                    .latest::<bool>(
-                        &self.seen_prefix(&mark.snapshot, realm, selector)?,
-                        generation,
-                    )
+                    .seen_digest(&mark.snapshot, realm, selector, generation)
                     .await?
                     .is_none()
             {
@@ -2066,13 +2146,16 @@ impl CurrentIndex {
                 });
             let seen = match coverage_key {
                 Some(coverage_key) => {
+                    let digest = self
+                        .seen_digest(&coverage_key, realm, selector, generation)
+                        .await?;
                     let seen = self
                         .latest_generation(
                             &self.seen_prefix(coverage_key.as_str(), realm, selector)?,
                             generation,
                         )
                         .await?;
-                    seen > 0 && seen >= floor
+                    digest.is_some() && seen > 0 && seen >= floor
                 }
                 _ => false,
             };
@@ -2111,6 +2194,11 @@ impl CurrentIndex {
             .all(|head| installed.contains(head))
         {
             return Ok(false);
+        }
+        for known in installed.iter().chain(&progress.observed_heads) {
+            for head in [&material.current_realm_head, &material.current_scope_head] {
+                require_compatible_stream_coordinates(known, head)?;
+            }
         }
         Ok(Some(installed)
             .into_iter()
@@ -2153,6 +2241,7 @@ impl CurrentIndex {
     /// One bounded page of every product-ready current row of a Realm, in
     /// index order. `next_cursor` resumes the scan; `None` means the Realm's
     /// rows are exhausted.
+    #[cfg(any(test, target_arch = "wasm32", feature = "spec-conformance"))]
     pub(crate) async fn read_realm_page(
         &self,
         realm: &str,
@@ -2162,6 +2251,43 @@ impl CurrentIndex {
         let prefix = format!("{}target/{}/", self.prefix, hash(&realm)?);
         self.read_region_page(realm, prefix, after, limit).await
     }
+    pub(crate) async fn read_realm_cut(&self, realm: &str) -> anyhow::Result<CurrentRealmRead> {
+        let lease = self.acquire_lease().await?;
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
+        let generation = self.generation.load(Ordering::Acquire);
+        let progress = self.progress_at(realm, generation).await?;
+        let complete = progress_is_complete_cut(&progress, &arkret_sdk::RealmId::new(realm)?);
+        let prefix = format!("{}target/{}/", self.prefix, hash(&realm)?);
+        let mut after = None;
+        let mut entries = Vec::new();
+        loop {
+            let page = self
+                .backend
+                .scan(&prefix, None, after.as_deref(), PAGE_LIMIT)
+                .await?;
+            let count = page.len();
+            after = page.last().map(|(key, _)| key.clone());
+            for (_, bytes) in page {
+                let selector: CurrentSelector = serde_json::from_slice(&bytes)?;
+                if let Some(entry) = self.ready_selector(realm, &selector, generation).await? {
+                    entries.push(entry);
+                }
+            }
+            if count < PAGE_LIMIT {
+                break;
+            }
+        }
+        Ok(CurrentRealmRead {
+            generation,
+            complete,
+            entries,
+            _lease: lease,
+        })
+    }
+    #[cfg(any(test, target_arch = "wasm32", feature = "spec-conformance"))]
     async fn read_region_page(
         &self,
         realm: &str,
@@ -2681,6 +2807,54 @@ impl CurrentIndex {
                     Some(progress) => progress,
                     None => self.progress_at(realm, expected_generation).await?,
                 };
+                let frozen_baseline_page = snapshot.is_none() && incoming.baseline.is_some();
+                if let Some(baseline) = &incoming.baseline {
+                    if previous
+                        .baseline
+                        .as_ref()
+                        .is_some_and(|old| old.snapshot_cursor == baseline.snapshot_cursor)
+                    {
+                        anyhow::ensure!(
+                            incoming
+                                .current
+                                .as_ref()
+                                .is_none_or(|current| previous.governance_generation
+                                    == Some(current.governance_generation)),
+                            "frozen current baseline changed governance generation"
+                        );
+                    }
+                    if previous
+                        .baseline
+                        .as_ref()
+                        .is_none_or(|old| old.snapshot_cursor != baseline.snapshot_cursor)
+                    {
+                        previous.baseline_started_generation = Some(generation);
+                    }
+                    if let Some(cursor) = frame.and_then(|frame| frame.cursor.as_ref()) {
+                        let page_prefix = format!(
+                            "{}seen/{}/{}/page-{}/",
+                            self.prefix,
+                            snapshot_key(&baseline.snapshot_cursor)?,
+                            hash(realm)?,
+                            hash(cursor)?
+                        );
+                        let digest = hash(incoming)?;
+                        if let Some(previous_digest) = self
+                            .latest::<String>(&page_prefix, expected_generation)
+                            .await?
+                        {
+                            anyhow::ensure!(
+                                previous_digest == digest,
+                                "frozen current page changed bytes"
+                            );
+                        } else {
+                            writes.insert(
+                                format!("{page_prefix}{suffix}"),
+                                serde_json::to_vec(&digest)?,
+                            );
+                        }
+                    }
+                }
                 if snapshot.is_none()
                     && current_reads_preview_stream(incoming, resolved_preview_streams)
                 {
@@ -2700,6 +2874,9 @@ impl CurrentIndex {
                     );
                 }
                 previous.remember_current_watermarks()?;
+                // Keep the old authenticated coordinates until every row in
+                // this batch has been checked against both sides of the cut.
+                let retained_heads = previous.observed_heads.clone();
                 if let Some(current) = &incoming.current {
                     anyhow::ensure!(
                         previous
@@ -2713,11 +2890,12 @@ impl CurrentIndex {
                             .iter()
                             .find(|head| head.stream_ref == old.stream_ref)
                         {
-                            if new.stream_position < old.stream_position {
+                            require_compatible_stream_coordinates(old, new)?;
+                            if new.stream_position < old.stream_position && !frozen_baseline_page {
                                 return Err(CurrentCutSuperseded.into());
                             }
                             anyhow::ensure!(
-                                new.stream_position > old.stream_position
+                                new.stream_position != old.stream_position
                                     || (new.stream_position == old.stream_position
                                         && new.commit_id == old.commit_id),
                                 "current head regresses or forks observed stream"
@@ -2731,7 +2909,10 @@ impl CurrentIndex {
                             .iter_mut()
                             .find(|old| old.stream_ref == head.stream_ref)
                         {
-                            Some(old) => *old = head.clone(),
+                            Some(old) if head.stream_position > old.stream_position => {
+                                *old = head.clone()
+                            }
+                            Some(_) => {}
                             None => previous.observed_heads.push(head.clone()),
                         }
                     }
@@ -2744,6 +2925,7 @@ impl CurrentIndex {
                                 .iter()
                                 .find(|head| head.stream_ref == old.stream_ref)
                             {
+                                require_compatible_stream_coordinates(old, new)?;
                                 anyhow::ensure!(
                                     new.stream_position > old.stream_position
                                         || (new.stream_position == old.stream_position
@@ -2753,13 +2935,15 @@ impl CurrentIndex {
                             }
                         }
                     }
-                    if previous.signed_snapshot.as_ref().is_some_and(|cut| {
-                        cut.stream_heads.len() != current.stream_heads.len()
-                            || !current
-                                .stream_heads
-                                .iter()
-                                .all(|head| cut.stream_heads.contains(head))
-                    }) {
+                    if !frozen_baseline_page
+                        && previous.signed_snapshot.as_ref().is_some_and(|cut| {
+                            cut.stream_heads.len() != current.stream_heads.len()
+                                || !current
+                                    .stream_heads
+                                    .iter()
+                                    .all(|head| cut.stream_heads.contains(head))
+                        })
+                    {
                         previous.signed_snapshot = None;
                         previous.needs_refresh = true;
                     }
@@ -2828,6 +3012,8 @@ impl CurrentIndex {
                 let baseline = incoming.baseline.clone();
                 let mut accepted = Vec::new();
                 let mut delivered = std::collections::BTreeSet::new();
+                let mut delivered_positions = BTreeMap::new();
+                let mut delivered_commits = BTreeMap::new();
                 // `RealmSyncEntry::current` is the Station's typed
                 // `AccountStateView`; its entries are already selected and
                 // signed, so nothing is re-decoded out of opaque JSON here.
@@ -2845,8 +3031,76 @@ impl CurrentIndex {
                         break;
                     }
                     let selector = selector_of(entry);
+                    let CurrentState::Value {
+                        source_stream_ref,
+                        revision,
+                        ..
+                    } = entry;
+                    let row_head = arkret_wire::CommitStreamHead {
+                        stream_ref: source_stream_ref.clone(),
+                        commit_id: revision.commit_id.clone(),
+                        stream_position: revision.stream_position,
+                    };
+                    anyhow::ensure!(
+                        delivered_positions
+                            .insert(
+                                (source_stream_ref, revision.stream_position),
+                                &revision.commit_id
+                            )
+                            .is_none_or(|old| old == &revision.commit_id)
+                            && delivered_commits
+                                .insert(
+                                    (source_stream_ref, &revision.commit_id),
+                                    revision.stream_position
+                                )
+                                .is_none_or(|old| old == revision.stream_position),
+                        "current rows conflict on native stream coordinates"
+                    );
+                    for known in retained_heads
+                        .iter()
+                        .chain(previous.observed_heads.iter())
+                        .chain(
+                            incoming
+                                .current
+                                .iter()
+                                .flat_map(|current| &current.stream_heads),
+                        )
+                    {
+                        require_compatible_stream_coordinates(known, &row_head)?;
+                    }
                     let key = selector_key(selector)?;
                     anyhow::ensure!(delivered.insert(key.clone()), "duplicate current selector");
+                    // This commitment belongs to the immutable disclosure, not
+                    // the mutable current row that a live delta may advance.
+                    let disclosed_digest = if let Some(coverage) = snapshot
+                        .map(|s| s.snapshot_id.to_string())
+                        .or_else(|| baseline.as_ref().map(|b| b.snapshot_cursor.clone()))
+                    {
+                        let digest = arkret_wire::Hash::new(
+                            arkret_sdk::canonical::canonical_sha256(entry)?,
+                        )?;
+                        let retained = self
+                            .seen_digest(&coverage, realm, selector, expected_generation)
+                            .await?;
+                        anyhow::ensure!(
+                            retained.as_ref().is_none_or(|old| old == &digest),
+                            "frozen current selector changed its original row"
+                        );
+                        if snapshot.is_none()
+                            && previous
+                                .baseline
+                                .as_ref()
+                                .is_some_and(|old| old.snapshot_cursor == coverage && old.complete)
+                        {
+                            anyhow::ensure!(
+                                retained.is_some(),
+                                "completed frozen baseline added an unknown selector"
+                            );
+                        }
+                        Some(digest)
+                    } else {
+                        None
+                    };
                     let old = self
                         .raw_selector(realm, selector, expected_generation)
                         .await?;
@@ -2865,7 +3119,12 @@ impl CurrentIndex {
                         snapshot.is_some(),
                     )?;
                     if seen || snapshot.is_some() {
-                        plan.seen_selectors.push(key);
+                        plan.seen_selectors.push((
+                            key,
+                            disclosed_digest.ok_or_else(|| {
+                                anyhow::anyhow!("current disclosure has no original row commitment")
+                            })?,
+                        ));
                     }
                     if let Some(retired) =
                         self.retired(realm, selector, expected_generation).await?
@@ -2874,7 +3133,17 @@ impl CurrentIndex {
                             retired.target == target_of(selector),
                             "retired selector changed its target"
                         );
-                        if retired.revision == *revision_of(entry) {
+                        anyhow::ensure!(
+                            retired.revision.commit_id != revision_of(entry).commit_id
+                                || retired.revision.stream_position
+                                    == revision_of(entry).stream_position,
+                            "retired current Commit changed its native stream position"
+                        );
+                        if retired.revision.stream_position == revision_of(entry).stream_position {
+                            anyhow::ensure!(
+                                retired.revision == *revision_of(entry),
+                                "retired current forked at the same stream position"
+                            );
                             anyhow::ensure!(
                                 retired.digest == hash(entry)?,
                                 "retired current changed at same revision"
@@ -2912,14 +3181,14 @@ impl CurrentIndex {
                             .map(|b| b.snapshot_cursor.clone())
                     });
                     if let Some(coverage_key) = coverage_key {
-                        for selector in &plan.seen_selectors {
+                        for (selector, digest) in &plan.seen_selectors {
                             let selector: CurrentSelector = serde_json::from_str(selector)?;
                             writes.insert(
                                 format!(
                                     "{}{suffix}",
                                     self.seen_prefix(coverage_key.as_str(), realm, &selector)?
                                 ),
-                                serde_json::to_vec(&true)?,
+                                serde_json::to_vec(digest)?,
                             );
                         }
                     }
@@ -2966,6 +3235,18 @@ impl CurrentIndex {
                                 serde_json::to_vec(&CoverageMark {
                                     snapshot: cleanup.snapshot_cursor.clone(),
                                     generation,
+                                    started_generation: if snapshot.is_some() {
+                                        generation
+                                    } else {
+                                        plan.progress
+                                            .baseline_started_generation
+                                            .unwrap_or(generation)
+                                    },
+                                    stream_heads: incoming
+                                        .current
+                                        .as_ref()
+                                        .map(|current| current.stream_heads.clone())
+                                        .unwrap_or_default(),
                                 })?,
                             );
                             writes.insert(
@@ -3544,7 +3825,7 @@ mod tests {
             serde_json::from_value(json!({
                 "selector": {"kind":"strand", "strand_id": strand_id},
                 "source_stream_ref": {"kind":"realm", "realm_id": realm},
-                "revision": {"commit_id": COMMIT, "stream_position": revision},
+                "revision": {"commit_id": commit_at(revision), "stream_position": revision},
                 "value": strand
             }))
             .unwrap()
@@ -3968,11 +4249,21 @@ mod tests {
             CurrentTarget::Realm
         );
     }
+    fn commit_at(position: u64) -> arkret_sdk::RealmCommitId {
+        if position == 1 {
+            COMMIT.parse().unwrap()
+        } else {
+            arkret_sdk::RealmCommitId::from_digest(arkret_sdk::canonical::sha256_bytes(
+                position.to_be_bytes(),
+            ))
+        }
+    }
+
     fn row(revision: u64, removed: bool) -> CurrentState {
         serde_json::from_value(json!({
             "selector":{"kind":"realm_profile"},
             "source_stream_ref":{"kind":"realm","realm_id":REALM},
-            "revision":{"commit_id":COMMIT,"stream_position":revision},
+            "revision":{"commit_id":commit_at(revision),"stream_position":revision},
             "value":if removed{json!({"status":"removed"})}else{json!({"status":"value","value":null})}
         })).unwrap()
     }
@@ -3980,7 +4271,7 @@ mod tests {
         serde_json::from_value(json!({
             "selector":{"kind":"mls_group","scope_ref":{"kind":"realm","realm_id":realm}},
             "source_stream_ref":{"kind":"realm","realm_id":realm},
-            "revision":{"commit_id":COMMIT,"stream_position":revision},
+            "revision":{"commit_id":commit_at(revision),"stream_position":revision},
             "value":{
                 "effective_scope":{"kind":"realm","realm_id":realm},
                 "genesis_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [1; 32]),
@@ -3999,6 +4290,10 @@ mod tests {
         baseline: Option<serde_json::Value>,
     ) -> AccountSubscribeFrame {
         realm_frame(REALM, entries, baseline)
+    }
+    fn page(mut frame: AccountSubscribeFrame, cursor: &str) -> AccountSubscribeFrame {
+        frame.cursor = Some(cursor.to_owned());
+        frame
     }
     fn at_generation(mut frame: AccountSubscribeFrame, generation: u64) -> AccountSubscribeFrame {
         frame
@@ -4023,7 +4318,7 @@ mod tests {
                 "stream_heads":[{
                     "stream_ref":{"kind":"realm","realm_id":REALM},
                     "stream_position":cut,
-                    "commit_id":COMMIT
+                    "commit_id":commit_at(cut)
                 }],
                 "complete_for_authorized_streams":true
             },
@@ -4072,7 +4367,7 @@ mod tests {
         serde_json::from_value(json!({
             "selector":{"kind":"member_state","actor_id":{"kind":"service","service_id":actor}},
             "source_stream_ref":{"kind":"realm","realm_id":_realm},
-            "revision":{"commit_id":COMMIT,"stream_position":revision},
+            "revision":{"commit_id":commit_at(revision),"stream_position":revision},
             "value":{"membership":"join"}
         }))
         .unwrap()
@@ -4137,9 +4432,9 @@ mod tests {
         let prefix = index.seen_prefix(snapshot, REALM, selector).unwrap();
         index.latest_generation(&prefix, u64::MAX).await.unwrap()
     }
-    async fn count_keys(index: &CurrentIndex, prefix: &str) -> usize {
+    async fn current_keys(index: &CurrentIndex, prefix: &str) -> Vec<String> {
         let mut after: Option<String> = None;
-        let mut total = 0;
+        let mut all = Vec::new();
         loop {
             let keys = index
                 .backend
@@ -4147,11 +4442,14 @@ mod tests {
                 .await
                 .unwrap();
             let Some(last) = keys.last().cloned() else {
-                return total;
+                return all;
             };
-            total += keys.len();
+            all.extend(keys);
             after = Some(last);
         }
+    }
+    async fn count_keys(index: &CurrentIndex, prefix: &str) -> usize {
+        current_keys(index, prefix).await.len()
     }
     async fn gc(index: &CurrentIndex) -> GcState {
         index.load_state(&index.gc_state_key()).await.unwrap()
@@ -4415,7 +4713,13 @@ mod tests {
                 .is_err()
         );
         index
-            .stage_frame(1, &frame(vec![], Some(baseline(CURSORS[0], 1, true))))
+            .stage_frame(
+                1,
+                &page(
+                    frame(vec![], Some(baseline(CURSORS[0], 1, true))),
+                    CURSORS[1],
+                ),
+            )
             .await
             .unwrap()
             .finish();
@@ -4810,7 +5114,13 @@ mod tests {
             .finish();
         assert_eq!(index.read_complete_cut_heads(&realm).await.unwrap(), None);
         index
-            .stage_frame(1, &frame(vec![], Some(baseline(CURSORS[0], 1, true))))
+            .stage_frame(
+                1,
+                &page(
+                    frame(vec![], Some(baseline(CURSORS[0], 1, true))),
+                    CURSORS[1],
+                ),
+            )
             .await
             .unwrap()
             .finish();
@@ -4895,7 +5205,13 @@ mod tests {
                 .is_err()
         );
         index
-            .stage_frame(1, &frame(vec![], Some(baseline(CURSORS[0], 1, true))))
+            .stage_frame(
+                1,
+                &page(
+                    frame(vec![], Some(baseline(CURSORS[0], 1, true))),
+                    CURSORS[1],
+                ),
+            )
             .await
             .unwrap()
             .finish();
@@ -5166,6 +5482,110 @@ mod tests {
     }
 
     #[test]
+    fn current_row_coordinates_are_immutable_but_old_baseline_pages_remain_ignorable() {
+        let old = row(7, false);
+        let progress = CurrentRealmProgress::default();
+        assert_eq!(
+            plan_current_entry(&progress, None, &old, Some(&old), false).unwrap(),
+            (false, false)
+        );
+        let mut moved = old.clone();
+        let CurrentState::Value { revision, .. } = &mut moved;
+        revision.stream_position += 1;
+        assert!(plan_current_entry(&progress, None, &moved, Some(&old), false).is_err());
+        let CurrentState::Value { revision, .. } = &mut moved;
+        revision.stream_position -= 2;
+        assert!(plan_current_entry(&progress, None, &moved, Some(&old), true).is_err());
+        assert_eq!(
+            plan_current_entry(&progress, None, &row(6, false), Some(&old), false).unwrap(),
+            (false, false)
+        );
+        assert_eq!(
+            plan_current_entry(&progress, None, &row(8, false), Some(&old), false).unwrap(),
+            (true, false)
+        );
+    }
+
+    #[tokio::test]
+    async fn conflicting_current_coordinates_leave_the_actual_index_and_watermarks_unchanged() {
+        let index = index(&path(), 0).await;
+        let original = frame(vec![row(1, false)], Some(baseline(CURSORS[0], 1, true)));
+        index.stage_frame(0, &original).await.unwrap().finish();
+        let original_progress = index.read_progress(REALM).await.unwrap();
+        let mut introduced = member_row(REALM, "ak:did_core:web:new-member.example", 2);
+        let CurrentState::Value { revision, .. } = &mut introduced;
+        revision.commit_id = commit_at(1);
+        assert!(
+            index
+                .stage_frame(
+                    1,
+                    &frame(vec![introduced], Some(baseline(CURSORS[1], 3, true)))
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(index.generation.load(Ordering::Acquire), 1);
+        assert_eq!(index.read_progress(REALM).await.unwrap(), original_progress);
+        let original_keys = current_keys(&index, &index.prefix).await;
+        for (position, commit) in [(2, commit_at(1)), (1, commit_at(2)), (0, commit_at(0))] {
+            let mut bad_row = row(position, false);
+            let CurrentState::Value { revision, .. } = &mut bad_row;
+            revision.commit_id = commit.clone();
+            let mut coverage = baseline(CURSORS[1], position, true);
+            coverage["coverage"]["stream_heads"][0]["commit_id"] = json!(commit);
+            let mut conflict = frame(vec![bad_row], Some(coverage));
+            if position == 0 {
+                // A live current rollback is rejected; an older frozen page
+                // with a different CID may legitimately arrive after a delta.
+                conflict
+                    .realms
+                    .as_mut()
+                    .unwrap()
+                    .entries
+                    .get_mut(REALM)
+                    .unwrap()
+                    .baseline = None;
+            }
+            assert!(index.stage_frame(1, &conflict).await.is_err());
+            assert_eq!(index.generation.load(Ordering::Acquire), 1);
+            assert_eq!(index.read_progress(REALM).await.unwrap(), original_progress);
+            assert_eq!(
+                index
+                    .read_selector(REALM, &selector_of(&row(1, false)))
+                    .await
+                    .unwrap(),
+                Some(row(1, false))
+            );
+            assert_eq!(current_keys(&index, &index.prefix).await, original_keys);
+        }
+        // Repeated immutable pages may advance local delivery bookkeeping,
+        // while leaving the whole current row and its coverage unchanged.
+        index.stage_frame(1, &original).await.unwrap().finish();
+        assert_eq!(index.read_progress(REALM).await.unwrap(), original_progress);
+        index
+            .stage_frame(
+                2,
+                &frame(vec![row(2, false)], Some(baseline(CURSORS[1], 2, true))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        assert_eq!(
+            index
+                .read_selector(REALM, &selector_of(&row(2, false)))
+                .await
+                .unwrap(),
+            Some(row(2, false))
+        );
+
+        let mut progress = original_progress;
+        progress.baseline.as_mut().unwrap().coverage.stream_heads[0].stream_position = 2;
+        let before = progress.clone();
+        assert!(progress.remember_current_watermarks().is_err());
+        assert_eq!(progress, before);
+    }
+
+    #[test]
     fn same_position_with_another_commit_is_a_fork() {
         let old = row(7, false);
         let mut value = serde_json::to_value(row(7, false)).unwrap();
@@ -5274,14 +5694,307 @@ mod tests {
         store
             .stage_frame(
                 1,
-                &frame(vec![row(2, false)], Some(baseline(CURSORS[0], 5, true))),
+                &page(
+                    frame(vec![], Some(baseline(CURSORS[0], 5, true))),
+                    CURSORS[1],
+                ),
             )
             .await
             .unwrap()
             .finish();
         assert_eq!(
             store.read_selector_ready(REALM, &selector).await.unwrap(),
-            Some(row(2, false))
+            Some(row(1, false))
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_frozen_row_markers_fail_closed_until_a_fresh_instance_rebuilds_them() {
+        for invalid in [json!(true), json!({"digest":"unknown"}), json!("unknown")] {
+            let store = index(&path(), 0).await;
+            let original = row(1, false);
+            let selector = selector_of(&original);
+            store
+                .stage_frame(
+                    0,
+                    &frame(vec![original.clone()], Some(baseline(CURSORS[0], 1, false))),
+                )
+                .await
+                .unwrap()
+                .finish();
+            let prefix = store.seen_prefix(CURSORS[0], REALM, &selector).unwrap();
+            let key = store
+                .backend
+                .keys(&prefix, None, None, 1)
+                .await
+                .unwrap()
+                .pop()
+                .unwrap();
+            store
+                .backend
+                .apply(vec![], vec![(key, serde_json::to_vec(&invalid).unwrap())])
+                .await
+                .unwrap();
+            assert!(
+                store
+                    .seen_digest(CURSORS[0], REALM, &selector, 1)
+                    .await
+                    .is_err()
+            );
+            let progress = store.read_progress(REALM).await.unwrap();
+            let keys = current_keys(&store, &store.prefix).await;
+            assert!(
+                store
+                    .stage_frame(
+                        1,
+                        &page(
+                            frame(vec![original.clone()], Some(baseline(CURSORS[0], 1, true))),
+                            CURSORS[1]
+                        )
+                    )
+                    .await
+                    .is_err()
+            );
+            assert_eq!(store.generation.load(Ordering::Acquire), 1);
+            assert_eq!(store.read_progress(REALM).await.unwrap(), progress);
+            assert_eq!(current_keys(&store, &store.prefix).await, keys);
+            // A newly acquired complete instance is an independent authority
+            // source, never a permissive interpretation of the damaged marker.
+            store
+                .stage_frame(
+                    1,
+                    &page(
+                        frame(vec![original.clone()], Some(baseline(CURSORS[1], 1, true))),
+                        CURSORS[2],
+                    ),
+                )
+                .await
+                .unwrap()
+                .finish();
+            assert_eq!(
+                store
+                    .seen_digest(CURSORS[1], REALM, &selector, 2)
+                    .await
+                    .unwrap(),
+                Some(
+                    arkret_wire::Hash::new(
+                        arkret_sdk::canonical::canonical_sha256(&original).unwrap()
+                    )
+                    .unwrap()
+                )
+            );
+            assert_eq!(
+                store.read_selector_ready(REALM, &selector).await.unwrap(),
+                Some(original.clone())
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn frozen_pages_finish_after_live_heads_advance_without_erasing_newer_rows() {
+        let path = path();
+        let store = index(&path, 0).await;
+        let c = CURSORS[0];
+        let head = |position: u64| arkret_sdk::CommitStreamHead {
+            stream_ref: arkret_sdk::CommitStreamRef::Realm {
+                realm_id: REALM.parse().unwrap(),
+            },
+            stream_position: position,
+            commit_id: arkret_sdk::RealmCommitId::from_digest([position as u8; 32]),
+        };
+        let at = |mut row: CurrentState, position: u64| {
+            let CurrentState::Value { revision, .. } = &mut row;
+            *revision = arkret_wire::CurrentRevision {
+                commit_id: head(position).commit_id,
+                stream_position: position,
+            };
+            row
+        };
+        let page =
+            |rows: Vec<CurrentState>, position: u64, complete: Option<bool>, cursor: &str| {
+                let mut coverage = complete.map(|complete| baseline(c, 5, complete));
+                if let Some(coverage) = coverage.as_mut() {
+                    coverage["coverage"]["stream_heads"] = json!([head(5)]);
+                }
+                let mut frame = frame(rows, coverage);
+                frame.cursor = Some(cursor.to_owned());
+                frame
+                    .realms
+                    .as_mut()
+                    .unwrap()
+                    .entries
+                    .get_mut(REALM)
+                    .unwrap()
+                    .current
+                    .as_mut()
+                    .unwrap()
+                    .stream_heads = vec![head(position)];
+                frame
+            };
+        let old = at(member_row(REALM, "ak:did_core:web:removed.example", 1), 1);
+        store
+            .stage_frame(0, &page(vec![old.clone()], 1, None, CURSORS[3]))
+            .await
+            .unwrap()
+            .finish();
+        let first = page(vec![at(row(2, false), 2)], 5, Some(false), CURSORS[1]);
+        store.stage_frame(1, &first).await.unwrap().finish();
+        let frozen = at(row(2, false), 2);
+        let frozen_digest =
+            arkret_wire::Hash::new(arkret_sdk::canonical::canonical_sha256(&frozen).unwrap())
+                .unwrap();
+        let changed_original = page(vec![at(row(4, false), 4)], 5, Some(true), CURSORS[5]);
+        let before = store.read_progress(REALM).await.unwrap();
+        let before_keys = current_keys(&store, &store.prefix).await;
+        assert!(store.stage_frame(2, &changed_original).await.is_err());
+        assert_eq!(store.read_progress(REALM).await.unwrap(), before);
+        assert_eq!(current_keys(&store, &store.prefix).await, before_keys);
+        let newer = at(row(7, true), 7);
+        let introduced = at(member_row(REALM, "ak:did_core:web:new.example", 7), 7);
+        store
+            .stage_frame(
+                2,
+                &page(vec![newer.clone(), introduced.clone()], 7, None, CURSORS[4]),
+            )
+            .await
+            .unwrap()
+            .finish();
+        // The live row is not the frozen row. Replaying the exact frozen
+        // original remains valid; changing it on another page does not.
+        assert_eq!(
+            store
+                .seen_digest(c, REALM, &selector_of(&frozen), 3)
+                .await
+                .unwrap(),
+            Some(frozen_digest.clone())
+        );
+        let before = store.read_progress(REALM).await.unwrap();
+        let before_keys = current_keys(&store, &store.prefix).await;
+        assert!(store.stage_frame(3, &changed_original).await.is_err());
+        assert_eq!(store.read_progress(REALM).await.unwrap(), before);
+        assert_eq!(current_keys(&store, &store.prefix).await, before_keys);
+        let last = page(vec![frozen.clone()], 5, Some(true), CURSORS[2]);
+        store.stage_frame(3, &last).await.unwrap().finish();
+        assert_eq!(
+            store
+                .seen_digest(c, REALM, &selector_of(&frozen), 4)
+                .await
+                .unwrap(),
+            Some(frozen_digest)
+        );
+        let surplus = page(vec![introduced.clone()], 5, Some(true), CURSORS[6]);
+        assert!(store.stage_frame(4, &surplus).await.is_err());
+        assert_eq!(
+            store
+                .read_selector(REALM, &selector_of(&newer))
+                .await
+                .unwrap(),
+            Some(newer.clone())
+        );
+        assert_eq!(
+            store
+                .read_selector(REALM, &selector_of(&introduced))
+                .await
+                .unwrap(),
+            Some(introduced.clone())
+        );
+        assert!(
+            store
+                .read_selector(REALM, &selector_of(&old))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let progress = store.read_progress(REALM).await.unwrap();
+        assert!(progress.baseline.as_ref().unwrap().complete);
+        assert_eq!(progress.observed_heads, vec![head(7)]);
+        store.stage_frame(4, &last).await.unwrap().finish();
+        assert_eq!(store.read_progress(REALM).await.unwrap(), progress);
+        let mut changed_page = last.clone();
+        changed_page
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(REALM)
+            .unwrap()
+            .current
+            .as_mut()
+            .unwrap()
+            .entries
+            .clear();
+        assert!(store.stage_frame(5, &changed_page).await.is_err());
+        drop(store);
+        let reopened = index(&path, 5).await;
+        assert_eq!(
+            reopened
+                .read_selector(REALM, &selector_of(&newer))
+                .await
+                .unwrap(),
+            Some(newer)
+        );
+        assert_eq!(
+            reopened
+                .read_selector(REALM, &selector_of(&introduced))
+                .await
+                .unwrap(),
+            Some(introduced)
+        );
+    }
+
+    #[tokio::test]
+    async fn product_cut_read_holds_one_generation_across_all_local_pages() {
+        let path = path();
+        let store = index(&path, 0).await;
+        store
+            .stage_frame(
+                0,
+                &frame(vec![row(1, false)], Some(baseline(CURSORS[0], 1, true))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        let read = store.read_realm_cut(REALM).await.unwrap();
+        assert_eq!(read.generation, 1);
+        assert!(read.complete);
+        assert_eq!(read.entries, vec![row(1, false)]);
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let writer = store.clone();
+                let (started, entered) = tokio::sync::oneshot::channel();
+                let pending = tokio::task::spawn_local(async move {
+                    started.send(()).unwrap();
+                    writer
+                        .stage_frame(
+                            1,
+                            &frame(vec![row(2, true)], Some(baseline(CURSORS[1], 2, true))),
+                        )
+                        .await
+                        .unwrap()
+                        .finish();
+                });
+                tokio::time::timeout(std::time::Duration::from_secs(5), entered)
+                    .await
+                    .expect("the local writer must start while the read is held")
+                    .unwrap();
+                tokio::task::yield_now().await;
+                assert!(
+                    !pending.is_finished(),
+                    "the active reader's publication lease must block the concurrent writer"
+                );
+                drop(read);
+                tokio::time::timeout(std::time::Duration::from_secs(5), pending)
+                    .await
+                    .expect("releasing the read must unblock the local writer")
+                    .unwrap();
+            })
+            .await;
+        assert_eq!(
+            store
+                .read_selector(REALM, &selector_of(&row(2, true)))
+                .await
+                .unwrap(),
+            Some(row(2, true))
         );
     }
     #[tokio::test]
@@ -5381,7 +6094,7 @@ mod tests {
         serde_json::from_value(json!({
             "selector":{"kind":"member_state","actor_id":{"kind":"service","service_id":actor}},
             "source_stream_ref":{"kind":"realm","realm_id":realm},
-            "revision":{"commit_id":COMMIT,"stream_position":revision},
+            "revision":{"commit_id":commit_at(revision),"stream_position":revision},
             "value":{"membership":membership}
         }))
         .unwrap()
@@ -5402,13 +6115,20 @@ mod tests {
         let chunks = rows.chunks(100).collect::<Vec<_>>();
         for (n, chunk) in chunks.iter().enumerate() {
             let complete = n + 1 == chunks.len();
+            let delivery_cursor = format!(
+                "ak:cursor:{}",
+                arkret_sdk::base64url_encode(generation.to_be_bytes())
+            );
             index
                 .stage_frame(
                     generation,
-                    &realm_frame(
-                        realm,
-                        chunk.to_vec(),
-                        Some(baseline(snapshot, cut, complete)),
+                    &page(
+                        realm_frame(
+                            realm,
+                            chunk.to_vec(),
+                            Some(baseline(snapshot, cut, complete)),
+                        ),
+                        &delivery_cursor,
                     ),
                 )
                 .await
@@ -5656,7 +6376,7 @@ mod tests {
         for permissions in [json!([]), json!([{"consent_scope":"invite"}])] {
             let path = path();
             let store = index(&path, 0).await;
-            let entry: CurrentState = serde_json::from_value(json!({
+            let mut entry: CurrentState = serde_json::from_value(json!({
                 "selector":{"kind":"consent","peer_id":{
                     "kind":"account","account_id":{
                         "principal_id":"ak:did_core:web:peer.example",
@@ -5664,7 +6384,7 @@ mod tests {
                     }
                 }},
                 "source_stream_ref":{"kind":"realm","realm_id":REALM},
-                "revision":{"commit_id":COMMIT,"stream_position":7},
+                "revision":{"commit_id":commit_at(7),"stream_position":7},
                 "value":{"permissions":permissions}
             }))
             .unwrap();
@@ -5674,7 +6394,7 @@ mod tests {
                 .await
                 .unwrap();
             store
-                .stage_frame(0, &frame(vec![entry], None))
+                .stage_frame(0, &frame(vec![entry.clone()], None))
                 .await
                 .unwrap()
                 .finish();
@@ -5705,6 +6425,79 @@ mod tests {
                     .require_consent_never_written(REALM, &selector, 2)
                     .await
                     .is_err()
+            );
+            let before_progress = reopened.read_progress(REALM).await.unwrap();
+            let before_keys = current_keys(&reopened, &reopened.prefix).await;
+            let before_retired =
+                serde_json::to_value(reopened.retired(REALM, &selector, 2).await.unwrap()).unwrap();
+            let mut moved = entry.clone();
+            let CurrentState::Value { revision, .. } = &mut moved;
+            revision.stream_position += 2;
+            // A new covering head has a different CID: only the retained
+            // retired row can expose this forged movement of its old Commit.
+            assert!(
+                reopened
+                    .stage_frame(2, &frame(vec![moved], Some(baseline(CURSORS[2], 10, true))))
+                    .await
+                    .is_err()
+            );
+            let mut forked = entry.clone();
+            let CurrentState::Value { revision, .. } = &mut forked;
+            revision.commit_id = commit_at(11);
+            assert!(
+                reopened
+                    .stage_frame(
+                        2,
+                        &frame(vec![forked], Some(baseline(CURSORS[2], 10, true)))
+                    )
+                    .await
+                    .is_err()
+            );
+            assert_eq!(reopened.generation.load(Ordering::Acquire), 2);
+            assert_eq!(
+                reopened.read_progress(REALM).await.unwrap(),
+                before_progress
+            );
+            assert_eq!(current_keys(&reopened, &reopened.prefix).await, before_keys);
+            assert_eq!(
+                serde_json::to_value(reopened.retired(REALM, &selector, 2).await.unwrap()).unwrap(),
+                before_retired
+            );
+            assert!(
+                reopened
+                    .raw_selector(REALM, &selector, 2)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            reopened
+                .stage_frame(
+                    2,
+                    &frame(vec![entry.clone()], Some(baseline(CURSORS[2], 9, true))),
+                )
+                .await
+                .unwrap()
+                .finish();
+            assert_eq!(
+                reopened.read_selector(REALM, &selector).await.unwrap(),
+                Some(entry.clone())
+            );
+            let CurrentState::Value { revision, .. } = &mut entry;
+            *revision = CurrentRevision {
+                commit_id: commit_at(10),
+                stream_position: 10,
+            };
+            reopened
+                .stage_frame(
+                    3,
+                    &frame(vec![entry.clone()], Some(baseline(CURSORS[3], 10, true))),
+                )
+                .await
+                .unwrap()
+                .finish();
+            assert_eq!(
+                reopened.read_selector(REALM, &selector).await.unwrap(),
+                Some(entry)
             );
         }
     }
@@ -5791,7 +6584,15 @@ mod tests {
             .await
             .unwrap()
             .finish();
-        let older = frame(vec![row(1, false)], Some(baseline(CURSORS[1], 1, true)));
+        let mut older = frame(vec![row(1, false)], Some(baseline(CURSORS[1], 1, true)));
+        older
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(REALM)
+            .unwrap()
+            .baseline = None;
         let error = index.stage_frame(1, &older).await.err().unwrap();
         assert!(error.is::<CurrentCutSuperseded>());
         assert_eq!(index.generation.load(Ordering::Acquire), 1);
@@ -6392,9 +7193,12 @@ mod tests {
         store
             .stage_frame(
                 1,
-                &frame(
-                    members[100..].to_vec(),
-                    Some(members_baseline(CURSORS[0], 5, true)),
+                &page(
+                    frame(
+                        members[100..].to_vec(),
+                        Some(members_baseline(CURSORS[0], 5, true)),
+                    ),
+                    CURSORS[1],
                 ),
             )
             .await
@@ -6402,22 +7206,28 @@ mod tests {
             .finish();
         let seen = format!("{}seen/", store.prefix);
         let total = count_keys(&store, &seen).await;
-        assert_eq!(total, 120);
+        assert_eq!(total, 122, "120 row markers and two immutable page digests");
         // A later complete baseline delivers none of them, so every one of
         // those snapshot references becomes unreachable at once.
         store
             .stage_frame(
                 2,
-                &frame(
-                    vec![row(1, false)],
-                    Some(members_baseline(CURSORS[1], 5, true)),
+                &page(
+                    frame(
+                        vec![row(1, false)],
+                        Some(members_baseline(CURSORS[1], 5, true)),
+                    ),
+                    CURSORS[2],
                 ),
             )
             .await
             .unwrap()
             .finish();
         let total = count_keys(&store, &seen).await;
-        assert_eq!(total, 121);
+        assert_eq!(
+            total, 124,
+            "121 row markers and three immutable page digests"
+        );
         let mut intermediate = None;
         for _ in 0..200 {
             store.maintain().await.unwrap();
@@ -6431,7 +7241,11 @@ mod tests {
         assert!(intermediate > 0, "one pass cleared the whole account");
         assert!(total - intermediate <= PAGE_LIMIT);
         drive(&store, 200).await;
-        assert_eq!(count_keys(&store, &seen).await, 1);
+        assert_eq!(
+            count_keys(&store, &seen).await,
+            2,
+            "one live row and its page digest"
+        );
         assert_eq!(
             store
                 .read_selector(REALM, &selector_of(&members[0]))

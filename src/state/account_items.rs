@@ -287,7 +287,6 @@ impl super::ClientLocalState {
             verified_message_commits: _,
             verified_poll_inputs: _,
             history_exchange_originals: _,
-            verified_reaction_assertions: _,
             verified_poll_prefixes: _,
             verified_sidecar_history: _,
             verified_sidecar_current: _,
@@ -459,11 +458,6 @@ impl super::ClientLocalState {
                 changes.scalar(p, a, b)?;
                 Ok(())
             },
-        )?;
-        changes.sequence(
-            vec!["verified_reaction_assertions".into()],
-            &old.verified_reaction_assertions,
-            &self.verified_reaction_assertions,
         )?;
         changes.map(
             vec!["verified_poll_prefixes".into()],

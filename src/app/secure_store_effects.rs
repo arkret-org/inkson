@@ -225,7 +225,7 @@ pub(super) fn install(
                         // token can be left over from an interrupted rotation; using
                         // it with different restored grant metadata recreates an
                         // impossible half-session and makes introspection fail.
-                        let authoritative_token = active_grant.grant_jwt.clone();
+                        let authoritative_token = active_grant.session_grant.as_str().to_owned();
                         if held_token != authoritative_token {
                             tracing::warn!(
                                 target: "secure_store",
@@ -518,9 +518,13 @@ mod account_signer_boot_tests {
 
     fn session_grant(principal_id: String, device_id: &str) -> PersistedSessionGrant {
         PersistedSessionGrant {
-            grant_jwt: "header.payload.signature".to_owned(),
+            session_grant: crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+                "header.payload.signature",
+            ),
             session_private_key_pem: String::new(),
-            grant_id: "grant-boot-test".to_owned(),
+            grant_ref: crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+            ),
             audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             granted_scope: Vec::new(),
             account_id: arkret_sdk::AccountId::new(
@@ -531,6 +535,7 @@ mod account_signer_boot_tests {
             station_url: url::Url::parse("https://principal.example").unwrap(),
             grant_expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
             stored_at: chrono::Utc::now(),
+            pending_refresh: None,
         }
     }
 
@@ -616,8 +621,8 @@ async fn apply_test_session_grant_expiry_override(
             return;
         }
     };
-    let expected_grant_jwt = parsed
-        .get("expected_grant_jwt")
+    let expected_session_grant = parsed
+        .get("expected_session_grant")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     let seconds_from_now = parsed
@@ -630,14 +635,14 @@ async fn apply_test_session_grant_expiry_override(
         .unwrap_or_default();
 
     let applied = async {
-        if expected_grant_jwt.is_empty() || seconds_from_now <= 0 {
+        if expected_session_grant.is_empty() || seconds_from_now <= 0 {
             return false;
         }
         let Ok(Some(mut grant)) = crate::state::load_session_grant_from_secure_store(secure_store)
         else {
             return false;
         };
-        if grant.grant_jwt != expected_grant_jwt {
+        if grant.session_grant.as_str() != expected_session_grant {
             return false;
         }
         let now = chrono::Utc::now();

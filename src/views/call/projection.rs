@@ -7,6 +7,70 @@ use super::types::CallParticipantView;
 pub(super) use crate::media::rtc::current_media_governance_evidence as media_governance_evidence;
 use crate::views::helpers::short_protocol_id;
 
+pub(super) fn capture_start_available(
+    store: &crate::state::LocalStateStore,
+    realm: &str,
+    call: &str,
+    kind: arkret_sdk::RecordingCaptureKind,
+) -> anyhow::Result<()> {
+    let view = store
+        .current_product_view()
+        .filter(|view| view.realm_id == realm && view.complete_cut)
+        .ok_or_else(|| anyhow::anyhow!("Capture requires a complete trusted current Call view"))?;
+    let realm = arkret_sdk::RealmId::new(realm.to_owned())?;
+    let call = arkret_sdk::CallId::new(call.to_owned())?;
+    crate::transport::media::call_capture_source(&realm, &call, &view.entries, kind)?;
+    anyhow::ensure!(
+        crate::transport::media::active_capture_segments(&realm, &call, &view.entries, kind)?
+            .is_empty(),
+        "A native capture segment is already active; use its Stop action"
+    );
+    Ok(())
+}
+
+pub(super) fn current_capture_segment(
+    store: &crate::state::LocalStateStore,
+    realm: &str,
+    call: &str,
+    kind: arkret_sdk::RecordingCaptureKind,
+) -> anyhow::Result<Option<arkret_sdk::CallRecordingId>> {
+    let view = store
+        .current_product_view()
+        .filter(|view| view.realm_id == realm && view.complete_cut)
+        .ok_or_else(|| anyhow::anyhow!("Capture segment has no complete trusted current view"))?;
+    let ids = crate::transport::media::active_capture_segments(
+        &arkret_sdk::RealmId::new(realm.to_owned())?,
+        &arkret_sdk::CallId::new(call.to_owned())?,
+        &view.entries,
+        kind,
+    )?;
+    anyhow::ensure!(
+        ids.len() <= 1,
+        "Multiple native capture segments require an explicit segment selection"
+    );
+    Ok(ids.into_iter().next())
+}
+
+pub(super) fn current_capture_stopped(
+    store: &crate::state::LocalStateStore,
+    realm: &str,
+    call: &str,
+    segment: &arkret_sdk::CallRecordingId,
+    kind: arkret_sdk::RecordingCaptureKind,
+) -> anyhow::Result<bool> {
+    let view = store
+        .current_product_view()
+        .filter(|view| view.realm_id == realm && view.complete_cut)
+        .ok_or_else(|| anyhow::anyhow!("Capture Stop has no complete trusted current view"))?;
+    crate::transport::media::capture_segment_is_stopped(
+        &arkret_sdk::RealmId::new(realm.to_owned())?,
+        &arkret_sdk::CallId::new(call.to_owned())?,
+        &view.entries,
+        segment,
+        kind,
+    )
+}
+
 /// Read the anchored descriptor from the same verified current view as Call state.
 pub(super) fn media_service_selection(
     store: &crate::state::LocalStateStore,

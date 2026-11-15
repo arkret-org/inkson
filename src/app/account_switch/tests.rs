@@ -47,9 +47,11 @@ struct Fixture {
 
 fn grant(account: &ActiveAccountContext, token: &str) -> PersistedSessionGrant {
     PersistedSessionGrant {
-        grant_jwt: token.into(),
+        session_grant: crate::identity::account_auth::grant_dpop::test_session_grant_secret(token),
         session_private_key_pem: String::new(),
-        grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".into(),
+        grant_ref: crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+            account.authority.station_id.clone(),
+        ),
         audience_id: account.authority.station_id.clone(),
         granted_scope: vec![],
         account_id: account.authority.clone(),
@@ -57,6 +59,7 @@ fn grant(account: &ActiveAccountContext, token: &str) -> PersistedSessionGrant {
         station_url: account.server_url.clone(),
         grant_expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
         stored_at: chrono::Utc::now(),
+        pending_refresh: None,
     }
 }
 
@@ -217,8 +220,8 @@ async fn warm_switch_same_principal_different_stations_retains_grants_and_reject
             .store
             .read(|store| store.session_grant())
             .unwrap()
-            .grant_jwt,
-        "grant-b"
+            .session_grant,
+        crate::identity::account_auth::grant_dpop::test_session_grant_secret("grant-b")
     );
     assert!(old_store.flush().is_err());
     assert!(
@@ -241,8 +244,8 @@ async fn warm_switch_same_principal_different_stations_retains_grants_and_reject
             .store
             .read(|store| store.session_grant())
             .unwrap()
-            .grant_jwt,
-        "grant-a"
+            .session_grant,
+        crate::identity::account_auth::grant_dpop::test_session_grant_secret("grant-a")
     );
     let profiles = f.root.config.with(|store| store.load_profiles());
     assert_eq!(profiles.profiles[0].session_credential, "credential-a");
@@ -270,8 +273,11 @@ async fn warm_switch_never_promotes_another_accounts_unfinished_login() {
     );
     assert_eq!(store.read(|store| store.load()).primary_handle, "private-a");
     assert_eq!(
-        store.read(|store| store.session_grant()).unwrap().grant_jwt,
-        "grant-a"
+        store
+            .read(|store| store.session_grant())
+            .unwrap()
+            .session_grant,
+        crate::identity::account_auth::grant_dpop::test_session_grant_secret("grant-a")
     );
     assert!(store.read(|store| store.pending_login()).is_none());
 }
@@ -353,8 +359,8 @@ async fn warm_switch_add_account_preserves_previous_session_and_can_return() {
             .store
             .read(|store| store.session_grant())
             .unwrap()
-            .grant_jwt,
-        "grant-a"
+            .session_grant,
+        crate::identity::account_auth::grant_dpop::test_session_grant_secret("grant-a")
     );
     assert_eq!(
         f.root.config.with(|store| store.load_profiles()).profiles[0].session_credential,

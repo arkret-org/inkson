@@ -86,6 +86,22 @@ impl SecureKeyStore for AndroidKeystoreSecureKeyStore {
     fn get_secret_bytes(&self, key: &str) -> Result<Option<KeyBytes>, SecureKeyStoreError> {
         self.inner.get_secret_bytes(key)
     }
+    fn read_secret_bytes_durable<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> super::host_bridge::HostStoreFuture<'a, Result<Option<KeyBytes>, SecureKeyStoreError>>
+    {
+        self.inner.read_secret_bytes_durable(key)
+    }
+    fn compare_exchange_secret_bytes_durable<'a>(
+        &'a self,
+        key: &'a str,
+        expected: Option<&'a [u8]>,
+        replacement: &'a [u8],
+    ) -> super::host_bridge::HostStoreFuture<'a, Result<bool, SecureKeyStoreError>> {
+        self.inner
+            .compare_exchange_secret_bytes_durable(key, expected, replacement)
+    }
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
         self.inner.delete_secret(key)
     }
@@ -147,6 +163,22 @@ impl SecureKeyStore for IosKeychainSecureKeyStore {
     }
     fn get_secret_bytes(&self, key: &str) -> Result<Option<KeyBytes>, SecureKeyStoreError> {
         self.inner.get_secret_bytes(key)
+    }
+    fn read_secret_bytes_durable<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> super::host_bridge::HostStoreFuture<'a, Result<Option<KeyBytes>, SecureKeyStoreError>>
+    {
+        self.inner.read_secret_bytes_durable(key)
+    }
+    fn compare_exchange_secret_bytes_durable<'a>(
+        &'a self,
+        key: &'a str,
+        expected: Option<&'a [u8]>,
+        replacement: &'a [u8],
+    ) -> super::host_bridge::HostStoreFuture<'a, Result<bool, SecureKeyStoreError>> {
+        self.inner
+            .compare_exchange_secret_bytes_durable(key, expected, replacement)
     }
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
         self.inner.delete_secret(key)

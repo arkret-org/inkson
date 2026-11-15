@@ -266,8 +266,8 @@ impl Builder {
         let multibase =
             ed25519_pubkey_to_did_key_multibase(producer_key.verifying_key().as_bytes());
         let mut authorize = DeviceAuthorizePayload {
-            expected_control_revision: None,
-            expected_device_revision: None,
+            expected_control_commit_id: None,
+            expected_device_commit_id: None,
             device_id: device_id.clone(),
             device_public_key_did: NonEmptyString::new(format!("did:key:{multibase}"))
                 .map_err(anyhow::Error::msg)?,
@@ -1953,7 +1953,7 @@ pub(super) fn build(input: Value) -> Result<Value> {
                 &realm,
                 arkret_sdk::PolicySetStatePayload {
                     policy_id: policy.id.clone(),
-                    expected_revision: None,
+                    expected_commit_id: None,
                     value: arkret_sdk::PolicySetValue::Governance(Box::new(policy.clone())),
                 },
             )?;

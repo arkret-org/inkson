@@ -4,7 +4,7 @@ use arkret_models_collaboration::governance::authorization::{
     EffectiveCapabilityGrantView, EffectiveGrantSnapshot,
 };
 use arkret_models_integration::AppletCapabilityRevokeIntent;
-use arkret_wire::{CurrentRevision, event_kind_str};
+use arkret_wire::{RealmCommitId, event_kind_str};
 use serde_json::Value;
 
 use super::{TypedOperationBuilder, trim_realm_id};
@@ -119,12 +119,12 @@ fn capability_revoke_exact(
     realm_id: &str,
     actor: &str,
     grant_id: &arkret_sdk::GrantId,
-    expected_revision: &CurrentRevision,
+    expected_commit_id: &RealmCommitId,
     reason: Option<&str>,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::CapabilityRevokePayload {
         grant_id: grant_id.clone(),
-        expected_revision: expected_revision.clone(),
+        expected_commit_id: expected_commit_id.clone(),
         reason: reason.map(ToOwned::to_owned),
     };
     Ok(
@@ -181,7 +181,7 @@ pub fn capability_revoke_from_effective_row(
         realm_id.as_str(),
         actor,
         &row.grant.id,
-        &row.revision,
+        &row.revision.commit_id,
         reason,
     )
 }
@@ -210,7 +210,7 @@ pub fn capability_revoke_from_owned_current(
             "owned Agent revoke requires the original issuer's exact nonterminal current"
         );
     }
-    capability_revoke_exact(realm.as_str(), actor, &row.value.id, &row.revision, reason)
+    capability_revoke_exact(realm.as_str(), actor, &row.value.id, &row.revision.commit_id, reason)
 }
 
 /// Author an Applet revoke Event by copying the exact revision and reason from
@@ -231,7 +231,7 @@ pub fn capability_revoke_from_applet_preview(
         realm_id,
         actor,
         &intent.grant_id,
-        &intent.expected_revision,
+        &intent.expected_commit_id,
         Some(intent.reason_code.as_str()),
     )
 }

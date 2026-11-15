@@ -206,7 +206,11 @@ mod tests {
             Decision::Blocked
         );
         let mut replacement = record.clone();
-        replacement.grant_jwt = Some("different captured grant".into());
+        replacement.session_grant = Some(
+            crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+                "different captured grant",
+            ),
+        );
         let new_id = intent_id(&replacement).unwrap();
         assert_ne!(id, new_id);
         assert_eq!(

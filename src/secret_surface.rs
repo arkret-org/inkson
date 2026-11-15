@@ -29,6 +29,7 @@ const FORBIDDEN_SECRET_FIELD_NAMES: &[&str] = &[
     "secret_base64url",
     "seed",
     "session_credential",
+    "session_grant",
     "session_private_key_pem",
 ];
 
@@ -105,6 +106,9 @@ fn is_forbidden_secret_field(name: &str) -> bool {
 }
 
 fn contains_secret_assignment(text: &str) -> bool {
+    if text.parse::<arkret_sdk::SessionGrantId>().is_ok() {
+        return false;
+    }
     let normalized = text.to_ascii_lowercase();
     FORBIDDEN_SECRET_FIELD_NAMES
         .iter()
@@ -183,7 +187,9 @@ mod tests {
             json!({"surface": "log", "authorization_code": "opaque"}),
             json!({"surface": "log", "code_verifier": "opaque"}),
             json!({"surface": "log", "password": "1amTester!"}),
+            json!({"surface":"log","session_grant":arkret_sdk::SessionGrantSecret::from_bytes([19;32])}),
             json!({"surface": "log", "message": "password=1amTester!"}),
+            json!({"surface": "log", "message": "ak:session_grant:invalid password=sentinel"}),
         ];
 
         for surface in credentials {
@@ -201,6 +207,10 @@ mod tests {
             "encrypted_backup_material": "ciphertext-only",
             "recovery_secret_ref": "ak:blob:public-ciphertext",
             "staged_secret_ref": "secure-store://security-transaction/opaque",
+            "session_grant_ref": {
+                "issuer_id": "ak:did_core:web:issuer.example",
+                "id": "ak:session_grant:019a0000-0000-7000-8000-000000000001"
+            },
             "message": "recovery_key is required but was not supplied",
         });
 

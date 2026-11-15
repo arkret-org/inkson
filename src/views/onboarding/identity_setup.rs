@@ -330,14 +330,14 @@ async fn prepare_identity_binding_impl(
         if completion.session_grant.account_id.principal_id != principal_core_id {
             anyhow::bail!("initial session grant principal does not match the registered identity");
         }
-        let grant_jwt = completion.session_grant.grant_jwt.clone();
+        let session_grant = completion.session_grant.session_grant.clone();
         let account = resolve_handoff_active_account(
             handoff,
             &principal_did,
             arkret_sdk::DeviceId::new(device.to_owned())?,
             state_store.clone(),
             Some((
-                grant_jwt.clone(),
+                session_grant.as_str().to_owned(),
                 crate::identity::account_auth::grant_dpop::device_handle_from_seed(
                     &completion.dpop_device_key.seed_b64,
                     &completion.dpop_device_key.jkt,
@@ -346,9 +346,9 @@ async fn prepare_identity_binding_impl(
         )
         .await?;
         let persisted_grant = crate::state::PersistedSessionGrant {
-            grant_jwt: grant_jwt.clone(),
+            session_grant: session_grant.clone(),
             session_private_key_pem: completion.session_private_key_pem,
-            grant_id: completion.session_grant.grant_id.to_string(),
+            grant_ref: completion.session_grant.grant_ref.clone(),
             audience_id: completion.session_grant.audience_id.clone(),
             granted_scope: completion.session_grant.granted_scope.clone(),
             account_id: completion.session_grant.account_id.clone(),
@@ -356,6 +356,7 @@ async fn prepare_identity_binding_impl(
             station_url: url::Url::parse(&handoff.station_url)?,
             grant_expires_at: Some(completion.session_grant.expires_at),
             stored_at: chrono::Utc::now(),
+            pending_refresh: None,
         };
         let dpop_device_key = completion.dpop_device_key.clone();
         let mut accepted = checkpoint;

@@ -652,6 +652,25 @@ impl HostSecretBridge for TestHostSecretBridge {
         guard.remove(&(service_name.to_owned(), key.to_owned()));
         Ok(())
     }
+    fn compare_exchange(
+        &self,
+        service_name: &str,
+        key: &str,
+        expected: Option<&str>,
+        replacement: &str,
+    ) -> Result<bool, SecureKeyStoreError> {
+        // Unit-test backend only. Real hosts must use a cross-process native primitive.
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("lock: {err}")))?;
+        let entry = (service_name.to_owned(), key.to_owned());
+        if guard.get(&entry).map(String::as_str) != expected {
+            return Ok(false);
+        }
+        guard.insert(entry, replacement.to_owned());
+        Ok(true)
+    }
     fn backend_label(&self) -> &'static str {
         self.label
     }
@@ -735,5 +754,82 @@ fn presentation_secure_store_override_is_nested_and_thread_local() {
             .unwrap()
             .as_deref(),
         Some("outer")
+    );
+}
+
+#[tokio::test]
+async fn host_bridge_cas_preserves_exact_bytes_namespace_and_biometric_gate() {
+    let bridge = Arc::new(TestHostSecretBridge::new("test-host"));
+    let first = HostBridgeSecureKeyStore::new("one", bridge.clone());
+    let second = HostBridgeSecureKeyStore::new("one", bridge.clone());
+    let other = HostBridgeSecureKeyStore::new("two", bridge.clone());
+    assert!(
+        first
+            .compare_exchange_secret_bytes_durable("pending", None, b"first")
+            .await
+            .unwrap()
+    );
+    assert!(
+        !second
+            .compare_exchange_secret_bytes_durable("pending", None, b"stale")
+            .await
+            .unwrap()
+    );
+    assert!(
+        !second
+            .compare_exchange_secret_bytes_durable("pending", Some(b"wrong"), b"stale")
+            .await
+            .unwrap()
+    );
+    assert!(
+        other
+            .compare_exchange_secret_bytes_durable("pending", None, b"separate")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        second
+            .read_secret_bytes_durable("pending")
+            .await
+            .unwrap()
+            .unwrap()
+            .as_slice(),
+        b"first"
+    );
+    assert!(
+        first
+            .compare_exchange_secret_bytes_durable("pending", Some(b"first"), b"")
+            .await
+            .unwrap()
+    );
+    assert!(
+        !second
+            .compare_exchange_secret_bytes_durable("pending", None, b"not-absent")
+            .await
+            .unwrap()
+    );
+    assert!(
+        first
+            .compare_exchange_secret_bytes_durable("pending", Some(b""), &[0xff])
+            .await
+            .is_err()
+    );
+    bridge.set_biometric_required(true);
+    bridge.set_biometric_accept(false);
+    assert!(
+        first
+            .compare_exchange_secret_bytes_durable("pending", Some(b""), b"denied")
+            .await
+            .is_err()
+    );
+    bridge.set_biometric_accept(true);
+    assert_eq!(
+        first
+            .read_secret_bytes_durable("pending")
+            .await
+            .unwrap()
+            .unwrap()
+            .as_slice(),
+        b""
     );
 }

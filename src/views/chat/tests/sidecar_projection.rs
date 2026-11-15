@@ -220,7 +220,7 @@ fn historical_attribution_only_changes_invalidate_the_live_timeline() {
         path: path.clone(),
         signals: Rc::new(RefCell::new(None)),
     };
-    let mut dom = projection_harness(control.clone());
+    let dom = projection_harness(control.clone());
     let signals = control.signals.borrow().as_ref().unwrap().clone();
     let before_state = signals.store.read(|store| store.load());
     let before_current = signals.store.read(|store| store.current_product_view());

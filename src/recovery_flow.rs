@@ -435,7 +435,7 @@ async fn publish_recovery_policy(
     recovery_payload.validate_shape()?;
     let payload = arkret_sdk::PolicySetStatePayload {
         policy_id: recovery_payload.policy_id.clone(),
-        expected_revision: None,
+        expected_commit_id: None,
         value: arkret_sdk::PolicySetValue::Recovery(Box::new(recovery_payload.value)),
     };
     let event = crate::operation::TypedOperationBuilder::new_for_station::<
@@ -574,7 +574,7 @@ fn recovery_unlock_transcript(
         schema: arkret_models_crypto::RECOVERY_PROOF_TRANSCRIPT_SCHEMA.to_owned(),
         kind: RecoveryProofKind::RecoveryUnlock,
         request_id: session.request_id.clone(),
-        session_grant_id: session.session_grant_id.clone(),
+        session_grant_ref: session.session_grant_ref.clone(),
         session_grant_cnf_jkt: session.session_grant_cnf_jkt.clone(),
         account_id: session.account_id.clone(),
         requesting_device_id: session.requesting_device_id.clone(),
@@ -779,7 +779,7 @@ mod tests {
             "schema": "ak.schema.recovery_session.v1",
             "request_id": "ak:request:0198ff00-0000-7000-8000-00000000000b",
             "recovery_session_id": "ak:recovery_session:0198ff00-0000-7000-8000-00000000000c",
-            "session_grant_id": arkret_wire::SessionGrantId::from_issuance_digest([4; 32]),
+            "session_grant_ref": {"issuer_id": account_id.station_id,"id":"ak:session_grant:0198ff00-0000-7000-8000-000000000009"},
             "session_grant_cnf_jkt": arkret_sdk::canonical::base64url_encode([5; 32]),
             "account_id": account_id,
             "requesting_device_id": "ak:device:0198ff00-0000-7000-8000-00000000000a",

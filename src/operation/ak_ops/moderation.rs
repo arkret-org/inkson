@@ -76,7 +76,7 @@ pub(crate) fn moderation_decision_lift(
     let decision_ref = arkret_sdk::EventId::new(decision_ref.to_owned())?;
     let payload = arkret_sdk::ModerationDecisionLiftPayload {
         target_ref: target_ref.to_owned(),
-        expected_revision: current.revision_for_decision(target_ref, &decision_ref)?,
+        expected_commit_id: current.commit_id_for_decision(target_ref, &decision_ref)?,
         decision_ref,
         reason_code: Some(reason_code.to_owned()),
         reason: None,
@@ -151,7 +151,7 @@ mod tests {
         let payload = operation
             .typed_payload::<arkret_wire::event_spec::ModerationDecisionLift>()
             .unwrap();
-        assert_eq!(payload.expected_revision, revision);
+        assert_eq!(payload.expected_commit_id, revision.commit_id);
         assert_eq!(payload.decision_ref.as_str(), DECISION);
     }
 

@@ -28,8 +28,14 @@ fn session(
     OwnStationSessionSnapshot::new(
         binding,
         account.clone(),
-        account.station_id,
-        arkret_wire::SessionGrantId::from_issuance_digest([51; 32]),
+        account.station_id.clone(),
+        arkret_wire::SessionGrantRef::new(
+            (account.station_id).clone(),
+            arkret_wire::SessionGrantId::new(
+                "ak:session_grant:01904100-0000-7000-8000-000000000033",
+            )
+            .unwrap(),
+        ),
         epoch,
         "projection-fixture".into(),
     )
@@ -223,7 +229,13 @@ async fn complete_account_station_origin_epoch_provider_and_realm_are_independen
                 original.session.binding().clone(),
                 original.session.account_id().clone(),
                 original.session.account_id().station_id.clone(),
-                arkret_wire::SessionGrantId::from_issuance_digest([54; 32]),
+                arkret_wire::SessionGrantRef::new(
+                    (original.session.account_id().station_id.clone()).clone(),
+                    arkret_wire::SessionGrantId::new(
+                        "ak:session_grant:01904100-0000-7000-8000-000000000036",
+                    )
+                    .unwrap(),
+                ),
                 1,
                 "different-device-bound-grant".into(),
             )

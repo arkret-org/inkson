@@ -274,9 +274,13 @@ fn accepted_account_client_uses_the_accepted_dpop_session() {
     )
     .unwrap();
     let grant = crate::state::PersistedSessionGrant {
-        grant_jwt: "signed.session.grant".to_owned(),
+        session_grant: crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+            "signed.session.grant",
+        ),
         session_private_key_pem: String::new(),
-        grant_id: "ak:session_grant:Af0GheZX08ev4L1fQoFdngIpe5c_9Lk7SQqfN4jztzDW".to_owned(),
+        grant_ref: crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+            account.authority.station_id.clone(),
+        ),
         audience_id: account.authority.station_id.clone(),
         granted_scope: Vec::new(),
         account_id: account.authority.clone(),
@@ -284,11 +288,12 @@ fn accepted_account_client_uses_the_accepted_dpop_session() {
         station_url: account.server_url.clone(),
         grant_expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
         stored_at: chrono::Utc::now(),
+        pending_refresh: None,
     };
 
     let api = accepted_account_session_client(&account, dpop.jkt(), &grant, &dpop).unwrap();
 
-    assert_eq!(api.context().credential, grant.grant_jwt);
+    assert_eq!(api.context().credential, grant.session_grant.as_str());
     assert_eq!(
         api.context().dpop.as_ref().map(|handle| handle.jkt()),
         Some(dpop.jkt())

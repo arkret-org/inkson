@@ -272,7 +272,7 @@ async fn delayed_clear_failure_cannot_roll_back_across_account_or_reset_epoch() 
                 state.switch_test_account("did:web:alice.example");
             }
             "device" => state.clear_device_scoped(),
-            "logout" => state.clear_session_scoped_for_logout(),
+            "logout" => state.clear_session_memory_for_logout(),
             "soft" => state.clear_account_scoped(),
             "login" => {
                 state.begin_pending_login(&device, None);

@@ -351,7 +351,7 @@ async fn cold_private_recovery_reaccepts_originals_instead_of_reusing_persistent
             prior.binding().clone(),
             prior.account_id().clone(),
             prior.binding().service_id.clone(),
-            prior.grant_id().clone(),
+            prior.grant_ref().clone(),
             prior.epoch() + 1,
             "test-grant".into(),
         )

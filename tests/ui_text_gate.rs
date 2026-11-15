@@ -211,7 +211,14 @@ fn native_nonprose_literals(source: &str) -> std::collections::BTreeSet<(usize, 
                 matches!(
                     (name, frame.argument),
                     (
-                        "stack" | "line" | "paragraph" | "class" | "href" | "target" | "source",
+                        "stack"
+                            | "line"
+                            | "paragraph"
+                            | "class"
+                            | "href"
+                            | "target"
+                            | "source"
+                            | "expect",
                         0
                     ) | ("heading", 1)
                 )
@@ -431,11 +438,12 @@ fn has_translation_path(source: &str) -> bool {
 }
 #[test]
 fn native_ui_scan_checks_display_text_and_preserves_structural_arguments() {
-    let source = "stack(\"event error-banner\",vec![paragraph(\"muted body\",\"English display text\"),sapid::button().class(\"btn secondary\").label(\"Untranslated action label\")])";
+    let source = "node.parent.expect(\"Sapid form proxy parent\"); stack(\"event error-banner\",vec![paragraph(\"muted body\",\"English display text\"),sapid::button().class(\"btn secondary\").label(\"Untranslated action label\")])";
     let structural = native_nonprose_literals(source);
     assert!(structural.contains(&(1, "event error-banner".into())));
     assert!(structural.contains(&(1, "muted body".into())));
     assert!(structural.contains(&(1, "btn secondary".into())));
+    assert!(structural.contains(&(1, "Sapid form proxy parent".into())));
     assert!(!structural.contains(&(1, "English display text".into())));
     assert!(!structural.contains(&(1, "Untranslated action label".into())));
     assert!(is_native_ui_source(

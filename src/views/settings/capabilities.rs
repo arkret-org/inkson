@@ -153,7 +153,7 @@ fn build_confirmed_relinquish_payload(
     );
     Ok(arkret_sdk::CapabilityRelinquishPayload {
         grant_id: arkret_sdk::GrantId::new(row.capability_id.clone())?,
-        expected_revision: row.revision.clone(),
+        expected_commit_id: row.revision.commit_id.clone(),
         reason: (!reason.is_empty()).then(|| reason.to_owned()),
     })
 }
@@ -720,13 +720,13 @@ mod tests {
                     "authority_generation": "0",
                     "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
                 }],
-                "authority_depth": 0,
-                "authority_root_refs": [{
+                "authority_depth": 1,
+                "authority_root_ref": {
                     "kind": "realm_root",
                     "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
                     "authority_generation": "0",
                     "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
-                }]
+                }
             },
             "revision": {
                 "commit_id": "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq",
@@ -819,7 +819,7 @@ mod tests {
         };
         let payload = build_confirmed_relinquish_payload(&row, &confirmation, "no longer needed")
             .expect("exact confirmed row is authorable");
-        assert_eq!(payload.expected_revision, effective.revision);
+        assert_eq!(payload.expected_commit_id, effective.revision.commit_id);
 
         let mut refreshed = row.clone();
         refreshed.revision.stream_position += 1;

@@ -1894,7 +1894,7 @@ mod tests {
             "actions":[arkret_sdk::CapabilityActionId::TYPING_BROADCAST],
             "resources":[{"kind":"realm", "realm_id":signal.scope_ref().realm_id()}],
             "issuer_authority_refs":[{"kind":"realm_root", "realm_id":signal.scope_ref().realm_id(), "authority_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[73;32]), "authority_generation":"0"}],
-            "authority_root_refs":[{"kind":"realm_root", "realm_id":signal.scope_ref().realm_id(), "authority_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[73;32]), "authority_generation":"0"}],
+            "authority_root_ref":{"kind":"realm_root", "realm_id":signal.scope_ref().realm_id(), "authority_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[73;32]), "authority_generation":"0"},
             "authority_depth":1, "status":"active", "issued_at":"2026-01-01T00:00:00.000Z"
         })).unwrap();
         signal.product_authority = Some(Box::new(arkret_sdk::SignalProductAuthority {
@@ -2002,11 +2002,15 @@ mod tests {
         let frame = |position, entries: Vec<arkret_sdk::CurrentState>| {
             let head = arkret_sdk::CommitStreamHead {
                 stream_ref: stream.clone(),
-                commit_id: head.commit_id.clone(),
+                commit_id: if position == 1 {
+                    head.commit_id.clone()
+                } else {
+                    arkret_sdk::RealmCommitId::from_digest([79; 32])
+                },
                 stream_position: position,
             };
             serde_json::from_value::<arkret_sdk::sync::AccountSubscribeFrame>(json!({
-                "kind":"delta", "cursor":"ak:cursor:YQ", "realms": {realm.to_string(): {
+                "kind":"delta", "cursor":if position == 1 {"ak:cursor:YQ"} else {"ak:cursor:Yg"}, "realms": {realm.to_string(): {
                     "current":{"realm_id":realm,"governance_generation":"1","stream_heads":[head],"entries":entries},
                     "baseline":{"snapshot_cursor":if position == 1 {"ak:cursor:Yg"} else {"ak:cursor:Yw"}, "cut_revision":position,
                         "coverage":{"realm_id":realm,"stream_heads":[head],"complete_for_authorized_streams":true},"complete":true}

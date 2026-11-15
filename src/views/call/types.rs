@@ -30,6 +30,7 @@ impl CallStage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecordingState {
     Off,
+    Pending,
     Recording,
 }
 
@@ -37,6 +38,7 @@ impl RecordingState {
     pub fn as_data_state(self) -> &'static str {
         match self {
             RecordingState::Off => "off",
+            RecordingState::Pending => "pending",
             RecordingState::Recording => "recording",
         }
     }
@@ -46,6 +48,7 @@ impl RecordingState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TranscriptionState {
     Off,
+    Pending,
     Transcribing,
 }
 
@@ -53,6 +56,7 @@ impl TranscriptionState {
     pub fn as_data_state(self) -> &'static str {
         match self {
             TranscriptionState::Off => "off",
+            TranscriptionState::Pending => "pending",
             TranscriptionState::Transcribing => "transcribing",
         }
     }

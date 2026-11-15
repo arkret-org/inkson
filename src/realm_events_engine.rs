@@ -555,7 +555,7 @@ async fn creator_own_station_cut(
         snapshot.clone(),
         genesis,
         session.account_id().clone(),
-        session.grant_id().clone(),
+        session.grant_ref().clone(),
         session.epoch(),
         sequence,
     )?;
@@ -3197,7 +3197,7 @@ mod tests {
     }
 
     #[test]
-    fn signed_floor_reactions_admit_the_closed_set_and_reject_subject_or_dot_drift() {
+    fn signed_floor_reactions_admit_active_metadata_without_old_add_bytes() {
         let realm_id = collaboration_fixture_realm_id();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
@@ -3252,9 +3252,10 @@ mod tests {
                 commit_id: head.commit_id.clone(),
                 stream_position: head.stream_position,
             },
-            value: json!({"assertions":[{
-                "tag_id":format!("{}:0", accepted.event.event_id),
-                "value":{"target_ref":message,"key":"thumbsup"}
+            value: json!({"entries":[{
+                "actor_id":accepted.event.actor_id,"key":"thumbsup",
+                "source":{"event_id":accepted.event.event_id,"commit_id":accepted.commit.commit_id,
+                    "stream_ref":accepted.commit.stream_ref,"stream_position":accepted.commit.stream_position}
             }]}),
         });
         validate_signed_floor_rows(
@@ -3265,12 +3266,17 @@ mod tests {
             &rows,
         )
         .unwrap();
+        let active = json!({"actor_id":accepted.event.actor_id,"key":"thumbsup",
+            "source":{"event_id":accepted.event.event_id,"commit_id":accepted.commit.commit_id,
+                "stream_ref":accepted.commit.stream_ref,"stream_position":accepted.commit.stream_position}});
+        let mut future = active.clone();
+        future["source"]["stream_position"] = json!(accepted.commit.stream_position + 1);
         for invalid in [
-            json!({"assertions":[{"tag_id":format!("{}:1", accepted.event.event_id),
-                "value":{"target_ref":message,"key":"thumbsup"}}]}),
-            json!({"assertions":[{"tag_id":format!("{}:0", accepted.event.event_id),
-                "value":{"target_ref":arkret_sdk::MessageId::from_event_id(&items[0].event.event_id),"key":"thumbsup"}}]}),
-            json!({"assertions":[],"count":1}),
+            json!({"assertions":[]}),
+            json!({"entries":[active],"count":1}),
+            json!({"entries":[active,active]}),
+            json!({"entries":[future]}),
+            json!({"entries":[{"actor_id":{"principal_id":ACTOR_ID},"key":"thumbsup","source":active["source"]}]}),
         ] {
             let mut forged = rows.clone();
             let CurrentState::Value { value, .. } = forged.last_mut().unwrap();
@@ -3555,7 +3561,7 @@ mod tests {
     }
 
     #[test]
-    fn signed_floor_reaction_assertions_are_closed_and_target_bound() {
+    fn signed_floor_reactions_require_a_visible_typed_target_even_when_empty() {
         let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
@@ -3578,9 +3584,7 @@ mod tests {
             commit_id: commit.commit_id.clone(),
         };
         let target = arkret_sdk::MessageId::from_event_id(&items[1].event.event_id);
-        let tag = format!("{}:0", items[2].event.event_id);
-        let assertion = json!({"tag_id": tag, "value": {"target_ref": target, "key": "+1"}});
-        let value = json!({"assertions": [assertion]});
+        let value = json!({"entries":[]});
         let mut rows = coland_bootstrap_rows(&bundle, &items);
         rows.push(CurrentState::Value {
             selector: arkret_wire::CurrentSelector::MessageReactions {
@@ -3602,31 +3606,15 @@ mod tests {
                 rows,
             )
         };
-        validate(&rows).unwrap();
-        let mut foreign_anchor = rows.clone();
-        let CurrentState::Value { value, .. } = &mut foreign_anchor[1];
-        value["authority_event_ref"] = json!(items[2].event.event_id);
-        assert!(validate(&foreign_anchor).is_err());
-        for bad in [
-            json!({"assertions": [assertion], "members": [creator]}),
-            json!({"assertions": [assertion, assertion]}),
-            json!({"assertions": [{"tag_id": format!("{}:1", items[2].event.event_id), "value": {"target_ref": target, "key": "+1"}}]}),
-            json!({"assertions": [{"tag_id": tag, "value": {"target_ref": arkret_sdk::MessageId::from_event_id(&items[3].event.event_id), "key": "+1"}}]}),
-            json!({"assertions": [{"tag_id": tag, "actor_id": creator, "value": {"target_ref": target, "key": "+1"}}]}),
-        ] {
-            let mut forged = rows.clone();
-            set_row_value(forged.last_mut().unwrap(), bad);
-            assert!(validate(&forged).is_err());
-        }
+        // The target retypes a bootstrap policy Event, not a disclosed
+        // Message current. A trusted empty set cannot reveal or create it.
+        assert!(validate(&rows).is_err());
         let mut unsupported = rows.clone();
         let CurrentState::Value { selector, .. } = unsupported.last_mut().unwrap();
         *selector = arkret_wire::CurrentSelector::MessageReactions {
             target_ref: items[1].event.event_id.to_string(),
         };
         assert!(validate(&unsupported).is_err());
-        let mut empty = rows.clone();
-        set_row_value(empty.last_mut().unwrap(), json!({"assertions": []}));
-        validate(&empty).unwrap();
     }
 
     #[test]
@@ -5074,7 +5062,7 @@ mod tests {
         entries.push((
             "ak.relation.create".to_owned(),
             json!({
-                "primary_conflict_domain":domain,"expected_revision":null,
+                "primary_conflict_domain":domain,"expected_commit_id":null,
                 "relation":{"relation_kind":"references","from_ref":realm_id,"to_ref":realm_id}
             }),
         ));

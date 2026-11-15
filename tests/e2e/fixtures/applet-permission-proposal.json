@@ -125,7 +125,7 @@
           "ak.reaction.add"
         ],
         "created_at": "2026-07-12T00:00:00.000Z",
-        "expected_revision": null,
+        "expected_commit_id": null,
         "claimed_profiles": [
           "ak.profile.applet_service.v1"
         ],
@@ -219,7 +219,7 @@
             "ak.reaction.add"
           ],
           "created_at": "2026-07-12T00:00:00.000Z",
-          "expected_revision": null,
+          "expected_commit_id": null,
           "claimed_profiles": [
             "ak.profile.applet_service.v1"
           ],

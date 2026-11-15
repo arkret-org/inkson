@@ -252,12 +252,12 @@ fn inkson_accepts_server_contract_payloads() {
                     "authority_generation": "0"
                 }],
                 "authority_depth": 1,
-                "authority_root_refs": [{
+                "authority_root_ref": {
                     "kind": "realm_root",
                     "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
                     "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
                     "authority_generation": "0"
-                }],
+                },
                 "actions": ["ak.message.create"],
                 "status": "active",
                 "resources": [

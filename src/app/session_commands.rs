@@ -86,7 +86,8 @@ async fn journal_accounts(
         let record = PendingLogout {
             authority: account.authority.clone(),
             device_id: account.device_id.clone(),
-            grant_jwt: grant.as_ref().map(|grant| grant.grant_jwt.clone()),
+            session_grant: grant.as_ref().map(|grant| grant.session_grant.clone()),
+            grant_ref: grant.as_ref().map(|grant| grant.grant_ref.clone()),
             device_seed_b64: holder
                 .as_ref()
                 .map(|holder| holder.seed_b64().as_str().to_owned()),
@@ -106,11 +107,33 @@ async fn journal_accounts(
 
 async fn clear_account_sessions(
     accounts: &[ActiveAccountContext],
+    captured: &[PendingLogout],
     secure: &dyn SecureKeyStore,
 ) -> anyhow::Result<()> {
+    let _mutation = crate::identity::session_refresh::session_credential_mutation_lock()
+        .lock()
+        .await;
     let mut errors = Vec::new();
     for account in accounts {
         let user = UserLocalStore::new(account.authority.clone(), account.device_id.clone())?;
+        let Some(capture) = captured.iter().find(|record| {
+            record.authority == account.authority && record.device_id == account.device_id
+        }) else {
+            errors.push("logout has no captured account/device intent".into());
+            continue;
+        };
+        let current = crate::state::load_session_grant_from_user_secure_store(&user, secure)?;
+        if current
+            .as_ref()
+            .map(|grant| (&grant.grant_ref, &grant.session_grant))
+            != capture
+                .grant_ref
+                .as_ref()
+                .zip(capture.session_grant.as_ref())
+        {
+            errors.push("session changed before captured logout cleanup".into());
+            continue;
+        }
         // Attempt every selected account even when one backend write fails.
         for key in [
             LocalStateStore::SECURE_SESSION_GRANT_KEY,
@@ -180,13 +203,14 @@ async fn perform_logout(context: Rc<InksonContext>, all: bool) -> anyhow::Result
         }
     };
     let retry_secure = secure.clone();
+    let retry_records = records.clone();
     context.spawn(async move {
-        for record in records {
+        for record in retry_records {
             let _ =
                 crate::pending_logout::execute_pending_logout(&record, retry_secure.as_ref()).await;
         }
     })?;
-    let cleared = clear_account_sessions(&accounts, secure.as_ref()).await;
+    let cleared = clear_account_sessions(&accounts, &records, secure.as_ref()).await;
     context
         .state_store
         .write(|store| store.clear_session_memory_for_logout());

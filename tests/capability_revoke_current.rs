@@ -42,12 +42,12 @@ fn effective_grants() -> EffectiveGrantSnapshot {
                     "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
                 }],
                 "authority_depth": 0,
-                "authority_root_refs": [{
+                "authority_root_ref": {
                     "kind": "realm_root",
                     "realm_id": REALM_ID,
                     "authority_generation": "0",
                     "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
-                }],
+                },
                 "issued_at": "2026-01-01T00:00:00.000Z",
                 "status": "active"
             },
@@ -74,7 +74,7 @@ fn owned_issuer_revoke_uses_exact_current_even_without_effective_grant_list() {
         "agent_join_event_id":"ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
     });
     value["issuer_authority_refs"] = json!([authority.clone()]);
-    value["authority_root_refs"] = json!([authority]);
+    value["authority_root_ref"] = authority;
     value["authority_depth"] = json!(1);
     value["constraints"] = json!([{"constraint_kind":"authority_control","effect":"allow","max_authority_depth":0,"authority_regrant_allowed":false}]);
     let mut row: arkret_sdk::exact_current_state::CurrentCapabilityGrant =
@@ -92,8 +92,8 @@ fn owned_issuer_revoke_uses_exact_current_even_without_effective_grant_list() {
         .build_sdk_event("inkson")
         .unwrap();
     assert_eq!(
-        operation.payload()["expected_revision"],
-        serde_json::to_value(&row.revision).unwrap()
+        operation.payload()["expected_commit_id"],
+        serde_json::to_value(&row.revision.commit_id).unwrap()
     );
     assert!(build(&row, "did:web:bob.example").is_err());
     row.value.status = arkret_sdk::CapabilityGrantStatus::Revoked;
@@ -121,8 +121,8 @@ fn manual_revoke_uses_only_the_effective_row_revision() {
 
     assert_eq!(operation.payload()["grant_id"], GRANT_ID);
     assert_eq!(
-        operation.payload()["expected_revision"]["stream_position"],
-        41
+        operation.payload()["expected_commit_id"],
+        serde_json::to_value(&row.revision.commit_id).unwrap()
     );
     assert!(!operation.payload().contains_key("grant_ref"));
 }
@@ -150,10 +150,7 @@ fn applet_revoke_copies_the_preview_revision_and_reason_unchanged() {
     let intent: AppletCapabilityRevokeIntent = serde_json::from_value(json!({
         "event_kind": "ak.capability.revoke",
         "grant_id": GRANT_ID,
-        "expected_revision": {
-            "commit_id": "ak:realm_commit:ARNRmzDi2r78zveOLmoHOb6AephFMwVuGE1fwXmCoeo4",
-            "stream_position": 41
-        },
+        "expected_commit_id": "ak:realm_commit:ARNRmzDi2r78zveOLmoHOb6AephFMwVuGE1fwXmCoeo4",
         "registration_epoch": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "reason_code": "operator_revocation"
     }))
@@ -165,8 +162,8 @@ fn applet_revoke_copies_the_preview_revision_and_reason_unchanged() {
             .unwrap();
 
     assert_eq!(
-        operation.payload()["expected_revision"],
-        serde_json::to_value(&intent.expected_revision).unwrap()
+        operation.payload()["expected_commit_id"],
+        serde_json::to_value(&intent.expected_commit_id).unwrap()
     );
     assert_eq!(operation.payload()["reason"], intent.reason_code.as_str());
 

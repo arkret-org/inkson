@@ -1709,7 +1709,7 @@ pub(super) mod tests {
             old.binding().clone(),
             old.account_id().clone(),
             old.account_id().station_id.clone(),
-            old.grant_id().clone(),
+            old.grant_ref().clone(),
             old.epoch() + 1,
             "test-grant".into(),
         )
@@ -2019,8 +2019,14 @@ pub(super) mod tests {
         let session = OwnStationSessionSnapshot::new(
             binding.clone(),
             account,
-            station,
-            arkret_wire::SessionGrantId::from_issuance_digest([3; 32]),
+            station.clone(),
+            arkret_wire::SessionGrantRef::new(
+                (station).clone(),
+                arkret_wire::SessionGrantId::new(
+                    "ak:session_grant:01904100-0000-7000-8000-000000000003",
+                )
+                .unwrap(),
+            ),
             0,
             "test-grant".into(),
         )
@@ -3216,7 +3222,7 @@ pub(super) mod tests {
                     live.binding().clone(),
                     live.account_id().clone(),
                     live.binding().service_id.clone(),
-                    live.grant_id().clone(),
+                    live.grant_ref().clone(),
                     live.epoch() + 1,
                     "test-grant".into(),
                 )
@@ -3245,7 +3251,7 @@ pub(super) mod tests {
                 original.binding().clone(),
                 original.account_id().clone(),
                 original.binding().service_id.clone(),
-                original.grant_id().clone(),
+                original.grant_ref().clone(),
                 epoch,
                 "test-grant".into(),
             )
@@ -3571,7 +3577,7 @@ pub(super) mod tests {
                         old.binding().clone(),
                         old.account_id().clone(),
                         old.binding().service_id.clone(),
-                        old.grant_id().clone(),
+                        old.grant_ref().clone(),
                         if replace_provider {
                             old.epoch()
                         } else {

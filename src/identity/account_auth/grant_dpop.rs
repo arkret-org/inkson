@@ -879,3 +879,18 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+pub(crate) fn test_session_grant_secret(label: &str) -> arkret_sdk::SessionGrantSecret {
+    arkret_sdk::SessionGrantSecret::from_bytes(arkret_sdk::canonical::sha256_bytes(
+        label.as_bytes(),
+    ))
+}
+#[cfg(test)]
+pub(crate) fn test_session_grant_ref(issuer: arkret_sdk::DidCoreId) -> arkret_sdk::SessionGrantRef {
+    arkret_sdk::SessionGrantRef::new(
+        issuer,
+        arkret_sdk::SessionGrantId::new("ak:session_grant:01904100-0000-7000-8000-000000000001")
+            .unwrap(),
+    )
+}

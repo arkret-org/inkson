@@ -51,6 +51,19 @@ impl KeyStore for PlatformKeyStore {
         platform_backend_call(|| self.0.store(id, key))
     }
 
+    fn create_if_absent(&self, id: &str, key: &[u8]) -> Result<KeyBytes, KeyStoreError> {
+        platform_backend_call(|| self.0.create_if_absent(id, key))
+    }
+
+    fn compare_exchange(
+        &self,
+        id: &str,
+        expected: Option<&[u8]>,
+        replacement: &[u8],
+    ) -> Result<bool, KeyStoreError> {
+        platform_backend_call(|| self.0.compare_exchange(id, expected, replacement))
+    }
+
     fn list(&self) -> Result<Vec<String>, KeyStoreError> {
         platform_backend_call(|| self.0.list())
     }
@@ -144,6 +157,21 @@ mod linux_runtime_tests {
             Ok(())
         }
 
+        fn compare_exchange(
+            &self,
+            _: &str,
+            expected: Option<&[u8]>,
+            replacement: &[u8],
+        ) -> Result<bool, KeyStoreError> {
+            visit_without_ui_runtime(&self.visits, "compare_exchange");
+            let mut value = self.value.lock().unwrap();
+            if value.as_deref() != expected {
+                return Ok(false);
+            }
+            *value = Some(replacement.to_vec());
+            Ok(true)
+        }
+
         fn list(&self) -> Result<Vec<String>, KeyStoreError> {
             visit_without_ui_runtime(&self.visits, "list");
             Ok(if self.value.lock().unwrap().is_some() {
@@ -207,6 +235,57 @@ mod linux_runtime_tests {
             ]
         );
         assert!(tokio::runtime::Handle::try_current().is_ok());
+    }
+
+    #[tokio::test]
+    async fn committed_read_and_cas_leave_ui_runtime_and_preserve_backend_atomicity() {
+        let visits = Arc::new(Mutex::new(Vec::new()));
+        let store = runtime_sensitive_store(visits.clone());
+        assert!(
+            store
+                .read_secret_bytes_durable("pending")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .compare_exchange_secret_bytes_durable("pending", None, b"first")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store
+                .compare_exchange_secret_bytes_durable("pending", None, b"stale")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            store
+                .read_secret_bytes_durable("pending")
+                .await
+                .unwrap()
+                .unwrap()
+                .as_slice(),
+            b"first"
+        );
+        assert!(
+            store
+                .compare_exchange_secret_bytes_durable("pending", Some(b"first"), b"next")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            *visits.lock().unwrap(),
+            [
+                "construct",
+                "load",
+                "compare_exchange",
+                "compare_exchange",
+                "load",
+                "compare_exchange"
+            ]
+        );
     }
 
     #[tokio::test]
@@ -294,6 +373,34 @@ impl SecureKeyStore for KeyringSecureKeyStore {
         self.inner()?.get_secret_bytes(key)
     }
 
+    fn read_secret_bytes_durable<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<Option<KeyBytes>, SecureKeyStoreError>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move { self.inner()?.read_secret_bytes_durable(key).await })
+    }
+
+    fn compare_exchange_secret_bytes_durable<'a>(
+        &'a self,
+        key: &'a str,
+        expected: Option<&'a [u8]>,
+        replacement: &'a [u8],
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<bool, SecureKeyStoreError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            self.inner()?
+                .compare_exchange_secret_bytes_durable(key, expected, replacement)
+                .await
+        })
+    }
+
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
         self.inner()?.delete_secret(key)
     }
@@ -308,5 +415,74 @@ impl SecureKeyStore for KeyringSecureKeyStore {
             hardware_backed: false,
             exportable: true,
         }
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_durable_tests {
+    use super::*;
+    #[tokio::test]
+    async fn dpapi_desktop_adapter_commits_and_reopens_full_byte_cas() {
+        let app = format!(
+            "test.inkson.cas.{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let first = KeyringSecureKeyStore::new(app.clone());
+        let second = KeyringSecureKeyStore::new(app);
+        assert!(
+            first
+                .compare_exchange_secret_bytes_durable("pending", None, b"frozen request")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !second
+                .compare_exchange_secret_bytes_durable("pending", None, b"loser")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            second
+                .read_secret_bytes_durable("pending")
+                .await
+                .unwrap()
+                .unwrap()
+                .as_slice(),
+            b"frozen request"
+        );
+        assert!(
+            second
+                .compare_exchange_secret_bytes_durable(
+                    "pending",
+                    Some(b"frozen request"),
+                    b"accepted outcome"
+                )
+                .await
+                .unwrap()
+        );
+        assert!(
+            !first
+                .compare_exchange_secret_bytes_durable(
+                    "pending",
+                    Some(b"frozen request"),
+                    b"late stale observer"
+                )
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            first
+                .read_secret_bytes_durable("pending")
+                .await
+                .unwrap()
+                .unwrap()
+                .as_slice(),
+            b"accepted outcome"
+        );
+        second.delete_secret("pending").unwrap();
     }
 }

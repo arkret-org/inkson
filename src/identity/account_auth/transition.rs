@@ -131,7 +131,7 @@ pub struct LoginCorrelation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_grant_request_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_grant_id: Option<String>,
+    pub session_grant_ref: Option<arkret_sdk::SessionGrantRef>,
     /// Public digest of the exact session intent. Coauth forwards it to the
     /// Station as the gate `intent_digest`, so one signed device gate
     /// receipt can be found from a client record without any secret.
@@ -278,7 +278,7 @@ pub fn record_login_transition(
         oidc_state_digest = correlation.oidc_state_digest.as_deref(),
         handoff_request_id = correlation.handoff_request_id.as_deref(),
         session_grant_request_id = correlation.session_grant_request_id.as_deref(),
-        session_grant_id = correlation.session_grant_id.as_deref(),
+        session_grant_ref = ?correlation.session_grant_ref,
         session_intent_digest = correlation.session_intent_digest.as_deref(),
         principal_id = correlation
             .principal_id
@@ -297,7 +297,7 @@ pub fn record_login_transition(
         oidc_state_digest = correlation.oidc_state_digest.as_deref(),
         handoff_request_id = correlation.handoff_request_id.as_deref(),
         session_grant_request_id = correlation.session_grant_request_id.as_deref(),
-        session_grant_id = correlation.session_grant_id.as_deref(),
+        session_grant_ref = ?correlation.session_grant_ref,
         session_intent_digest = correlation.session_intent_digest.as_deref(),
         principal_id = correlation
             .principal_id
@@ -369,7 +369,7 @@ struct OnboardingCompletionInventory<'a> {
     device_id: &'a str,
     signing_seed: &'a str,
     grant_binding_key: &'a str,
-    session_grant: &'a str,
+    session_grant_state: &'a str,
     recovery_evidence: &'a str,
     hpke_private_key: &'a str,
     authority_matches: bool,
@@ -402,7 +402,7 @@ pub fn record_onboarding_completion_transition(
         device_id: material_state_name(facts.device_id),
         signing_seed: material_state_name(facts.signing_seed),
         grant_binding_key: material_state_name(facts.grant_binding_key),
-        session_grant: material_state_name(facts.session_grant),
+        session_grant_state: material_state_name(facts.session_grant),
         recovery_evidence: material_state_name(facts.recovery_evidence),
         hpke_private_key: material_state_name(facts.hpke_private_key),
         authority_matches: facts.authority_matches,
@@ -668,7 +668,7 @@ mod tests {
             device_id: material_state_name(facts.device_id),
             signing_seed: material_state_name(facts.signing_seed),
             grant_binding_key: material_state_name(facts.grant_binding_key),
-            session_grant: material_state_name(facts.session_grant),
+            session_grant_state: material_state_name(facts.session_grant),
             recovery_evidence: material_state_name(facts.recovery_evidence),
             hpke_private_key: material_state_name(facts.hpke_private_key),
             authority_matches: facts.authority_matches,

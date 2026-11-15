@@ -185,7 +185,7 @@ async fn admission_current_requires_complete_account_cut_and_pages_full_actor_id
             let heads = json!([{"stream_ref":{"kind":"realm","realm_id":realm},
                 "stream_position":701,"commit_id":commit}]);
             for (part, entries) in entries.chunks(69).enumerate() {
-                let frame = serde_json::from_value(json!({"kind":"delta","cursor":"ak:cursor:YQ",
+                let frame = serde_json::from_value(json!({"kind":"delta","cursor":if part == 0 {"ak:cursor:YQ"} else {"ak:cursor:Yg"},
                 "realms":{realm:{"current":{"realm_id":realm,"governance_generation":"1",
                     "stream_heads":heads,"entries":entries},
                     "baseline":{"snapshot_cursor":"ak:cursor:YQ","cut_revision":1,
@@ -466,7 +466,13 @@ async fn complete_current_membership_does_not_scan_accepted_history() {
         binding.clone(),
         account.clone(),
         account.station_id.clone(),
-        arkret_wire::SessionGrantId::from_issuance_digest([35; 32]),
+        arkret_wire::SessionGrantRef::new(
+            (account.station_id.clone()).clone(),
+            arkret_wire::SessionGrantId::new(
+                "ak:session_grant:01904100-0000-7000-8000-000000000023",
+            )
+            .unwrap(),
+        ),
         1,
         "admission-current-fixture".into(),
     )

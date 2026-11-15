@@ -356,7 +356,13 @@ mod tests {
                 binding.clone(),
                 account.clone(),
                 account.station_id.clone(),
-                arkret_wire::SessionGrantId::from_issuance_digest([3; 32]),
+                arkret_wire::SessionGrantRef::new(
+                    binding.service_id.clone(),
+                    arkret_wire::SessionGrantId::new(
+                        "ak:session_grant:01904100-0000-7000-8000-000000000003",
+                    )
+                    .unwrap(),
+                ),
                 1,
                 "fixture-grant".into(),
             )
@@ -392,7 +398,7 @@ mod tests {
                     old.binding().clone(),
                     old.account_id().clone(),
                     old.account_id().station_id.clone(),
-                    old.grant_id().clone(),
+                    old.grant_ref().clone(),
                     old.epoch(),
                     "fixture-grant".into(),
                 )
@@ -582,7 +588,13 @@ mod tests {
                     binding.clone(),
                     fixture.account.clone(),
                     fixture.account.station_id.clone(),
-                    arkret_wire::SessionGrantId::from_issuance_digest([3; 32]),
+                    arkret_wire::SessionGrantRef::new(
+                        binding.service_id.clone(),
+                        arkret_wire::SessionGrantId::new(
+                            "ak:session_grant:01904100-0000-7000-8000-000000000003",
+                        )
+                        .unwrap(),
+                    ),
                     1,
                     "fixture-grant".into(),
                 )
@@ -679,7 +691,7 @@ mod tests {
                             old.binding().clone(),
                             old.account_id().clone(),
                             old.account_id().station_id.clone(),
-                            old.grant_id().clone(),
+                            old.grant_ref().clone(),
                             old.epoch() + 1,
                             "fixture-grant".into(),
                         )

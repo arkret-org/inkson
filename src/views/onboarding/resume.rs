@@ -49,7 +49,46 @@ pub(super) async fn recover_bound_principal_device(
         completed.standard_grant_installed = true;
         return Ok((completed, account));
     }
-    let (api, recovery_grant_id, recovery_grant_jkt) =
+    if let Some(receipt) = crate::mls::account_recovery::load_signed_pending_pcr_policy_recovery(
+        &account_id,
+        &expected_device,
+    )? {
+        let pending = crate::security_transaction::PendingFreshDeviceRecovery::capture(
+            &receipt.transaction_id,
+        )?;
+        match issue_recovery_completion_grant(handoff, &receipt.transaction_id, state_store.clone())
+            .await
+        {
+            Ok(account) => {
+                let completed = crate::mls::account_recovery::CompletedFreshDeviceRecovery {
+                    transaction_id: receipt.transaction_id.clone(),
+                    standard_grant_installed: true,
+                    pending,
+                    readiness: crate::fresh_device_recovery::RecoveryReadinessEvidence {
+                        transaction_id: receipt.transaction_id.clone(),
+                        terminal_receipt_id: receipt.receipt_id,
+                        authorization_event_id: receipt.recovery_unit.events[1]
+                            .event
+                            .event_id
+                            .clone(),
+                    },
+                };
+                return Ok((completed, account));
+            }
+            Err(error) => {
+                // A confirmed missing completion permits only retrying this
+                // SAME frozen R while its original grant remains usable. It
+                // never discards R or starts another recovery intent. Other
+                // unknown outcomes remain pending for AA reconciliation.
+                let absent = matches!(error.downcast_ref::<arkret_sdk::http_client::Error>(),
+                    Some(arkret_sdk::http_client::Error::Api{error,..}) if error.code()==arkret_wire::ErrorCode::FAILED_PRECONDITION);
+                if !absent {
+                    return Err(error);
+                }
+            }
+        }
+    }
+    let (api, recovery_grant_ref, recovery_grant_jkt) =
         issue_recovery_session_transport(handoff, state_store.clone()).await?;
     if let Some(mut completed) = crate::mls::account_recovery::resume_pending_pcr_policy_recovery(
         &api,
@@ -85,7 +124,7 @@ pub(super) async fn recover_bound_principal_device(
     .map_err(anyhow::Error::msg)?;
     let possession = arkret_models_crypto::RecoveryDevicePossessionTranscript {
         schema: arkret_wire::DomainSeparationId::IDENTITY_RECOVERY_DEVICE_POSSESSION_V1.to_owned(),
-        session_grant_id: recovery_grant_id,
+        session_grant_ref: recovery_grant_ref,
         session_grant_cnf_jkt: arkret_sdk::Base64UrlString::new(recovery_grant_jkt)
             .map_err(anyhow::Error::msg)?,
         requesting_device_public_key_did: requesting_key.clone(),
@@ -154,7 +193,7 @@ pub(super) async fn issue_recovery_session_transport(
     state_store: crate::presentation::SharedStateStore,
 ) -> anyhow::Result<(
     crate::transport::TransportClient,
-    arkret_wire::SessionGrantId,
+    arkret_wire::SessionGrantRef,
     String,
 )> {
     let holder = state_store.write(|store| -> anyhow::Result<_> {Ok({
@@ -214,11 +253,14 @@ pub(super) async fn issue_recovery_session_transport(
     {
         anyhow::bail!("recovery SessionGrant outcome changed its frozen authority binding");
     }
-    let grant_id = outcome.session_grant_id;
+    let grant_ref = arkret_wire::SessionGrantRef::new(
+        outcome.issuer_id.clone(),
+        outcome.session_grant_id.clone(),
+    );
     let jkt = holder.jkt().to_owned();
     let api = crate::transport::TransportClient::unauthenticated(&handoff.station_url)?
-        .with_session_grant_dpop(outcome.session_grant, holder)?;
-    Ok((api, grant_id, jkt))
+        .with_session_grant_dpop(outcome.session_grant.as_str().to_owned(), holder)?;
+    Ok((api, grant_ref, jkt))
 }
 pub(super) async fn activate_recovery_replacement_signer(
     handoff: &crate::state::PendingAccountHandoff,
@@ -282,6 +324,9 @@ pub(super) async fn issue_recovery_completion_grant(
     }
     let account_handoff_grant = crate::identity::account_auth::load_account_handoff_grant(handoff)?
         .ok_or_else(|| anyhow::anyhow!("account handoff credential is unavailable"))?;
+    let handoff_digest = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+        account_handoff_grant.as_bytes(),
+    ))?;
     let authority =
         crate::identity::account_auth::AuthorityResolver::discover(&handoff.station_url).await?;
     let account_base = crate::identity::session_refresh::sdk_base_url_from_gate_account_base_url(
@@ -306,12 +351,90 @@ pub(super) async fn issue_recovery_completion_grant(
         audience_id: handoff.audience_id.clone(),
     };
     initial_session.validate()?;
-    let request =
-        workflow.build_completion_grant_issuance(transaction_id, initial_session.clone())?;
-    let outcome = account_http
-        .issue_recovery_completion_grant(&request)
+    let receipt = workflow.receipt_for_completion(transaction_id)?;
+    let signer = crate::event_signer::active_signer()
+        .context("replacement identity signer is unavailable")?;
+    anyhow::ensure!(
+        signer.device_id() == Some(receipt.new_device_id.as_str())
+            && signer
+                .public_key_multibase()
+                .map(|key| format!("did:key:{key}"))
+                == receipt.recovery_unit.events[1]
+                    .event
+                    .payload
+                    .get("device_public_key_did")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+        "fresh completion must be signed by the exact replacement identity key"
+    );
+    let now = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
+    anyhow::ensure!(
+        now < handoff.expires_at,
+        "fresh AccountHandoff is required for completion"
+    );
+    let mut proof = arkret_wire::AcceptedDeviceIssuePossessionProof {
+        context: arkret_wire::AcceptedDevicePossessionProofContext::V1,
+        purpose: arkret_wire::AcceptedDeviceIssuePossessionPurpose::RecoveryCompletionGrantIssue,
+        request_id: arkret_sdk::RequestId::new(format!(
+            "ak:request:{}",
+            crate::operation::uuid_v7()
+        ))?,
+        account_subject: handoff
+            .account_subject
+            .clone()
+            .context("fresh AccountHandoff omits account subject")?,
+        account_handoff_grant_digest: handoff_digest,
+        account_id: receipt.account_id.clone(),
+        device_id: receipt.new_device_id.clone(),
+        audience_id: initial_session.audience_id.clone(),
+        holder_jkt: holder.jkt().to_owned(),
+        session_intent_digest:
+            arkret_models_identity::RecoveryCompletionGrantRequestBody::session_intent_digest(
+                &receipt,
+                &initial_session,
+            )?,
+        issued_at: now,
+        expires_at: (now + chrono::Duration::seconds(300)).min(handoff.expires_at),
+        verification_method: receipt.signature_proof.verification_method.clone(),
+        signature: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode([0; 64]))
+            .map_err(anyhow::Error::msg)?,
+    };
+    proof.signature = arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+        signer.sign_raw(&proof.canonical_signing_bytes()?)?,
+    ))
+    .map_err(anyhow::Error::msg)?;
+    let request = workflow
+        .build_completion_grant_issuance(transaction_id, initial_session.clone(), proof.clone())
         .await?;
-    let issued_session = serde_json::from_value(outcome.issued_session)?;
+    let fresh_request = arkret_models_identity::RecoveryCompletionGrantRequestBody::new(
+        receipt,
+        initial_session.clone(),
+        proof,
+    )?;
+    let outcome = match account_http.issue_recovery_completion_grant(&request).await {
+        Ok(outcome) => outcome,
+        Err(arkret_sdk::http_client::Error::Api { status, error })
+            if status == 401
+                && error.status == 401
+                && error.code() == arkret_wire::ErrorCode::REAUTHENTICATION_REQUIRED
+                && error.problem_type
+                    == "https://arkret.org/problems/reauthentication_required"
+                && error
+                    .extensions
+                    .get("reason_code")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(arkret_wire::ReasonCode::PROOF_INVALID) =>
+        {
+            let renewed = workflow
+                .renew_completion_after_issuer_expiry(&request, &fresh_request, status, &error)
+                .await?;
+            account_http
+                .issue_recovery_completion_grant(&renewed)
+                .await?
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let issued_session = outcome.issued_session;
     let session = garth::SessionGrantState::from_initial_registration_outcome(
         &initial_session,
         issued_session,
@@ -331,9 +454,10 @@ pub(super) async fn issue_recovery_completion_grant(
         anyhow::bail!("recovery session grant AccountId does not match the account handoff");
     }
     let persisted = crate::state::PersistedSessionGrant {
-        grant_jwt: session.grant_jwt.clone(),
+        session_grant: session.session_grant.clone(),
         session_private_key_pem: holder.session_signing_key_pkcs8_pem()?.to_string(),
-        grant_id: session.grant_id.to_string(),
+        grant_ref: session.grant_ref.clone(),
+        pending_refresh: session.pending_refresh.clone(),
         audience_id: session.audience_id.clone(),
         granted_scope: session.granted_scope.clone(),
         account_id: session.account_id.clone(),
@@ -350,7 +474,7 @@ pub(super) async fn issue_recovery_completion_grant(
         &principal_did,
         persisted.device_id.clone(),
         state_store.clone(),
-        Some((persisted.grant_jwt.clone(), holder.clone())),
+        Some((persisted.session_grant.as_str().to_owned(), holder.clone())),
     )
     .await?;
     {
@@ -477,7 +601,7 @@ pub(super) fn accepted_account_session_client(
     }
     crate::transport::TransportClient::new(
         account.server_url.as_str(),
-        crate::transport::RequestContext::new(grant.grant_jwt.clone()),
+        crate::transport::RequestContext::new(grant.session_grant.as_str().to_owned()),
     )?
     .with_dpop_device(dpop.clone())
 }

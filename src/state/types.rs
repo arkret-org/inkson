@@ -106,15 +106,6 @@ pub(crate) struct VerifiedMessageCommit {
     pub track_name: String,
 }
 
-/// A reaction assertion admitted from a signature-verified Commit scan.
-/// The signed Event is retained with its exact covering coordinate so the
-/// product view never has to infer authority order from raw arrival order.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct VerifiedReactionAssertion {
-    pub accepted_ref: arkret_wire::CommittedEventRef,
-    pub event: arkret_sdk::Event,
-}
-
 /// Original accepted poll input; encrypted Messages remain candidates until
 /// the existing verified decrypt path identifies their Content Block.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -921,9 +912,6 @@ pub struct ClientLocalState {
         super::account_items::Shared<arkret_sdk::CommittedEventFullView>,
     >,
     #[serde(default)]
-    pub(crate) verified_reaction_assertions:
-        super::account_items::Shared<Vec<VerifiedReactionAssertion>>,
-    #[serde(default)]
     pub(crate) verified_poll_prefixes: imbl::OrdMap<String, VerifiedPollPrefix>,
     /// Complete private replay material, persisted as individually authenticated records.
     /// Only VerifiedScanPage and VerifiedCurrentSnapshot can produce it.
@@ -1459,7 +1447,7 @@ pub(crate) const MEMBER_HANDLE_NEGATIVE_CACHE_TTL_SECONDS: i64 = 5 * 60;
 /// ②(A+②) model (api-conventions.md §3.3): the grant itself is the live
 /// credential for `/_arkret/self/*`; coland does not mint a second
 /// client-visible local session credential. Each request presents `Authorization: DPoP
-/// <grant_jwt>` + a matching per-request `DPoP` proof. Keeping
+/// <session_grant>` + a matching per-request `DPoP` proof. Keeping
 /// the grant on disk lets the client keep using it directly and rotate it (DPoP
 /// grant-binding DPoP proof → fresh grant) before its own expiry — no user-visible re-login
 /// as long as the grant chain is still rotatable.
@@ -1468,13 +1456,14 @@ pub(crate) const MEMBER_HANDLE_NEGATIVE_CACHE_TTL_SECONDS: i64 = 5 * 60;
 /// rotation request separately proves the durable accepted-device key; neither
 /// key substitutes for the other.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PersistedSessionGrant {
-    /// The signed grant JWT (long-lived, signed by coauth).
-    pub grant_jwt: String,
+    /// Canonical opaque credential from the authenticated Account Authority.
+    pub session_grant: arkret_sdk::SessionGrantSecret,
     /// PKCS8 PEM of the ephemeral holder/DPoP key bound to this session.
     pub session_private_key_pem: String,
     /// Grant id assigned by coauth and used by refresh/revocation binding.
-    pub grant_id: String,
+    pub grant_ref: arkret_sdk::SessionGrantRef,
     /// Stable service identity the grant is bound to.
     pub audience_id: arkret_sdk::DidCoreId,
     /// Exact granted scope returned by issuance; refresh cannot change it.
@@ -1491,6 +1480,9 @@ pub struct PersistedSessionGrant {
     pub grant_expires_at: Option<DateTime<Utc>>,
     /// RFC 3339 timestamp of when this record was last written.
     pub stored_at: DateTime<Utc>,
+    /// Exact pending refresh body, durably retained until a successor is installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_refresh: Option<garth::PendingSessionGrantRefresh>,
 }
 
 impl Default for ClientLocalState {
@@ -1510,7 +1502,6 @@ impl Default for ClientLocalState {
             verified_message_commits: Vec::new().into(),
             verified_poll_inputs: Vec::new().into(),
             history_exchange_originals: imbl::OrdMap::new(),
-            verified_reaction_assertions: Vec::new().into(),
             verified_poll_prefixes: imbl::OrdMap::new(),
             verified_sidecar_history: imbl::OrdMap::new(),
             verified_sidecar_current: imbl::OrdMap::new(),

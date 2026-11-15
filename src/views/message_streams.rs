@@ -213,7 +213,7 @@ mod tests {
             "issuer_id":actor, "subject":actor, "actions":[CapabilityActionId::MESSAGE_STREAM_SEND,CapabilityActionId::MESSAGE_CREATE],
             "resources":[{"kind":"strand","realm_id":realm,"strand_id":strand}], "status":"active", "issued_at":"2026-10-01T00:00:00.000Z",
             "issuer_authority_refs":[{"kind":"realm_root","realm_id":realm,"authority_event_ref":event,"authority_generation":"0"}],
-            "authority_root_refs":[{"kind":"realm_root","realm_id":realm,"authority_event_ref":event,"authority_generation":"0"}], "authority_depth":1
+            "authority_root_ref":{"kind":"realm_root","realm_id":realm,"authority_event_ref":event,"authority_generation":"0"}, "authority_depth":1
         })).unwrap();
         let head = CommitStreamHead {
             stream_ref: CommitStreamRef::Realm {

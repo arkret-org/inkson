@@ -141,7 +141,7 @@ pub struct RegisterOutcome {
 
 #[derive(Clone, Debug)]
 struct ChimeSessionGrantHeaders {
-    grant_jwt: String,
+    session_grant: String,
 }
 
 /// Resolve a real token via the installed `PushTokenProvider`, build a
@@ -222,7 +222,7 @@ fn chime_client(
         client = client.with_bearer_token(token);
     }
     client = client
-        .with_session_grant(&session_grant.grant_jwt)
+        .with_session_grant(&session_grant.session_grant)
         .map_err(|err| PushRegistrationError::Transport(err.to_string()))?;
     Ok(client)
 }
@@ -231,7 +231,7 @@ fn resolve_chime_session_grant(
     ctx: &mut RegisterContext,
     persisted_grant: Option<&PersistedSessionGrant>,
 ) -> Result<ChimeSessionGrantHeaders, PushRegistrationError> {
-    if let Some(grant_jwt) = ctx
+    if let Some(session_grant) = ctx
         .session_grant
         .as_deref()
         .map(str::trim)
@@ -243,7 +243,7 @@ fn resolve_chime_session_grant(
             });
         }
         return Ok(ChimeSessionGrantHeaders {
-            grant_jwt: grant_jwt.to_owned(),
+            session_grant: session_grant.to_owned(),
         });
     }
 
@@ -275,7 +275,7 @@ fn resolve_chime_session_grant(
     ctx.account_id = Some(grant.account_id.clone());
 
     Ok(ChimeSessionGrantHeaders {
-        grant_jwt: grant.grant_jwt,
+        session_grant: grant.session_grant.as_str().to_owned(),
     })
 }
 
@@ -447,9 +447,13 @@ mod tests {
             .expect("encode session grant key")
             .to_string();
         PersistedSessionGrant {
-            grant_jwt: "header.payload.signature".to_owned(),
+            session_grant: crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+                "header.payload.signature",
+            ),
             session_private_key_pem: pem,
-            grant_id: "ak:grant:push-local".to_owned(),
+            grant_ref: crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+            ),
             audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             granted_scope: Vec::new(),
             account_id: arkret_sdk::AccountId::new(
@@ -460,6 +464,7 @@ mod tests {
             station_url: url::Url::parse("https://principal.example/").unwrap(),
             grant_expires_at: Some(Utc::now() + Duration::hours(1)),
             stored_at: Utc::now(),
+            pending_refresh: None,
         }
     }
 
@@ -516,7 +521,13 @@ mod tests {
         let headers = resolve_chime_session_grant(&mut context, store.session_grant().as_ref())
             .expect("grant headers");
 
-        assert_eq!(headers.grant_jwt, "header.payload.signature");
+        assert_eq!(
+            headers.session_grant,
+            crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+                "header.payload.signature"
+            )
+            .as_str()
+        );
         assert_eq!(
             context
                 .account_id

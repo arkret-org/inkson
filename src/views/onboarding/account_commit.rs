@@ -158,7 +158,7 @@ pub(super) async fn resolve_handoff_active_account(
                 && !crate::identity::session_refresh::grant_is_dead(grant)
         });
         if let Some(grant) = usable {
-            (grant.grant_jwt, holder)
+            (grant.session_grant.as_str().to_owned(), holder)
         } else {
             let handoff_grant = crate::identity::account_auth::load_account_handoff_grant(handoff)?
                 .context("bound onboarding requires its handoff credential to reissue a session")?;
@@ -272,7 +272,7 @@ pub(super) struct CompletedIdentityCreation {
 
 impl CompletedIdentityCreation {
     fn session_credential(&self) -> &str {
-        &self.persisted_grant.grant_jwt
+        self.persisted_grant.session_grant.as_str()
     }
 }
 
@@ -412,7 +412,7 @@ pub(super) async fn commit_completed_account(
         .map_err(anyhow::Error::msg)?;
 
         if let Some(pending) = recovery_pending {
-            pending.clear(secure_store.as_ref())?;
+            pending.clear(secure_store.as_ref()).await?;
         }
 
         active_account.revise(|value| {

@@ -129,11 +129,17 @@ fn unchanged_session_refresh_is_a_noop_for_reactive_and_persisted_state() {
         "https://example.test",
         grant.account_id.principal_id.clone(),
         grant.device_id.clone(),
-        grant.grant_jwt.clone(),
+        grant.session_grant.as_str().to_owned(),
     );
 
     assert_eq!(
-        session_refresh_write_plan(Some(&grant), &grant.grant_jwt, &config, &grant, &config,),
+        session_refresh_write_plan(
+            Some(&grant),
+            grant.session_grant.as_str(),
+            &config,
+            &grant,
+            &config,
+        ),
         SessionRefreshWritePlan {
             grant: false,
             credential: false,
@@ -318,9 +324,13 @@ fn unread_notification_count_excludes_contact_attention_for_all_three_modes() {
 fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
     let now = chrono::Utc::now();
     PersistedSessionGrant {
-        grant_jwt: "grant.jwt".to_owned(),
+        session_grant: crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+            "grant.jwt",
+        ),
         session_private_key_pem: "PEM".to_owned(),
-        grant_id: "grant-1".to_owned(),
+        grant_ref: crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:local.host").unwrap(),
+        ),
         audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:local.host").unwrap(),
         granted_scope: Vec::new(),
         account_id: arkret_sdk::AccountId::new(
@@ -334,18 +344,21 @@ fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
         station_url: url::Url::parse("https://local.host").unwrap(),
         grant_expires_at: Some(now + chrono::Duration::seconds(grant_expires_in)),
         stored_at: now,
+        pending_refresh: None,
     }
 }
 
 fn session_grant_for_config(grant_expires_in: i64, config: &ClientConfig) -> PersistedSessionGrant {
     let mut grant = session_grant(grant_expires_in);
-    grant.audience_id = config
+    let account = config
         .active_account
         .as_ref()
-        .expect("test config has an active account")
-        .authority
-        .station_id
-        .clone();
+        .expect("test config has an active account");
+    grant.account_id = account.authority.clone();
+    grant.device_id = account.device_id.clone();
+    grant.audience_id = account.authority.station_id.clone();
+    grant.station_url = account.server_url.clone();
+    grant.grant_ref.issuer_id = grant.audience_id.clone();
     grant
 }
 
@@ -702,7 +715,7 @@ fn boot_session_credential_uses_fresh_session_grant() {
 
     assert_eq!(
         initial_session_credential_from_state(&state, &config, now),
-        "grant.jwt"
+        crate::identity::account_auth::grant_dpop::test_session_grant_secret("grant.jwt").as_str()
     );
 }
 
@@ -793,6 +806,8 @@ fn bootstrap_can_start_with_session_grant_without_live_credential() {
         grant.device_id.as_str(),
     );
     grant.audience_id = account.authority.station_id.clone();
+    grant.grant_ref.issuer_id = account.authority.station_id.clone();
+    grant.account_id = account.authority.clone();
     store.set_session_grant(Some(grant));
 
     assert!(has_bootstrap_refresh_material(&store, Some(&account)));

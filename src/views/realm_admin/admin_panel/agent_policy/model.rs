@@ -319,7 +319,7 @@ impl Draft {
         };
         let payload = PolicySetStatePayload {
             policy_id: id,
-            expected_revision: Some(revision),
+            expected_commit_id: Some(revision.map(|revision| revision.commit_id)),
             value: PolicySetValue::Governance(Box::new(value)),
         };
         payload.validate()?;
@@ -471,7 +471,7 @@ mod tests {
         let payload = draft
             .build(&realm(), &updater, Some(&old), Some(rev.clone()))
             .unwrap();
-        assert_eq!(payload.expected_revision, Some(Some(rev)));
+        assert_eq!(payload.expected_commit_id, Some(Some(rev.commit_id)));
         let PolicySetValue::Governance(policy) = payload.value else {
             panic!()
         };
@@ -560,8 +560,8 @@ mod tests {
             .build(&realm(), &account("admin", "home"), None, None)
             .unwrap();
         let value = serde_json::to_value(&payload).unwrap();
-        assert!(value.as_object().unwrap().contains_key("expected_revision"));
-        assert_eq!(value["expected_revision"], serde_json::Value::Null);
+        assert!(value.as_object().unwrap().contains_key("expected_commit_id"));
+        assert_eq!(value["expected_commit_id"], serde_json::Value::Null);
         let circle = arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
             arkret_sdk::DigestSuite::Sha256,
             [14; 32],

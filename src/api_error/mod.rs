@@ -823,7 +823,7 @@ mod tests {
         if let Some(state) = state {
             problem.extensions.insert(
                 "session_grant_id".into(),
-                serde_json::json!("ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7"),
+                serde_json::json!("ak:session_grant:019a0000-0000-7000-8000-000000000001"),
             );
             problem
                 .extensions

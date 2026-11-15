@@ -155,9 +155,13 @@ mod tests {
 
     fn session_grant(jwt: &str) -> crate::state::PersistedSessionGrant {
         crate::state::PersistedSessionGrant {
-            grant_jwt: jwt.to_owned(),
+            session_grant: crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+                jwt,
+            ),
             session_private_key_pem: String::new(),
-            grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
+            grant_ref: crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+                arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:coland.example").unwrap(),
+            ),
             audience_id: arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:coland.example")
                 .unwrap(),
             granted_scope: Vec::new(),
@@ -175,6 +179,7 @@ mod tests {
             station_url: url::Url::parse("https://coland.example").unwrap(),
             grant_expires_at: None,
             stored_at: chrono::Utc::now(),
+            pending_refresh: None,
         }
     }
 
@@ -207,8 +212,11 @@ mod tests {
             hydrated
                 .session_grant
                 .as_ref()
-                .map(|grant| grant.grant_jwt.as_str()),
-            Some("stored")
+                .map(|grant| grant.session_grant.as_str()),
+            Some(
+                crate::identity::account_auth::grant_dpop::test_session_grant_secret("stored")
+                    .as_str()
+            )
         );
 
         merge_secure_session_grant_into_live(&mut hydrated, Some(session_grant("stale")));
@@ -216,8 +224,11 @@ mod tests {
             hydrated
                 .session_grant
                 .as_ref()
-                .map(|grant| grant.grant_jwt.as_str()),
-            Some("stored")
+                .map(|grant| grant.session_grant.as_str()),
+            Some(
+                crate::identity::account_auth::grant_dpop::test_session_grant_secret("stored")
+                    .as_str()
+            )
         );
     }
 

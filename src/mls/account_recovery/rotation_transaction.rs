@@ -356,6 +356,15 @@ async fn resume_device_revoke_security_rotation(
     .await
 }
 
+fn rotation_resource(
+    transaction: &arkret_sdk::SecurityTransaction,
+) -> Result<&arkret_models_crypto::SecurityRotationTransaction> {
+    match transaction {
+        arkret_sdk::SecurityTransaction::SecurityRotation(rotation) => Ok(rotation),
+        _ => Err(anyhow!("Recovery cannot select Rotation steps")),
+    }
+}
+
 async fn drive_security_rotation(
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
@@ -367,7 +376,7 @@ async fn drive_security_rotation(
     transaction: &mut arkret_sdk::SecurityTransaction,
 ) -> Result<CompletedSecurityRotation> {
     let http = api.sdk_http_client()?;
-    let transaction_id = transaction.transaction_id.clone();
+    let transaction_id = transaction.transaction_id().clone();
     let engine = crate::security_transaction::security_transaction_engine(
         http.clone(),
         secure_store.clone(),
@@ -388,7 +397,7 @@ async fn drive_security_rotation(
         });
     }
     while matches!(
-        transaction.next_required_step()?,
+        rotation_resource(transaction)?.next_required_step()?,
         Some(
             SecurityTransactionStep::Revoke
                 | SecurityTransactionStep::UploadNewMaterial
@@ -401,18 +410,17 @@ async fn drive_security_rotation(
             .await
             .map_err(anyhow::Error::from)?;
     }
-    let plan = transaction
-        .security_rotation_plan()
-        .ok_or_else(|| anyhow!("server returned a non-rotation transaction plan"))?
-        .clone();
-    if transaction.next_required_step()? != Some(SecurityTransactionStep::LocalCommit) {
+    let plan = rotation_resource(transaction)?.prepared_plan.clone();
+    if rotation_resource(transaction)?.next_required_step()?
+        != Some(SecurityTransactionStep::LocalCommit)
+    {
         return Err(anyhow!("security rotation did not reach local commit"));
     }
 
     let transaction_store =
         crate::security_transaction::InksonSecurityTransactionStore::new(secure_store.clone());
     let staged = transaction_store
-        .load_staged_secret(&transaction.transaction_id)
+        .load_staged_secret(transaction.transaction_id())
         .map_err(anyhow::Error::from)?
         .ok_or_else(|| anyhow!("staged MLS rotation material is unavailable; refusing commit"))?;
     let staged: StagedRotationSecret =
@@ -430,23 +438,22 @@ async fn drive_security_rotation(
         .map_err(|error| anyhow!(error.to_string()))?;
     let local_commit = arkret_models_crypto::SecurityRotationLocalCommit {
         schema: SchemaId::SECURITY_ROTATION_LOCAL_COMMIT_V1.to_owned(),
-        transaction_id: transaction.transaction_id.clone(),
-        transaction_request_digest: transaction.request_digest.clone(),
-        prepared_plan_digest: transaction.prepared_plan_digest.clone(),
+        transaction_id: transaction.transaction_id().clone(),
+        transaction_request_digest: rotation_resource(transaction)?.request_digest.clone(),
+        prepared_plan_digest: rotation_resource(transaction)?.prepared_plan_digest.clone(),
         local_commit_digest: plan.local_commit_digest.clone(),
         device_id: arkret_sdk::DeviceId::new(current_device_id.to_owned())?,
         committed_at: crate::clock::now_utc(),
     };
-    let artifact =
-        arkret_models_crypto::ClientStepAttestationArtifact::SecurityRotation(local_commit);
+    let artifact = local_commit;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required for local commit"))?;
     let mut attestation = arkret_models_crypto::ClientStepAttestation {
         step: SecurityTransactionStep::LocalCommit,
         output_ref: plan.local_commit_digest.as_str().to_owned(),
-        transaction_id: transaction.transaction_id.clone(),
-        transaction_request_digest: transaction.request_digest.clone(),
-        prepared_plan_digest: transaction.prepared_plan_digest.clone(),
+        transaction_id: transaction.transaction_id().clone(),
+        transaction_request_digest: rotation_resource(transaction)?.request_digest.clone(),
+        prepared_plan_digest: rotation_resource(transaction)?.prepared_plan_digest.clone(),
         artifact,
         signature_proof: arkret_models_crypto::ClientStepAttestationSignatureProof {
             verification_method: arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
@@ -461,11 +468,14 @@ async fn drive_security_rotation(
     .map_err(anyhow::Error::msg)?;
     let completed = workflow
         .continue_with_signed_local_commit(
-            &transaction.transaction_id,
+            transaction.transaction_id(),
             &arkret_models_crypto::SecurityTransactionContinueRequestBody {
-                request_digest: transaction.request_digest.clone(),
-                prepared_plan_digest: transaction.prepared_plan_digest.clone(),
-                expected_accepted_step_count: transaction.accepted_steps.len().try_into()?,
+                request_digest: rotation_resource(transaction)?.request_digest.clone(),
+                prepared_plan_digest: rotation_resource(transaction)?.prepared_plan_digest.clone(),
+                expected_accepted_step_count: rotation_resource(transaction)?
+                    .accepted_steps
+                    .len()
+                    .try_into()?,
                 client_attestation: attestation,
             },
         )
@@ -487,10 +497,8 @@ async fn drive_security_rotation(
 }
 
 fn security_rotation_is_completed(transaction: &arkret_sdk::SecurityTransaction) -> bool {
-    matches!(
-        transaction.terminal_outcome,
-        Some(SecurityTransactionTerminalOutcome::Completed { .. })
-    )
+    matches!(transaction,arkret_sdk::SecurityTransaction::SecurityRotation(rotation)
+        if matches!(rotation.terminal_outcome,Some(SecurityTransactionTerminalOutcome::Completed { .. })))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -576,9 +584,7 @@ fn clear_pending_rotation(secure_store: &dyn SecureKeyStore, target_device_id: &
 }
 
 fn rotation_backup_count(transaction: &arkret_sdk::SecurityTransaction) -> Result<usize> {
-    let plan = transaction
-        .security_rotation_plan()
-        .ok_or_else(|| anyhow!("server returned a non-rotation transaction plan"))?;
+    let plan = &rotation_resource(transaction)?.prepared_plan;
     Ok(plan
         .backup_rotations
         .iter()

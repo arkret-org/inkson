@@ -129,7 +129,7 @@ pub(super) fn session_refresh_write_plan(
 ) -> SessionRefreshWritePlan {
     SessionRefreshWritePlan {
         grant: current_grant != Some(next_grant),
-        credential: current_credential != next_grant.grant_jwt,
+        credential: current_credential != next_grant.session_grant.as_str(),
         config: !current_config.same_runtime_state(desired_config),
     }
 }
@@ -262,7 +262,7 @@ pub(super) async fn refresh_session_credential_for_active_context(
     }
     match restored {
         Ok(session) => {
-            let session_credential = session.grant.grant_jwt.clone();
+            let session_credential = session.grant.session_grant.as_str().to_owned();
             let current_grant = state_store.read(LocalStateStore::session_grant);
             let mut desired_config = config_store.get_untracked().load();
             desired_config.session_credential = session_credential.clone();

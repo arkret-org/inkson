@@ -504,7 +504,7 @@ export function nativeSignerRecipientMatches(
 export const GATE_LOGOUT_FIXTURE = Object.freeze({
   operation: "ak.gate.account.command.logout.v1",
   url: "https://auth.local.host/_arkret/gate/account/logout",
-  grant: "sx:e2e-token",
+  grant: Buffer.alloc(32, 0x73).toString("base64url"),
   // The session harness's zero-seed DPoP holder differs from its event signer.
   publicKey: "O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik",
 });

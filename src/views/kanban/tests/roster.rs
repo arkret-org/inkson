@@ -170,7 +170,13 @@ fn assignment_mutations_preserve_same_principal_accounts_at_different_stations()
             mutation.operation().payload_for_schema()["relation"]["to_ref"],
             serde_json::to_value(mutation.actor_id()).unwrap()
         );
-        assert!(mutation.operation().payload_for_schema()["expected_revision"].is_null());
+        assert_eq!(
+            mutation
+                .operation()
+                .payload_for_schema()
+                .get("expected_commit_id"),
+            Some(&serde_json::Value::Null)
+        );
     }
     card.assigned_to_relations = vec![
         CardAssignedToRelation {
@@ -228,8 +234,8 @@ fn assignment_mutations_preserve_same_principal_accounts_at_different_stations()
     .unwrap();
     assert_eq!(removes.len(), 1);
     assert_eq!(
-        removes[0].operation().payload_for_schema()["expected_revision"],
-        serde_json::to_value(removed_revision).unwrap()
+        removes[0].operation().payload_for_schema()["expected_commit_id"],
+        serde_json::to_value(removed_revision.commit_id).unwrap()
     );
     assert_eq!(removes[0].actor_id(), &first);
     assert_eq!(removes[0].relation_id(), Some(removed_relation_id));

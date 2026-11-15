@@ -69,7 +69,12 @@ pub fn call_panel(scope: &Scope, context: Rc<InksonContext>, props: CallPanelPro
     let screen_sharing = scope.cage(false);
     let recording = scope.cage(RecordingState::Off);
     let transcription = scope.cage(TranscriptionState::Off);
+    let recording_segment =
+        scope.cage(Option::<(arkret_sdk::CallId, arkret_sdk::CallRecordingId)>::None);
+    let transcript_segment =
+        scope.cage(Option::<(arkret_sdk::CallId, arkret_sdk::CallRecordingId)>::None);
     let pending_capture = scope.cage(Option::<String>::None);
+    let capture_confirmation = scope.cage(Option::<(String, String, arkret_sdk::AccountId)>::None);
     let mut participants = scope.cage((Vec::<CallParticipantView>::new)());
     let active_call_id = scope.cage(call_id.clone());
     let call_seq = scope.cage(0_u64);
@@ -608,14 +613,113 @@ pub fn call_panel(scope: &Scope, context: Rc<InksonContext>, props: CallPanelPro
         }
     };
 
+    // Only native current or a committed Start may declare a capture permission
+    // active. These handles never stand in for a running encrypted recorder.
+    {
+        let state_store = state_store.clone();
+        let revision = context.state_revision;
+        scope.effect(move || {
+            let _ = revision.get();
+            let realm = active_realm.get();
+            let call = active_call_id.get();
+            let Ok(call_id) = arkret_sdk::CallId::new(call.clone()) else {
+                return;
+            };
+            for kind in [
+                arkret_sdk::RecordingCaptureKind::Recording,
+                arkret_sdk::RecordingCaptureKind::Transcript,
+            ] {
+                let saved = if kind == arkret_sdk::RecordingCaptureKind::Recording {
+                    recording_segment.get_untracked()
+                } else {
+                    transcript_segment.get_untracked()
+                };
+                let native = state_store.read(|store| {
+                    super::projection::current_capture_segment(store, &realm, &call, kind)
+                });
+                let no_active_segment = matches!(&native, Ok(None));
+                if let Ok(Some(id)) = native {
+                    let next = Some((call_id.clone(), id));
+                    if kind == arkret_sdk::RecordingCaptureKind::Recording {
+                        if recording_segment.get_untracked() != next {
+                            recording_segment.revise(|value| *value = next);
+                        }
+                        if recording.get_untracked() != RecordingState::Recording {
+                            recording.revise(|value| *value = RecordingState::Recording);
+                        }
+                    } else {
+                        if transcript_segment.get_untracked() != next {
+                            transcript_segment.revise(|value| *value = next);
+                        }
+                        if transcription.get_untracked() != TranscriptionState::Transcribing {
+                            transcription.revise(|value| *value = TranscriptionState::Transcribing);
+                        }
+                    }
+                } else if no_active_segment
+                    && saved
+                        .as_ref()
+                        .is_some_and(|(held_call, _)| held_call != &call_id)
+                {
+                    // Changing the displayed Call does not stop its old
+                    // segment. This complete view has no active new segment.
+                    if kind == arkret_sdk::RecordingCaptureKind::Recording {
+                        recording_segment.revise(|value| *value = None);
+                        recording.revise(|value| *value = RecordingState::Off);
+                    } else {
+                        transcript_segment.revise(|value| *value = None);
+                        transcription.revise(|value| *value = TranscriptionState::Off);
+                    }
+                } else if let Some((held_call, segment)) = saved
+                    && held_call == call_id
+                    && state_store
+                        .read(|store| {
+                            super::projection::current_capture_stopped(
+                                store, &realm, &call, &segment, kind,
+                            )
+                        })
+                        .unwrap_or(false)
+                {
+                    if kind == arkret_sdk::RecordingCaptureKind::Recording {
+                        recording_segment.revise(|value| *value = None);
+                        recording.revise(|value| *value = RecordingState::Off);
+                    } else {
+                        transcript_segment.revise(|value| *value = None);
+                        transcription.revise(|value| *value = TranscriptionState::Off);
+                    }
+                }
+            }
+        });
+    }
+
     let start_confirmed_capture = {
         let context = context.clone();
         let task_scope = task_scope.clone();
         let base = base_url.clone();
-        let actor = principal_id.clone();
         move |capture_kind: String| {
+            let kind = match capture_kind.as_str() {
+                "recording" => arkret_sdk::RecordingCaptureKind::Recording,
+                "transcript" => arkret_sdk::RecordingCaptureKind::Transcript,
+                _ => return,
+            };
+            let Some(account) = active_account.get() else {
+                last_error.revise(|value| *value = "active account is unavailable".to_owned());
+                return;
+            };
+            if capture_confirmation.get_untracked()
+                != Some((
+                    active_realm.get(),
+                    active_call_id.get(),
+                    account.authority.clone(),
+                ))
+            {
+                pending_capture.revise(|value| *value = None);
+                last_error.revise(|value| {
+                    *value = "capture confirmation belongs to a replaced Call or Account".to_owned()
+                });
+                return;
+            }
+            let actor = arkret_sdk::ActorId::account(account.authority);
             let base = base.clone();
-            let actor = actor.clone();
             let realm = active_realm.get();
             let call = active_call_id.get();
             let api_token = token.get();
@@ -624,94 +728,162 @@ pub fn call_panel(scope: &Scope, context: Rc<InksonContext>, props: CallPanelPro
             } else {
                 arkret_sdk::RecordingMode::AudioOnly
             };
-            {
-                let next_value = None;
-                pending_capture.revise(|value| *value = next_value);
-            };
-            match capture_kind.as_str() {
-                "recording" => {
-                    {
-                        let next_value = "starting recording".to_owned();
-                        status.revise(|value| *value = next_value);
-                    };
-                    call_task(context.clone(), Some(task_scope.clone()), async move {
-                        let recording_id = format!("rtc-recording-{}", crate::operation::uuid_v7());
-                        match with_event_submitter(&base, api_token, |sub| async move {
+            pending_capture.revise(|value| *value = None);
+            capture_confirmation.revise(|value| *value = None);
+            status.revise(|value| *value = "capture permission pending".to_owned());
+            call_task(context.clone(), Some(task_scope.clone()), async move {
+                let id = match arkret_sdk::CallRecordingId::new(format!(
+                    "rtc-{capture_kind}-{}",
+                    crate::operation::uuid_v7()
+                )) {
+                    Ok(id) => id,
+                    Err(error) => {
+                        last_error.revise(|value| *value = error.to_string());
+                        return;
+                    }
+                };
+                let Ok(call_id) = arkret_sdk::CallId::new(call.clone()) else {
+                    return;
+                };
+                let submitted_id = id.clone();
+                let selected_call = call.clone();
+                let result = with_event_submitter(&base, api_token, |sub| async move {
+                    match kind {
+                        arkret_sdk::RecordingCaptureKind::Recording => {
                             crate::transport::media::submit_call_recording_start(
                                 &sub,
                                 &realm,
                                 &actor,
                                 &call,
-                                &recording_id,
+                                &submitted_id,
                                 mode,
                             )
                             .await
-                        })
-                        .await
-                        {
-                            Ok(_) => {
-                                {
-                                    let next_value = RecordingState::Recording;
-                                    recording.revise(|value| *value = next_value);
-                                };
-                                {
-                                    let next_value = "recording started".to_owned();
-                                    status.revise(|value| *value = next_value);
-                                };
-                            }
-                            Err(err) => {
-                                let next_value = err.display();
-                                last_error.revise(|value| *value = next_value);
-                            }
                         }
-                    });
-                }
-                "transcript" => {
-                    {
-                        let next_value = "starting transcription".to_owned();
-                        status.revise(|value| *value = next_value);
-                    };
-                    call_task(context.clone(), Some(task_scope.clone()), async move {
-                        let transcript_id =
-                            format!("rtc-transcript-{}", crate::operation::uuid_v7());
-                        match with_event_submitter(&base, api_token, |sub| async move {
+                        arkret_sdk::RecordingCaptureKind::Transcript => {
                             crate::transport::media::submit_call_transcription_start(
                                 &sub,
                                 &realm,
                                 &actor,
                                 &call,
-                                &transcript_id,
+                                &submitted_id,
                                 mode,
                             )
                             .await
-                        })
-                        .await
-                        {
-                            Ok(_) => {
-                                {
-                                    let next_value = TranscriptionState::Transcribing;
-                                    transcription.revise(|value| *value = next_value);
-                                };
-                                {
-                                    let next_value = "transcription started".to_owned();
-                                    status.revise(|value| *value = next_value);
-                                };
-                            }
-                            Err(err) => {
-                                let next_value = err.display();
-                                last_error.revise(|value| *value = next_value);
-                            }
                         }
-                    });
+                    }
+                })
+                .await;
+                if active_call_id.get_untracked() != selected_call {
+                    return;
                 }
-                _ => {
-                    {
-                        let next_value = "capture cancelled".to_owned();
-                        status.revise(|value| *value = next_value);
-                    };
+                match result {
+                    Ok(progress) if progress.status == garth::SendQueueStatus::Rejected => {
+                        last_error.revise(|value| {
+                            *value = progress
+                                .rejection_reason_code
+                                .unwrap_or_else(|| "capture permission rejected".to_owned())
+                        });
+                    }
+                    Ok(progress) => {
+                        let committed =
+                            crate::transport::media::capture_progress_is_committed(&progress);
+                        if kind == arkret_sdk::RecordingCaptureKind::Recording {
+                            recording_segment.revise(|value| *value = Some((call_id, id)));
+                            recording.revise(|value| {
+                                *value = if committed {
+                                    RecordingState::Recording
+                                } else {
+                                    RecordingState::Pending
+                                }
+                            });
+                        } else {
+                            transcript_segment.revise(|value| *value = Some((call_id, id)));
+                            transcription.revise(|value| {
+                                *value = if committed {
+                                    TranscriptionState::Transcribing
+                                } else {
+                                    TranscriptionState::Pending
+                                }
+                            });
+                        }
+                        status.revise(|value| {
+                            *value = if committed {
+                                "capture permission accepted"
+                            } else {
+                                "capture permission pending"
+                            }
+                            .to_owned()
+                        });
+                    }
+                    Err(error) => last_error.revise(|value| *value = error.display()),
                 }
-            }
+            });
         }
+    };
+
+    let stop_capture: Rc<dyn Fn(arkret_sdk::RecordingCaptureKind)> = {
+        let context = context.clone();
+        let task_scope = task_scope.clone();
+        let base = base_url.clone();
+        Rc::new(move |kind| {
+            let Some(account) = active_account.get() else {
+                last_error.revise(|value| *value = "active account is unavailable".to_owned());
+                return;
+            };
+            let actor = arkret_sdk::ActorId::account(account.authority);
+            let realm = active_realm.get();
+            let call = active_call_id.get();
+            let saved = if kind == arkret_sdk::RecordingCaptureKind::Recording {
+                recording_segment.get()
+            } else {
+                transcript_segment.get()
+            };
+            if saved
+                .as_ref()
+                .is_some_and(|(held_call, _)| held_call.as_str() != call)
+            {
+                last_error
+                    .revise(|value| *value = "capture segment belongs to another Call".to_owned());
+                return;
+            }
+            let segment = saved.map(|(_, segment)| segment);
+            let api_token = token.get();
+            let base = base.clone();
+            let selected_call = call.clone();
+            status.revise(|value| *value = "capture Stop pending".to_owned());
+            call_task(context.clone(), Some(task_scope.clone()), async move {
+                let result = with_event_submitter(&base, api_token, |sub| async move {
+                    crate::transport::media::submit_call_capture_stop(
+                        &sub,
+                        &realm,
+                        &actor,
+                        &call,
+                        segment.as_ref(),
+                        kind,
+                    )
+                    .await
+                })
+                .await;
+                if active_call_id.get_untracked() != selected_call {
+                    return;
+                }
+                match result {
+                    Ok(outcome) if outcome.is_stopped() => {
+                        if kind == arkret_sdk::RecordingCaptureKind::Recording {
+                            recording.revise(|value| *value = RecordingState::Off);
+                            recording_segment.revise(|value| *value = None);
+                        } else {
+                            transcription.revise(|value| *value = TranscriptionState::Off);
+                            transcript_segment.revise(|value| *value = None);
+                        }
+                        status.revise(|value| *value = "capture permission stopped".to_owned());
+                    }
+                    Ok(_) => status.revise(|value| *value = "capture Stop pending".to_owned()),
+                    Err(error) => last_error.revise(|value| *value = error.display()),
+                }
+            });
+        })
     };
 
     let mut callbacks = super::surface::Callbacks::default();
@@ -1156,57 +1328,63 @@ pub fn call_panel(scope: &Scope, context: Rc<InksonContext>, props: CallPanelPro
         });
     }
     {
-        let _state_store = state_store.clone();
-        let _context = context.clone();
-        let _task_scope = task_scope.clone();
-        callbacks.add("call-record-button", {
-            move || {
-                if recording.get() == RecordingState::Recording {
-                    {
-                        let next_value = RecordingState::Off;
-                        recording.revise(|value| *value = next_value);
-                    };
-                    {
-                        let next_value = "recording stopped".to_owned();
-                        status.revise(|value| *value = next_value);
-                    };
-                } else {
-                    {
-                        let next_value = Some("recording".to_owned());
-                        pending_capture.revise(|value| *value = next_value);
-                    };
-                    {
-                        let next_value = "confirm recording".to_owned();
-                        status.revise(|value| *value = next_value);
-                    };
-                }
+        let state_store = state_store.clone();
+        let stop_capture = stop_capture.clone();
+        callbacks.add("call-record-button", move || {
+            if recording.get() != RecordingState::Off {
+                stop_capture(arkret_sdk::RecordingCaptureKind::Recording);
+                return;
             }
+            if let Err(error) = state_store.read(|store| {
+                super::projection::capture_start_available(
+                    store,
+                    &active_realm.get(),
+                    &active_call_id.get(),
+                    arkret_sdk::RecordingCaptureKind::Recording,
+                )
+            }) {
+                last_error.revise(|value| *value = error.to_string());
+                return;
+            }
+            let Some(account) = active_account.get() else {
+                last_error.revise(|value| *value = "active account is unavailable".to_owned());
+                return;
+            };
+            capture_confirmation.revise(|value| {
+                *value = Some((active_realm.get(), active_call_id.get(), account.authority))
+            });
+            pending_capture.revise(|value| *value = Some("recording".to_owned()));
+            status.revise(|value| *value = "confirm recording".to_owned());
         });
     }
     {
-        let _state_store = state_store.clone();
-        let _context = context.clone();
-        let _task_scope = task_scope.clone();
+        let state_store = state_store.clone();
+        let stop_capture = stop_capture.clone();
         callbacks.add("call-transcribe-button", move || {
-            if transcription.get() == TranscriptionState::Transcribing {
-                {
-                    let next_value = TranscriptionState::Off;
-                    transcription.revise(|value| *value = next_value);
-                };
-                {
-                    let next_value = "transcription stopped".to_owned();
-                    status.revise(|value| *value = next_value);
-                };
-            } else {
-                {
-                    let next_value = Some("transcript".to_owned());
-                    pending_capture.revise(|value| *value = next_value);
-                };
-                {
-                    let next_value = "confirm transcription".to_owned();
-                    status.revise(|value| *value = next_value);
-                };
+            if transcription.get() != TranscriptionState::Off {
+                stop_capture(arkret_sdk::RecordingCaptureKind::Transcript);
+                return;
             }
+            if let Err(error) = state_store.read(|store| {
+                super::projection::capture_start_available(
+                    store,
+                    &active_realm.get(),
+                    &active_call_id.get(),
+                    arkret_sdk::RecordingCaptureKind::Transcript,
+                )
+            }) {
+                last_error.revise(|value| *value = error.to_string());
+                return;
+            }
+            let Some(account) = active_account.get() else {
+                last_error.revise(|value| *value = "active account is unavailable".to_owned());
+                return;
+            };
+            capture_confirmation.revise(|value| {
+                *value = Some((active_realm.get(), active_call_id.get(), account.authority))
+            });
+            pending_capture.revise(|value| *value = Some("transcript".to_owned()));
+            status.revise(|value| *value = "confirm transcription".to_owned());
         });
     }
     {
@@ -1233,14 +1411,6 @@ pub fn call_panel(scope: &Scope, context: Rc<InksonContext>, props: CallPanelPro
                 {
                     let next_value = CallStage::Ended;
                     stage.revise(|value| *value = next_value);
-                };
-                {
-                    let next_value = RecordingState::Off;
-                    recording.revise(|value| *value = next_value);
-                };
-                {
-                    let next_value = TranscriptionState::Off;
-                    transcription.revise(|value| *value = next_value);
                 };
                 {
                     let next_value = None;
@@ -1286,14 +1456,6 @@ pub fn call_panel(scope: &Scope, context: Rc<InksonContext>, props: CallPanelPro
                 participants.revise(|value| *value = next_value);
             };
             transport_handle.revise(|value| *value = None);
-            {
-                let next_value = RecordingState::Off;
-                recording.revise(|value| *value = next_value);
-            };
-            {
-                let next_value = TranscriptionState::Off;
-                transcription.revise(|value| *value = next_value);
-            };
             {
                 let next_value = None;
                 pending_capture.revise(|value| *value = next_value);

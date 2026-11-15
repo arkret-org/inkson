@@ -329,16 +329,6 @@ impl UserLocalStore {
             .await
     }
 
-    /// Logout-only; the sole caller sits under `cfg(not(test))`, so this carries
-    /// the same gate instead of an allow.
-    #[cfg(not(test))]
-    pub(crate) fn delete_grant_binding_seed(
-        &self,
-        store: &dyn SecureKeyStore,
-    ) -> Result<(), SecureKeyStoreError> {
-        store.delete_secret(&self.key(GRANT_BINDING_SEED_ENTRY))
-    }
-
     pub fn delete_device_identity(
         &self,
         store: &dyn SecureKeyStore,

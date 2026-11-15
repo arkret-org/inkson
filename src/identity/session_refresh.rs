@@ -22,19 +22,19 @@ use arkret_sdk::http_client::{Auth, ClientBuilder};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
-use garth::session::BoxSessionFuture;
-use garth::{
-    AuthenticatedTransportFactory, PutSecretOptions, SecretClass, SecretDurability, SecureKeyStore,
-    SessionEngine, SessionGrantState, SessionGrantStore, SessionGrantTransport,
-    SessionRefreshOptions, SessionTransportProvider, TransportProvider,
-};
 // The refresh decision layer (constants, `RefreshDecision`, the due/dead
 // predicates) is garth's — inkson only maps its persisted grant into
 // `garth::SessionGrantRefreshState` and supplies the wall clock. Semantics
 // notes that used to live on a local copy: `NoGrant` must not clear a live
 // credential; `GrantExpired` still attempts rotation so only the refresh
 // endpoint's terminal error decides whether session material is cleared.
-pub use garth::{POLL_INTERVAL_SECS, REFRESH_SKEW_SECS};
+pub use garth::POLL_INTERVAL_SECS;
+use garth::session::BoxSessionFuture;
+use garth::{
+    AuthenticatedTransportFactory, PutSecretOptions, SecretClass, SecretDurability, SecureKeyStore,
+    SessionEngine, SessionGrantState, SessionGrantStore, SessionGrantTransport,
+    SessionRefreshOptions, SessionTransportProvider, TransportProvider,
+};
 use url::Url;
 
 use crate::config::normalize_server_url;
@@ -98,6 +98,20 @@ struct InksonAuthenticatedTransportFactory {
 }
 
 impl InksonAuthenticatedTransportFactory {
+    fn configure_restored_refresh_transport(&self, state: &SessionGrantState) -> garth::Result<()> {
+        if state.grant_ref.issuer_id != state.audience_id
+            || state.account_id.station_id != state.audience_id
+            || state.dpop_jkt.as_deref() != Some(self.device_handle.jkt())
+        {
+            return Err(garth::Error::Protocol(
+                "restored refresh transport differs from the captured issuer or holder".into(),
+            ));
+        }
+        self.refresh_transport
+            .replace(self.build_account_client(state)?);
+        Ok(())
+    }
+
     fn loopback_service_discovery_scope(&self) -> Option<(&'static str, u16)> {
         // The joint test fixture explicitly enables this feature. Production
         // sessions never infer egress permission from debug assertions or DIDs.
@@ -139,7 +153,7 @@ impl InksonAuthenticatedTransportFactory {
             .allow_insecure_localhost()
             .auth(Auth::Dpop(
                 self.device_handle
-                    .sdk_dpop_auth_for_access_token(state.grant_jwt.clone()),
+                    .sdk_dpop_auth_for_access_token(state.session_grant.as_str().to_owned()),
             ))
             .build()
             .map_err(Into::into)
@@ -153,7 +167,7 @@ impl InksonAuthenticatedTransportFactory {
             .allow_insecure_localhost()
             .auth(Auth::Dpop(
                 self.device_handle
-                    .sdk_dpop_auth_for_access_token(state.grant_jwt.clone()),
+                    .sdk_dpop_auth_for_access_token(state.session_grant.as_str().to_owned()),
             ))
             .build()
             .map_err(Into::into)
@@ -184,7 +198,7 @@ impl AuthenticatedTransportFactory for InksonAuthenticatedTransportFactory {
         let proof = mint_session_grant_refresh_proof(&persisted, self.device_handle.jkt())
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let request = arkret_sdk::auth::session_grant::human_session_grant_refresh_request(
-            persisted.grant_jwt.clone(),
+            persisted.session_grant.clone(),
             Some(state.audience_id.clone()),
             state
                 .device_id
@@ -265,15 +279,81 @@ impl SessionGrantStore for PersistedSessionGrantStore {
         }
     }
 
+    fn compare_exchange<'a>(
+        &'a self,
+        expected: &'a SessionGrantState,
+        next: &'a SessionGrantState,
+    ) -> impl std::future::Future<Output = garth::Result<bool>> + garth::MaybeSend + 'a {
+        async move {
+            let _write = session_credential_mutation_lock().lock().await;
+            self.ensure_current()?;
+            let key = self
+                .user_store
+                .secret_key(LocalStateStore::SECURE_SESSION_GRANT_KEY);
+            let previous = self
+                .secure_store
+                .read_secret_bytes_durable(&key)
+                .await
+                .map_err(|error| garth::Error::Storage(error.to_string()))?;
+            let Some(previous) = previous else {
+                session_grant_runtime().reset();
+                return Err(garth::Error::OwnStationSessionChanged);
+            };
+            let persisted: PersistedSessionGrant = serde_json::from_slice(&previous)
+                .map_err(|error| garth::Error::Storage(error.to_string()))?;
+            let mut actual =
+                session_grant_state_from_persisted(&persisted, &self.device_handle, Utc::now())
+                    .map_err(|error| garth::Error::Storage(error.to_string()))?;
+            // The holder's public JWK is optional local state; if retained, it
+            // must be exactly the key this already-bound host actually holds.
+            if let Some(public) = &expected.session_public_key {
+                let held = self
+                    .device_handle
+                    .canonical_session_public_jwk()
+                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                if public != held.as_str() {
+                    return Err(garth::Error::OwnStationSessionChanged);
+                }
+                actual.session_public_key = Some(public.clone());
+            }
+            if actual != *expected {
+                session_grant_runtime().reset();
+                return Err(garth::Error::OwnStationSessionChanged);
+            }
+            let replacement =
+                persisted_session_grant_from_state(next, &self.station_url, &self.device_handle)
+                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+            let bytes = zeroize::Zeroizing::new(
+                serde_json::to_vec(&replacement)
+                    .map_err(|error| garth::Error::Storage(error.to_string()))?,
+            );
+            let replaced = match self
+                .secure_store
+                .compare_exchange_secret_bytes_durable(&key, Some(&previous), &bytes)
+                .await
+            {
+                Ok(replaced) => replaced,
+                Err(error) => {
+                    session_grant_runtime().reset();
+                    return Err(garth::Error::Storage(error.to_string()));
+                }
+            };
+            if !replaced {
+                session_grant_runtime().reset();
+                return Err(garth::Error::OwnStationSessionChanged);
+            }
+            // A retired runtime may leave its valid captured-account record,
+            // but it cannot publish the result into the new account lifetime.
+            self.ensure_current()?;
+            Ok(true)
+        }
+    }
+
     fn clear(&self) -> garth::Result<()> {
         self.ensure_current()?;
-        self.secure_store
-            .delete_secret(
-                &self
-                    .user_store
-                    .secret_key(LocalStateStore::SECURE_SESSION_GRANT_KEY),
-            )
-            .map_err(|error| garth::Error::Protocol(error.to_string()))
+        Err(garth::Error::Storage(
+            "session removal requires the async captured-account cleanup".into(),
+        ))
     }
 }
 
@@ -365,6 +445,7 @@ pub(crate) async fn clear_rejected_session_grant(
     expected: Option<&PersistedSessionGrant>,
     secure_store: &dyn SecureKeyStore,
 ) -> anyhow::Result<()> {
+    let _mutation = session_credential_mutation_lock().lock().await;
     let user_store = crate::secure_key_store::UserLocalStore::new(
         account.authority.clone(),
         account.device_id.clone(),
@@ -375,8 +456,8 @@ pub(crate) async fn clear_rejected_session_grant(
         anyhow::ensure!(
             expected.is_some_and(|expected| current.account_id == expected.account_id
                 && current.device_id == expected.device_id
-                && current.grant_id == expected.grant_id
-                && current.grant_jwt == expected.grant_jwt),
+                && current.grant_ref == expected.grant_ref
+                && current.session_grant == expected.session_grant),
             "session changed before rejected grant cleanup"
         );
     }
@@ -405,7 +486,7 @@ fn grant_refresh_state(grant: &PersistedSessionGrant) -> garth::SessionGrantRefr
 /// unknown-expiry grants, and we must not rotate blindly without a deadline.
 /// True when the grant itself has gone past its `grant_expires_at`.
 pub fn grant_is_dead(grant: &PersistedSessionGrant) -> bool {
-    garth::grant_is_dead(&grant_refresh_state(grant), Utc::now())
+    grant.pending_refresh.is_none() && garth::grant_is_dead(&grant_refresh_state(grant), Utc::now())
 }
 
 /// Inspect the persisted grant and decide what the caller should do.
@@ -431,7 +512,10 @@ pub fn grant_matches_station(grant: &PersistedSessionGrant, station_url: &str) -
         return false;
     };
     let active_server = normalized_server_key(&active_server_url);
-    !grant_server.is_empty() && grant_server == active_server
+    !grant_server.is_empty()
+        && grant_server == active_server
+        && grant.grant_ref.issuer_id == grant.audience_id
+        && grant.account_id.station_id == grant.audience_id
 }
 
 /// Restore the shared provider from the durable grant and return its current
@@ -674,12 +758,12 @@ pub(crate) async fn rotate_captured_transport_for_test(
     anyhow::ensure!(
         successor.account_id == previous.account_id
             && successor.device_id == previous.device_id
-            && successor.grant_id != previous.grant_id,
+            && successor.grant_ref != previous.grant_ref,
         "issuer refresh did not preserve the holder and rotate its grant"
     );
     Ok((
-        previous.grant_id.to_string(),
-        successor.grant_id.to_string(),
+        serde_json::to_string(&previous.grant_ref)?,
+        serde_json::to_string(&successor.grant_ref)?,
     ))
 }
 
@@ -802,6 +886,16 @@ async fn session_transport_provider(
             .await?
         }
     };
+    // A durable pending request bypasses refresh_options so it cannot be
+    // reauthored. Configure its authenticated HTTP transport independently of
+    // proof construction, including when the captured predecessor has expired.
+    let restored = provider
+        .session()
+        .current_state()
+        .context("restored session provider has no captured grant")?;
+    provider
+        .factory()
+        .configure_restored_refresh_transport(&restored)?;
     anyhow::ensure!(
         runtime.generation.load(Ordering::SeqCst) == generation,
         "session provider ownership changed"
@@ -828,9 +922,9 @@ fn persisted_session_grant_from_state(
         .session_signing_key_pkcs8_pem()
         .map_err(|error| anyhow::anyhow!("export device session key: {error}"))?;
     Ok(PersistedSessionGrant {
-        grant_jwt: state.grant_jwt.clone(),
+        session_grant: state.session_grant.clone(),
         session_private_key_pem: session_private_key_pem.to_string(),
-        grant_id: state.grant_id.as_str().to_owned(),
+        grant_ref: state.grant_ref.clone(),
         audience_id: state.audience_id.clone(),
         granted_scope: state.granted_scope.clone(),
         account_id: state.account_id.clone(),
@@ -838,6 +932,7 @@ fn persisted_session_grant_from_state(
         station_url: station_url.clone(),
         grant_expires_at: Some(state.expires_at),
         stored_at: Utc::now(),
+        pending_refresh: state.pending_refresh.clone(),
     })
 }
 
@@ -846,15 +941,19 @@ fn session_grant_state_from_persisted(
     device_handle: &DpopHandle,
     now: chrono::DateTime<Utc>,
 ) -> anyhow::Result<SessionGrantState> {
+    let _ = now;
     let expires_at = grant
         .grant_expires_at
-        .unwrap_or_else(|| now + chrono::Duration::seconds(REFRESH_SKEW_SECS));
+        .context("stored session grant has no issuer expiry")?;
+    anyhow::ensure!(
+        grant.grant_ref.issuer_id == grant.audience_id,
+        "stored session grant issuer differs from its bound Station"
+    );
     Ok(SessionGrantState {
         account_id: grant.account_id.clone(),
         device_id: Some(grant.device_id.clone()),
-        grant_id: arkret_wire::SessionGrantId::new(grant.grant_id.trim().to_owned())
-            .map_err(|error| anyhow::anyhow!("invalid refresh grant_id: {error}"))?,
-        grant_jwt: grant.grant_jwt.clone(),
+        grant_ref: grant.grant_ref.clone(),
+        session_grant: grant.session_grant.clone(),
         expires_at,
         audience_id: grant.audience_id.clone(),
         granted_scope: grant.granted_scope.clone(),
@@ -864,6 +963,7 @@ fn session_grant_state_from_persisted(
         // rather than a placeholder string.
         session_public_key: None,
         dpop_jkt: Some(device_handle.jkt().to_owned()),
+        pending_refresh: grant.pending_refresh.clone(),
     })
 }
 
@@ -925,9 +1025,7 @@ fn mint_session_grant_refresh_proof(
     let principal_core = persisted_grant_principal_id(grant)?;
     let device_id = grant.device_id.clone();
     let audience = grant.audience_id.clone();
-    let predecessor_session_grant_id = arkret_wire::SessionGrantId::new(
-        required_trimmed(&grant.grant_id, "grant_id")?.to_owned(),
-    )?;
+    let predecessor_session_grant_ref = grant.grant_ref.clone();
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device identity signer is not installed"))?;
     let principal_did = arkret_sdk::Did::new(signer.signer_did().to_owned())
@@ -938,8 +1036,8 @@ fn mint_session_grant_refresh_proof(
     let verification_method = arkret_sdk::DidUrl::new(format!("{principal_did}#{device_id}"))
         .map_err(|error| anyhow::anyhow!("soft logout restore verification method: {error}"))?;
     let session_intent_digest = arkret_sdk::session_grant_refresh_request_digest(
-        &grant.grant_jwt,
-        &predecessor_session_grant_id,
+        &grant.session_grant,
+        &predecessor_session_grant_ref,
         &principal_core,
         &device_id,
         &audience,
@@ -950,7 +1048,7 @@ fn mint_session_grant_refresh_proof(
     let unsigned = arkret_wire::UnsignedAcceptedDeviceRefreshPossessionProof {
         context: arkret_wire::AcceptedDevicePossessionProofContext::V1,
         purpose: arkret_wire::AcceptedDeviceRefreshPossessionPurpose::SessionGrantRefresh,
-        predecessor_session_grant_id,
+        predecessor_session_grant_ref,
         account_id: arkret_wire::AccountId::new(principal_core, audience.clone()),
         device_id,
         audience_id: audience,
@@ -965,14 +1063,6 @@ fn mint_session_grant_refresh_proof(
     )
     .map_err(|error| anyhow::anyhow!(error))?;
     unsigned.attach_signature(signature).map_err(Into::into)
-}
-
-fn required_trimmed<'a>(value: &'a str, field: &str) -> anyhow::Result<&'a str> {
-    let value = value.trim();
-    if value.is_empty() {
-        anyhow::bail!("{field} is required");
-    }
-    Ok(value)
 }
 
 #[cfg(test)]
@@ -1009,7 +1099,8 @@ mod tests {
         };
         let client = ClientBuilder::new(Url::parse(&binding.base_url).unwrap())
             .auth(Auth::Dpop(
-                test_device_handle().sdk_dpop_auth_for_access_token(state.grant_jwt.clone()),
+                test_device_handle()
+                    .sdk_dpop_auth_for_access_token(state.session_grant.as_str().to_owned()),
             ))
             .build()
             .unwrap();
@@ -1196,11 +1287,15 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            grant_id: arkret_wire::SessionGrantId::new(
-                "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
-            )
-            .unwrap(),
-            grant_jwt: "grant.jwt.signature".to_owned(),
+            grant_ref: crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+                arkret_sdk::DidCoreId::new(
+                    "ak:did_core:webvh:z6mkfixture:coland.example".to_owned(),
+                )
+                .unwrap(),
+            ),
+            session_grant: crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+                "grant.jwt.signature",
+            ),
             expires_at: Utc::now() + chrono::Duration::hours(1),
             audience_id: arkret_sdk::DidCoreId::new(
                 "ak:did_core:webvh:z6mkfixture:coland.example".to_owned(),
@@ -1209,14 +1304,19 @@ mod tests {
             granted_scope: Vec::new(),
             session_public_key: None,
             dpop_jkt: None,
+            pending_refresh: None,
         }
     }
 
     fn test_persisted_grant(principal_id: &str) -> PersistedSessionGrant {
         PersistedSessionGrant {
-            grant_jwt: "grant.jwt.signature".to_owned(),
+            session_grant: crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+                "grant.jwt.signature",
+            ),
             session_private_key_pem: String::new(),
-            grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
+            grant_ref: crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+                arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:coland.example").unwrap(),
+            ),
             audience_id: arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:coland.example")
                 .unwrap(),
             granted_scope: Vec::new(),
@@ -1234,7 +1334,216 @@ mod tests {
             station_url: url::Url::parse("https://coland.example").unwrap(),
             grant_expires_at: Some(Utc::now() + chrono::Duration::hours(1)),
             stored_at: Utc::now(),
+            pending_refresh: None,
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn cold_pending_refresh_uses_real_http_and_the_exact_expired_predecessor_body() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let handle = test_device_handle();
+        let mut grant = test_persisted_grant("ak:did_core:webvh:z6mkfixture:alice.example");
+        grant.granted_scope = vec!["ak.self.account.read.describe.v1".to_owned()];
+        grant.grant_expires_at = Some(Utc::now() - chrono::Duration::minutes(1));
+        let proof_time = arkret_sdk::canonical::normalize_timestamp_canonical(
+            Utc::now() - chrono::Duration::minutes(10),
+        );
+        let unsigned = arkret_wire::UnsignedAcceptedDeviceRefreshPossessionProof {
+            context: arkret_wire::AcceptedDevicePossessionProofContext::V1,
+            purpose: arkret_wire::AcceptedDeviceRefreshPossessionPurpose::SessionGrantRefresh,
+            predecessor_session_grant_ref: grant.grant_ref.clone(),
+            account_id: grant.account_id.clone(),
+            device_id: grant.device_id.clone(),
+            audience_id: grant.audience_id.clone(),
+            holder_jkt: handle.jkt().to_owned(),
+            session_intent_digest: arkret_sdk::session_grant_refresh_request_digest(
+                &grant.session_grant,
+                &grant.grant_ref,
+                &grant.account_id.principal_id,
+                &grant.device_id,
+                &grant.audience_id,
+                handle.jkt(),
+            )
+            .unwrap(),
+            issued_at: proof_time,
+            expires_at: proof_time + chrono::Duration::seconds(60),
+            verification_method: arkret_sdk::DidUrl::new(format!(
+                "did:webvh:z6mkfixture:alice.example#{}",
+                grant.device_id,
+            ))
+            .unwrap(),
+        };
+        let signature = arkret_sdk::Base64UrlString::new(
+            handle
+                .sign_protocol_bytes(&unsigned.canonical_signing_bytes().unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        let request = arkret_sdk::auth::session_grant::human_session_grant_refresh_request(
+            grant.session_grant.clone(),
+            Some(grant.audience_id.clone()),
+            grant.device_id.clone(),
+            unsigned.attach_signature(signature).unwrap(),
+        )
+        .unwrap();
+        let expected_body = arkret_sdk::canonical::canonical_json_bytes(&request).unwrap();
+        grant.pending_refresh = Some(garth::PendingSessionGrantRefresh {
+            request,
+            expected_dpop_jkt: handle.jkt().to_owned(),
+        });
+        let user = crate::secure_key_store::UserLocalStore::new(
+            grant.account_id.clone(),
+            grant.device_id.clone(),
+        )
+        .unwrap();
+        let secure: Arc<dyn SecureKeyStore + Send + Sync> =
+            Arc::new(crate::secure_key_store::MemorySecureKeyStore::default());
+        secure
+            .put_secret(
+                &user.secret_key(LocalStateStore::SECURE_SESSION_GRANT_KEY),
+                &serde_json::to_vec(&grant).unwrap(),
+                PutSecretOptions {
+                    durability: SecretDurability::DurableBeforeReturn,
+                    class: SecretClass::SessionCredential,
+                },
+            )
+            .await
+            .unwrap();
+        let store = PersistedSessionGrantStore {
+            generation: session_grant_runtime().generation.load(Ordering::SeqCst),
+            secure_store: secure.clone(),
+            user_store: user.clone(),
+            station_url: grant.station_url.clone(),
+            device_handle: handle.clone(),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+        let successor_ref = arkret_sdk::SessionGrantRef::new(
+            grant.grant_ref.issuer_id.clone(),
+            arkret_sdk::SessionGrantId::new(
+                "ak:session_grant:01970000-0000-7000-8000-000000000093",
+            )
+            .unwrap(),
+        );
+        let outcome = arkret_sdk::SessionGrantResponseBody {
+            account_id: grant.account_id.clone(),
+            issuer_id: successor_ref.issuer_id.clone(),
+            device_id: Some(grant.device_id.clone()),
+            session_grant: arkret_sdk::SessionGrantSecret::from_bytes([0x56; 32]),
+            expires_at: Utc::now() + chrono::Duration::hours(1),
+            session_grant_id: successor_ref.id.clone(),
+            session_public_key: handle.canonical_session_public_jwk().unwrap(),
+            audience_id: grant.audience_id.clone(),
+            granted_scope: grant.granted_scope.clone(),
+            previous_session_grant_id: Some(grant.grant_ref.id.clone()),
+        };
+        let outcome_bytes = arkret_sdk::canonical::canonical_json_bytes(&outcome).unwrap();
+        let refresh_url = base
+            .join("/_arkret/gate/account/session-grants/refresh")
+            .unwrap();
+        let captured_secret = grant.session_grant.clone();
+        let expected_jkt = handle.jkt().to_owned();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            let mut buffer = [0u8; 4096];
+            let (header_end, content_length) = loop {
+                let count = socket.read(&mut buffer).await.unwrap();
+                assert!(count > 0);
+                bytes.extend_from_slice(&buffer[..count]);
+                if let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                    let headers = std::str::from_utf8(&bytes[..end]).unwrap();
+                    let length = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.split_once(':')
+                                .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                                .map(|(_, value)| value.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap();
+                    break (end + 4, length);
+                }
+            };
+            while bytes.len() < header_end + content_length {
+                let count = socket.read(&mut buffer).await.unwrap();
+                assert!(count > 0);
+                bytes.extend_from_slice(&buffer[..count]);
+            }
+            let headers = std::str::from_utf8(&bytes[..header_end]).unwrap();
+            assert!(headers.starts_with("POST /_arkret/gate/account/session-grants/refresh "));
+            let header = |name: &str| {
+                headers
+                    .lines()
+                    .find_map(|line| {
+                        line.split_once(':')
+                            .filter(|(key, _)| key.eq_ignore_ascii_case(name))
+                            .map(|(_, value)| value.trim())
+                    })
+                    .unwrap()
+            };
+            assert!(header("authorization") == format!("DPoP {}", captured_secret.as_str()));
+            let verified = arkret_sdk::signatures::dpop::verify_dpop_proof(
+                &arkret_sdk::signatures::dpop::DpopVerificationRequest {
+                    proof_jwt: header("dpop"),
+                    method: "POST",
+                    htu: refresh_url.as_str(),
+                    access_token: Some(captured_secret.as_str()),
+                    expected_nonce: None,
+                    now: Utc::now(),
+                    max_age: chrono::Duration::minutes(5),
+                    max_future_skew: chrono::Duration::seconds(30),
+                },
+            )
+            .unwrap();
+            assert_eq!(verified.jkt, expected_jkt);
+            assert_eq!(
+                &bytes[header_end..header_end + content_length],
+                expected_body
+            );
+            let response_header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                outcome_bytes.len(),
+            );
+            socket.write_all(response_header.as_bytes()).await.unwrap();
+            socket.write_all(&outcome_bytes).await.unwrap();
+        });
+        let refresh_transport = ReplaceableSessionTransport::default();
+        let factory = InksonAuthenticatedTransportFactory {
+            principal_sdk_base_url: grant.station_url.clone(),
+            account_sdk_base_url: base,
+            station_url: grant.station_url.clone(),
+            device_handle: handle,
+            refresh_transport: refresh_transport.clone(),
+        };
+        let provider = SessionTransportProvider::restore(
+            refresh_transport,
+            factory,
+            SessionRefreshOptions::default(),
+            store,
+        )
+        .unwrap();
+        let restored = provider.session().current_state().unwrap();
+        assert!(restored.expires_at < Utc::now() && restored.pending_refresh.is_some());
+        assert!(provider.factory().refresh_transport.current().is_err());
+        provider
+            .factory()
+            .configure_restored_refresh_transport(&restored)
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), provider.provide())
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), server)
+            .await
+            .unwrap()
+            .unwrap();
+        let persisted =
+            crate::state::load_session_grant_from_user_secure_store(&user, secure.as_ref())
+                .unwrap()
+                .unwrap();
+        assert_eq!(persisted.grant_ref, successor_ref);
+        assert!(persisted.pending_refresh.is_none());
     }
 
     #[test]
@@ -1253,7 +1562,7 @@ mod tests {
         let restored = session_grant_state_from_persisted(&reloaded, &handle, Utc::now()).unwrap();
         assert_eq!(restored.granted_scope, original.granted_scope);
         assert_eq!(restored.account_id, original.account_id);
-        assert_eq!(restored.grant_id, original.grant_id);
+        assert_eq!(restored.grant_ref, original.grant_ref);
 
         let mut incomplete = serde_json::to_value(&persisted).unwrap();
         incomplete.as_object_mut().unwrap().remove("granted_scope");
@@ -1403,7 +1712,10 @@ mod tests {
         old.account_id = account.authority.clone();
         old.device_id = account.device_id.clone();
         let mut replacement = old.clone();
-        replacement.grant_jwt = "replacement.jwt.signature".into();
+        replacement.session_grant =
+            crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+                "replacement.jwt.signature",
+            );
         let user = crate::secure_key_store::UserLocalStore::new(
             account.authority.clone(),
             account.device_id.clone(),
@@ -1425,8 +1737,8 @@ mod tests {
             crate::state::load_session_grant_from_user_secure_store(&user, &store)
                 .unwrap()
                 .unwrap()
-                .grant_jwt,
-            replacement.grant_jwt
+                .session_grant,
+            replacement.session_grant
         );
     }
 
@@ -1456,7 +1768,7 @@ mod tests {
 
         let restored = load_active_session_grant("https://coland.example", &secure_store).unwrap();
 
-        assert_eq!(restored.grant_id, grant.grant_id);
+        assert_eq!(restored.grant_ref, grant.grant_ref);
         assert_eq!(restored.account_id, grant.account_id);
         assert_eq!(restored.device_id, grant.device_id);
     }
@@ -1503,7 +1815,7 @@ mod tests {
         let restored =
             load_account_session_grant_with_secure_store(&account, &secure_store).unwrap();
 
-        assert_eq!(restored.grant_id, grant.grant_id);
+        assert_eq!(restored.grant_ref, grant.grant_ref);
         assert!(crate::secure_key_store::active_device_seed_scope().is_none());
 
         let mut wrong_server = account.clone();
@@ -1515,6 +1827,8 @@ mod tests {
         let mut wrong_audience = grant;
         wrong_audience.audience_id =
             arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:other.example").unwrap();
+        wrong_audience.grant_ref.issuer_id = wrong_audience.audience_id.clone();
+        wrong_audience.account_id.station_id = wrong_audience.audience_id.clone();
         user_store
             .save_secret(
                 &secure_store,

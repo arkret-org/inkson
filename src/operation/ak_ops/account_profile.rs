@@ -32,7 +32,7 @@ pub fn account_profile_update(
             actor_profile_id: profile_id,
             patch,
             expected_state_digest: None,
-            expected_revision: None,
+            expected_commit_id: None,
         },
     )
     .build_sdk_event("inkson")

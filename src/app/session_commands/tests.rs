@@ -38,9 +38,13 @@ async fn fixture() -> Fixture {
         .await
         .unwrap();
         let grant = PersistedSessionGrant {
-            grant_jwt: format!("grant-{name}"),
+            session_grant: crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+                &format!("grant-{name}"),
+            ),
             session_private_key_pem: String::new(),
-            grant_id: format!("grant-id-{name}"),
+            grant_ref: crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+                account.authority.station_id.clone(),
+            ),
             audience_id: account.authority.station_id.clone(),
             granted_scope: vec![],
             account_id: account.authority.clone(),
@@ -48,6 +52,7 @@ async fn fixture() -> Fixture {
             station_url: account.server_url.clone(),
             grant_expires_at: None,
             stored_at: chrono::Utc::now(),
+            pending_refresh: None,
         };
         user.save_secret(
             &keys,
@@ -89,7 +94,9 @@ async fn bulk_logout_journals_each_holder_and_preserves_identity_and_unselected_
     assert!(records.iter().all(PendingLogout::has_coauth_revoke));
     assert_ne!(records[0].authority, records[1].authority);
     assert_ne!(records[0].device_jkt, records[1].device_jkt);
-    clear_account_sessions(selected, &f.keys).await.unwrap();
+    clear_account_sessions(selected, &records, &f.keys)
+        .await
+        .unwrap();
     for account in selected {
         let user = user(account);
         assert!(
@@ -121,10 +128,10 @@ async fn bulk_logout_journals_each_holder_and_preserves_identity_and_unselected_
 #[tokio::test]
 async fn current_logout_does_not_clear_the_other_saved_sessions() {
     let f = fixture().await;
-    journal_accounts(&f.accounts[..1], &f.accounts[0], None, &f.keys)
+    let records = journal_accounts(&f.accounts[..1], &f.accounts[0], None, &f.keys)
         .await
         .unwrap();
-    clear_account_sessions(&f.accounts[..1], &f.keys)
+    clear_account_sessions(&f.accounts[..1], &records, &f.keys)
         .await
         .unwrap();
     for account in &f.accounts[1..] {
@@ -232,11 +239,11 @@ async fn delete_failure_still_clears_other_selected_accounts_and_keeps_the_journ
         journal: false,
         delete: Some(failed),
     };
-    journal_accounts(&f.accounts[..2], &f.accounts[0], None, &keys)
+    let records = journal_accounts(&f.accounts[..2], &f.accounts[0], None, &keys)
         .await
         .unwrap();
     assert!(
-        clear_account_sessions(&f.accounts[..2], &keys)
+        clear_account_sessions(&f.accounts[..2], &records, &keys)
             .await
             .is_err()
     );
@@ -258,4 +265,36 @@ async fn delete_failure_still_clears_other_selected_accounts_and_keeps_the_journ
             .len(),
         2
     );
+}
+
+#[tokio::test]
+async fn captured_logout_cannot_delete_a_later_login_at_the_same_account() {
+    let f = fixture().await;
+    let records = journal_accounts(&f.accounts[..1], &f.accounts[0], None, &f.keys)
+        .await
+        .unwrap();
+    let user = user(&f.accounts[0]);
+    let raw = user
+        .load_secret(&f.keys, LocalStateStore::SECURE_SESSION_GRANT_KEY)
+        .unwrap()
+        .unwrap();
+    let mut newer: PersistedSessionGrant = serde_json::from_str(&raw).unwrap();
+    newer.session_grant =
+        crate::identity::account_auth::grant_dpop::test_session_grant_secret("new-login");
+    newer.grant_ref.id =
+        arkret_sdk::SessionGrantId::new("ak:session_grant:01904100-0000-7000-8000-000000000099")
+            .unwrap();
+    crate::state::store_session_grant_in_user_secure_store_durable(&user, &f.keys, &newer)
+        .await
+        .unwrap();
+    assert!(
+        clear_account_sessions(&f.accounts[..1], &records, &f.keys)
+            .await
+            .is_err()
+    );
+    let retained = crate::state::load_session_grant_from_user_secure_store(&user, &f.keys)
+        .unwrap()
+        .unwrap();
+    assert_eq!(retained, newer);
+    assert!(user.load_grant_binding_seed(&f.keys).unwrap().is_some());
 }

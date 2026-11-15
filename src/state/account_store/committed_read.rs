@@ -18,7 +18,7 @@ pub(crate) struct CommittedAccountRead {
     pub(in crate::state) generation: u64,
     pub(in crate::state) epoch: u64,
     pub(in crate::state) device: Option<(arkret_sdk::AccountId, arkret_sdk::DeviceId)>,
-    pub(in crate::state) grant: Option<String>,
+    pub(in crate::state) grant: Option<arkret_sdk::SessionGrantRef>,
     pub(in crate::state) pending: Option<(arkret_sdk::DeviceId, Option<String>)>,
 }
 impl CommittedAccountRead {
@@ -34,7 +34,7 @@ impl CommittedAccountRead {
             && self.device
                 == crate::secure_key_store::active_device_seed_scope()
                     .map(|scope| (scope.authority, scope.device_id))
-            && self.grant == store.session_grant().map(|grant| grant.grant_id)
+            && self.grant == store.session_grant().map(|grant| grant.grant_ref)
             && self.pending
                 == store
                     .pending_login()

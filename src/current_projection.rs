@@ -142,6 +142,79 @@ impl ScopeMlsCurrent {
 }
 
 impl RealmCurrentView {
+    /// Read active members from the installed whole current value. Original
+    /// ADD Events and historical epoch keys are deliberately not prerequisites.
+    pub(crate) fn message_reactions(
+        &self,
+        message: &arkret_sdk::MessageId,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<Option<Vec<arkret_sdk::ReactionCurrentEntry>>> {
+        anyhow::ensure!(
+            scope.realm_id().as_str() == self.realm_id,
+            "reaction target belongs to another Realm"
+        );
+        if !self.complete_cut {
+            return Ok(None);
+        }
+        let target_selector = CurrentSelector::MessageRevision {
+            message_id: message.clone(),
+        };
+        let Some(CurrentState::Value {
+            source_stream_ref: target_stream,
+            ..
+        }) = entry_for(&self.entries, &target_selector)
+        else {
+            return Ok(None);
+        };
+        let stream =
+            arkret_sdk::CommitStreamRef::from_scope(scope, Some(scope.realm_id().clone()))?;
+        anyhow::ensure!(
+            target_stream == &stream,
+            "reaction target current differs from its visible scope"
+        );
+        if entry_for(
+            &self.entries,
+            &CurrentSelector::ObjectRedaction {
+                target_ref: message.to_string(),
+            },
+        )
+        .is_some()
+        {
+            return Ok(None);
+        }
+        let selector = CurrentSelector::MessageReactions {
+            target_ref: message.to_string(),
+        };
+        let Some(CurrentState::Value {
+            source_stream_ref,
+            revision,
+            value,
+            ..
+        }) = entry_for(&self.entries, &selector)
+        else {
+            return Ok(Some(Vec::new()));
+        };
+        anyhow::ensure!(
+            source_stream_ref == &stream,
+            "reaction current belongs to another target scope"
+        );
+        let current: arkret_sdk::MessageReactionsCurrentValue =
+            serde_json::from_value(value.clone())?;
+        current.validate_for_target(message.as_str())?;
+        for entry in current.entries() {
+            anyhow::ensure!(
+                entry.source.stream_ref == stream
+                    && entry.source.stream_position <= revision.stream_position
+                    && (entry.source.stream_position == revision.stream_position)
+                        == (entry.source.commit_id == revision.commit_id),
+                "reaction active source is outside its current row revision"
+            );
+        }
+        // The tag is metadata. This cannot recover old encrypted emoji bytes
+        // or authorize a target body below the readable floor.
+        Ok(Some(current.into_entries()))
+    }
+
     pub(crate) fn read_receipt_policy(
         &self,
         scope: &arkret_sdk::ScopeRef,
@@ -517,7 +590,7 @@ mod tests {
         let left = assertion(
             2,
             join_revision.commit_id.clone(),
-            json!({"op":"leave","actor_id":actor,"device_id":device,"expected_revision":join_revision}),
+            json!({"op":"leave","actor_id":actor,"device_id":device,"expected_commit_id":join_revision.commit_id}),
         );
         let roster_revision = CurrentRevision {
             commit_id: serde_json::from_value(left["source_commit"]["commit_id"].clone()).unwrap(),
@@ -837,6 +910,94 @@ mod tests {
         assert_eq!(
             view.entries_for("ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM"),
             None
+        );
+    }
+
+    #[test]
+    fn reactions_use_active_current_without_historical_add_or_epoch_plaintext() {
+        let realm: RealmId = REALM.parse().unwrap();
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm.clone(),
+        };
+        let target = arkret_sdk::MessageId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [91; 32],
+        ));
+        let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            "ak:did_core:web:alice.example".parse().unwrap(),
+            "ak:did_core:web:station.example".parse().unwrap(),
+        ));
+        let target_row = entry(
+            CurrentSelector::MessageRevision {
+                message_id: target.clone(),
+            },
+            10,
+            serde_json::json!({}),
+        );
+        let reaction = entry(
+            CurrentSelector::MessageReactions {
+                target_ref: target.to_string(),
+            },
+            10,
+            serde_json::json!({"entries":[{"actor_id":actor,"key":"👍","source":{
+                "event_id":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[92;32]),
+                "commit_id":arkret_sdk::RealmCommitId::from_digest([2;32]),
+                "stream_ref":{"kind":"realm","realm_id":realm},"stream_position":2
+            }}]}),
+        );
+        let view =
+            RealmCurrentView::new(REALM, vec![target_row.clone(), reaction.clone()], true).unwrap();
+        let members = view.message_reactions(&target, &scope).unwrap().unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].actor_id, actor);
+        assert_eq!(members[0].source.stream_position, 2);
+        let empty = entry(
+            CurrentSelector::MessageReactions {
+                target_ref: target.to_string(),
+            },
+            11,
+            serde_json::json!({"entries":[]}),
+        );
+        let cleared = RealmCurrentView::new(REALM, vec![target_row.clone(), empty], true).unwrap();
+        assert!(
+            cleared
+                .message_reactions(&target, &scope)
+                .unwrap()
+                .unwrap()
+                .is_empty()
+        );
+        let partial =
+            RealmCurrentView::new(REALM, vec![target_row.clone(), reaction.clone()], false)
+                .unwrap();
+        assert!(
+            partial
+                .message_reactions(&target, &scope)
+                .unwrap()
+                .is_none()
+        );
+        let hidden = RealmCurrentView::new(REALM, vec![reaction.clone()], true).unwrap();
+        assert!(hidden.message_reactions(&target, &scope).unwrap().is_none());
+        let redacted = RealmCurrentView::new(
+            REALM,
+            vec![
+                target_row,
+                reaction,
+                entry(
+                    CurrentSelector::ObjectRedaction {
+                        target_ref: target.to_string(),
+                    },
+                    11,
+                    serde_json::json!({}),
+                ),
+            ],
+            true,
+        )
+        .unwrap();
+        assert!(
+            redacted
+                .message_reactions(&target, &scope)
+                .unwrap()
+                .is_none()
         );
     }
 }

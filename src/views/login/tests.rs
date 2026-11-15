@@ -51,9 +51,13 @@ fn test_active_account(did: &str, device_id: &str) -> crate::config::ActiveAccou
 fn dummy_grant() -> PersistedSessionGrant {
     let now = chrono::Utc::now();
     PersistedSessionGrant {
-        grant_jwt: "test.grant.jwt".to_owned(),
+        session_grant: crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+            "test.grant.jwt",
+        ),
         session_private_key_pem: "PEM".to_owned(),
-        grant_id: "grant-1".to_owned(),
+        grant_ref: crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+        ),
         audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
         granted_scope: Vec::new(),
         account_id: arkret_sdk::AccountId::new(
@@ -67,6 +71,7 @@ fn dummy_grant() -> PersistedSessionGrant {
         station_url: url::Url::parse("https://principal.example").unwrap(),
         grant_expires_at: Some(now + chrono::Duration::seconds(3600)),
         stored_at: now,
+        pending_refresh: None,
     }
 }
 

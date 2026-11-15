@@ -547,7 +547,7 @@ pub(super) fn surface(
                                 callbacks.button(
                                     "call-record-button",
                                     scope.bond(move || {
-                                        if state.recording.get() == RecordingState::Recording {
+                                        if state.recording.get() != RecordingState::Off {
                                             "Stop recording"
                                         } else {
                                             "Record"
@@ -560,9 +560,7 @@ pub(super) fn surface(
                                 callbacks.button(
                                     "call-transcribe-button",
                                     scope.bond(move || {
-                                        if state.transcription.get()
-                                            == TranscriptionState::Transcribing
-                                        {
+                                        if state.transcription.get() != TranscriptionState::Off {
                                             "Stop transcribing"
                                         } else {
                                             "Transcribe"

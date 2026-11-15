@@ -34,7 +34,8 @@ pub use backup_body::{
 };
 pub(crate) use recovery_transaction::{
     CompletedFreshDeviceRecovery, execute_pcr_policy_recovery,
-    load_completed_pending_pcr_policy_recovery, resume_pending_pcr_policy_recovery,
+    load_completed_pending_pcr_policy_recovery, load_signed_pending_pcr_policy_recovery,
+    resume_pending_pcr_policy_recovery,
 };
 pub(crate) use restore::mls_restore_prompt_required_after_material;
 pub use restore::{

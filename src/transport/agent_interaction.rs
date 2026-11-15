@@ -51,7 +51,7 @@ pub(crate) async fn write(
         agent_account_id: agent.clone(),
         controller_account_id: controller.clone(),
         interaction_mode: mode,
-        expected_revision: revision,
+        expected_commit_id: revision.map(|revision| revision.commit_id),
     };
     let operation = crate::operation::TypedOperationBuilder::new::<
         arkret_sdk::event_spec::AgentInteractionSet,

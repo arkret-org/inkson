@@ -178,7 +178,7 @@ pub(crate) async fn freeze_and_request<F: FnOnce(PreparedReview)>(
                     agent_account_id: agent,
                     controller_account_id: controller.clone(),
                     interaction_mode: AgentInteractionMode::Public,
-                    expected_revision: revision,
+                    expected_commit_id: revision.map(|revision| revision.commit_id),
                 },
             )
             .build_sdk_event("inkson")?

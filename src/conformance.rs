@@ -144,9 +144,9 @@ pub async fn restore_native_account_session(
         "fixture grant names another session public key"
     );
     let grant = crate::state::PersistedSessionGrant {
-        grant_jwt: outcome.session_grant.clone(),
+        session_grant: outcome.session_grant.clone(),
         session_private_key_pem: holder.session_signing_key_pkcs8_pem()?.to_string(),
-        grant_id: outcome.session_grant_id.to_string(),
+        grant_ref: outcome.grant_ref(),
         audience_id: outcome.audience_id.clone(),
         granted_scope: outcome.granted_scope.clone(),
         account_id: outcome.account_id.clone(),
@@ -157,6 +157,7 @@ pub async fn restore_native_account_session(
         station_url: crate::config::validate_server_url(station_url)?,
         grant_expires_at: Some(outcome.expires_at),
         stored_at: chrono::Utc::now(),
+        pending_refresh: None,
     };
     let description = crate::station_connection::discover(grant.station_url.as_str()).await?;
     anyhow::ensure!(

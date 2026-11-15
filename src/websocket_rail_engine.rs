@@ -461,7 +461,7 @@ async fn connector_for(ctx: &WebSocketRailContext) -> Option<InksonWebSocketConn
     .ok()
     .flatten()?;
     Some(InksonWebSocketConnector::new(
-        session.grant.grant_jwt,
+        session.grant.session_grant.as_str().to_owned(),
         holder,
     ))
 }

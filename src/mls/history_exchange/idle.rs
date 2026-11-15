@@ -110,7 +110,13 @@ mod tests {
             },
             account.clone(),
             account.station_id.clone(),
-            arkret_wire::SessionGrantId::from_issuance_digest([3; 32]),
+            arkret_wire::SessionGrantRef::new(
+                (account.station_id.clone()).clone(),
+                arkret_wire::SessionGrantId::new(
+                    "ak:session_grant:01904100-0000-7000-8000-000000000003",
+                )
+                .unwrap(),
+            ),
             0,
             "test-grant".into(),
         )

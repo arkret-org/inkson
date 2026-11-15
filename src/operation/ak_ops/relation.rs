@@ -62,7 +62,7 @@ pub(crate) fn relation_create_payload(
     let domain = relation_domain(domain_kind, &definition)?;
     arkret_sdk::RelationCreatePayload::try_new(
         domain.clone(),
-        current.expected_revision_for_create(&domain)?,
+        current.expected_commit_id_for_create(&domain)?,
         definition,
     )
     .map_err(anyhow::Error::from)
@@ -110,7 +110,7 @@ pub(crate) fn relation_tombstone_for_actor(
     })?;
     let payload = arkret_sdk::RelationTombstonePayload {
         primary_conflict_domain: domain,
-        expected_revision: revision.clone(),
+        expected_commit_id: revision.commit_id.clone(),
         relation_id: relation_id.clone(),
         reason: None,
     };

@@ -56,8 +56,8 @@ pub fn build_founding_authorize_payload(
         recovery_session_id: None,
         pairing_challenge_transcript_digest: None,
         applet_id: None,
-        expected_control_revision: None,
-        expected_device_revision: None,
+        expected_control_commit_id: None,
+        expected_device_commit_id: None,
     };
     payload
         .validate_wire_constraints()

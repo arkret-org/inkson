@@ -46,17 +46,19 @@ const AUTOMATIC_RETRY_MAX_AGE_HOURS: i64 = 24;
 
 /// The journalled intent to terminate a server-side session, persisted so
 /// it survives a tab close or a transient coauth outage.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingLogout {
     /// Exact account authority whose logout record owns this secure-store slot.
     pub authority: arkret_sdk::AccountId,
     /// Exact account device whose grant-binding material is journalled.
     pub device_id: arkret_sdk::DeviceId,
-    /// The grant JWT to revoke at coauth. `None` when the store held no
-    /// session grant at the moment "Log out" was pressed. Missing captured
+    /// The exact opaque credential to revoke at its Account Authority. `None` when the store held
+    /// no session grant at the moment "Log out" was pressed. Missing captured
     /// holder material cannot authorize a network call or prove termination.
     #[serde(default)]
-    pub grant_jwt: Option<String>,
+    pub session_grant: Option<arkret_sdk::SessionGrantSecret>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<arkret_sdk::SessionGrantRef>,
     /// Base64url seed of the device DPoP key whose thumbprint is bound
     /// into the grant's `cnf.jkt`. Stashed because the hard logout wipes
     /// the live device key (to rotate `cnf.jkt` on next sign-in); this
@@ -87,6 +89,21 @@ pub struct PendingLogout {
     pub created_at: DateTime<Utc>,
 }
 
+impl std::fmt::Debug for PendingLogout {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PendingLogout")
+            .field("authority", &self.authority)
+            .field("device_id", &self.device_id)
+            .field("grant_ref", &self.grant_ref)
+            .field("created_at", &self.created_at)
+            .field("session_grant", &"[REDACTED]")
+            .field("device_seed_b64", &"[REDACTED]")
+            .field("session_credential", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
+}
+
 impl Drop for PendingLogout {
     /// Defence-in-depth: wipe the stashed device seed (the grant-binding secret bound
     /// into the grant's `cnf.jkt`) when the journal record drops, so the
@@ -105,7 +122,13 @@ impl PendingLogout {
     fn storage_key(&self) -> anyhow::Result<String> {
         use base64::Engine as _;
         use sha2::Digest as _;
-        let holder = sha2::Sha256::digest(self.grant_jwt.as_deref().unwrap_or("").as_bytes());
+        let holder = sha2::Sha256::digest(
+            self.session_grant
+                .as_ref()
+                .map(arkret_sdk::SessionGrantSecret::as_str)
+                .unwrap_or("")
+                .as_bytes(),
+        );
         Ok(format!(
             "{}.{}",
             self.account_storage_key()?,
@@ -134,7 +157,11 @@ impl PendingLogout {
     /// re-resolve it from).
     pub fn has_coauth_revoke(&self) -> bool {
         let has_route = self.gate_account_base_url.as_ref().is_some() || self.station_url.is_some();
-        self.grant_jwt.is_some()
+        self.session_grant.is_some()
+            && self
+                .grant_ref
+                .as_ref()
+                .is_some_and(|reference| reference.issuer_id == self.authority.station_id)
             && self.device_seed_b64.is_some()
             && self.device_jkt.is_some()
             && has_route
@@ -298,10 +325,18 @@ fn matching_pending_logout_key(
 async fn hard_logout_at_authority(
     record: &PendingLogout,
 ) -> anyhow::Result<AccountLogoutRunOutcome> {
-    let grant_jwt = record
-        .grant_jwt
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("pending logout missing grant_jwt"))?;
+    anyhow::ensure!(
+        record
+            .grant_ref
+            .as_ref()
+            .is_some_and(|reference| reference.issuer_id == record.authority.station_id),
+        "captured logout has no matching issuer reference"
+    );
+    let session_grant = record
+        .session_grant
+        .as_ref()
+        .map(arkret_sdk::SessionGrantSecret::as_str)
+        .ok_or_else(|| anyhow::anyhow!("pending logout missing session_grant"))?;
     let seed = record
         .device_seed_b64
         .as_deref()
@@ -335,7 +370,7 @@ async fn hard_logout_at_authority(
     let client = ClientBuilder::new(sdk_base_url)
         .allow_insecure_localhost()
         .auth(Auth::Dpop(
-            handle.sdk_dpop_auth_for_access_token(grant_jwt.to_owned()),
+            handle.sdk_dpop_auth_for_access_token(session_grant.to_owned()),
         ))
         .build()
         .map_err(|error| anyhow::anyhow!("build account logout HTTP client: {error}"))?;
@@ -467,7 +502,16 @@ mod tests {
             ),
             device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000042")
                 .unwrap(),
-            grant_jwt: Some("eyJ.grant.jwt".to_owned()),
+            session_grant: Some(
+                crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+                    "eyJ.grant.jwt",
+                ),
+            ),
+            grant_ref: Some(
+                crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+                    arkret_sdk::DidCoreId::new("ak:did_core:web:coland.example").unwrap(),
+                ),
+            ),
             device_seed_b64: Some("seed".to_owned()),
             device_jkt: Some("jkt".to_owned()),
             station_url: Some(url::Url::parse("https://coland.example").unwrap()),
@@ -490,6 +534,7 @@ mod tests {
             arkret_sdk::DidCoreId::new(format!("ak:did_core:web:logout-{case}.example")).unwrap(),
             record.authority.station_id.clone(),
         );
+        record.grant_ref.as_mut().unwrap().issuer_id = record.authority.station_id.clone();
         record
     }
 
@@ -539,7 +584,7 @@ mod tests {
         assert!(base_record(now).has_coauth_revoke());
 
         let mut no_grant = base_record(now);
-        no_grant.grant_jwt = None;
+        no_grant.session_grant = None;
         assert!(!no_grant.has_coauth_revoke());
 
         let mut no_seed = base_record(now);
@@ -569,7 +614,7 @@ mod tests {
         // the server-side chain was terminated.
         let store = MemorySecureKeyStore::default();
         let mut record = base_record(Utc::now());
-        record.grant_jwt = None;
+        record.session_grant = None;
         record.base_url = url::Url::parse("https://unused.example").unwrap();
         persist_pending_logout(&record, &store).unwrap();
         let outcome = execute_pending_logout(&record, &store).await;
@@ -812,7 +857,11 @@ mod tests {
         let now = Utc::now();
         let old = isolated_record(now, "replacement");
         let mut newer = old.clone();
-        newer.grant_jwt = Some("new captured grant".into());
+        newer.session_grant = Some(
+            crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+                "new captured grant",
+            ),
+        );
         newer.created_at = now + Duration::seconds(1);
         let store = MemorySecureKeyStore::default();
         store
@@ -860,7 +909,11 @@ mod tests {
         let store = crate::secure_key_store::MemorySecureKeyStore::new();
         let old = isolated_record(Utc::now(), "parallel-grants");
         let mut newer = old.clone();
-        newer.grant_jwt = Some("a-different-session-grant".into());
+        newer.session_grant = Some(
+            crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+                "a-different-session-grant",
+            ),
+        );
         persist_pending_logout_durable(&old, &store).await.unwrap();
         persist_pending_logout_durable(&newer, &store)
             .await

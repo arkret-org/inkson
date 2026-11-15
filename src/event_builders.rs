@@ -1524,10 +1524,7 @@ mod genesis_authority_tests {
                     "ak:grant:Abgeuy84qDvMqHgAWAilTc0qrZ-TjiR81uM8oQbSyu9o",
                 )
                 .unwrap(),
-                expected_revision: arkret_wire::CurrentRevision {
-                    commit_id: arkret_sdk::RealmCommitId::from_digest([41; 32]),
-                    stream_position: 41,
-                },
+                expected_commit_id: arkret_sdk::RealmCommitId::from_digest([41; 32]),
                 reason: None,
             },
         )
@@ -1539,8 +1536,8 @@ mod genesis_authority_tests {
         assert!(!relinquish.payload().contains_key("expected_state_digest"));
         assert!(relinquish.payload().contains_key("grant_id"));
         assert_eq!(
-            relinquish.payload()["expected_revision"]["stream_position"],
-            41
+            relinquish.payload()["expected_commit_id"],
+            serde_json::to_value(arkret_sdk::RealmCommitId::from_digest([41; 32])).unwrap()
         );
     }
 

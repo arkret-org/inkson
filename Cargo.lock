@@ -655,6 +655,7 @@ dependencies = [
  "url",
  "uuid",
  "web-time",
+ "zeroize",
 ]
 
 [[package]]
@@ -688,6 +689,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "hkdf",
+ "libc",
  "secret-service",
  "security-framework",
  "sha2 0.11.1",

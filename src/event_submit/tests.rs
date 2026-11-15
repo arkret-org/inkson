@@ -139,7 +139,7 @@ async fn accepted_setup_policy_uses_promoted_account_before_runtime_commit() {
         account.station_id.clone(),
         arkret_sdk::PolicySetStatePayload {
             policy_id: policy.policy_id.clone(),
-            expected_revision: None,
+            expected_commit_id: None,
             value: arkret_sdk::PolicySetValue::Recovery(Box::new(policy)),
         },
     )

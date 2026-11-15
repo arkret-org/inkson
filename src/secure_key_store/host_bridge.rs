@@ -8,6 +8,13 @@ use garth::SecureKeyStoreBackendInfo;
 
 use super::{SecureKeyStore, SecureKeyStoreError};
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) type HostStoreFuture<'a, T> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+#[cfg(target_arch = "wasm32")]
+pub(super) type HostStoreFuture<'a, T> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
+
 /// Mobile **host-bridge** delegation pattern for
 /// Android Keystore + iOS Keychain access.
 ///
@@ -60,12 +67,25 @@ pub trait HostSecretBridge: Send + Sync {
     fn put(&self, service_name: &str, key: &str, value: &str) -> Result<(), SecureKeyStoreError>;
 
     /// Load the secret under `(service_name, key)`. Returns `Ok(None)`
-    /// when the alias is absent.
+    /// when the alias is absent. Read the committed host store on every call;
+    /// returning an instance cache cannot implement durable coordination.
     fn get(&self, service_name: &str, key: &str) -> Result<Option<String>, SecureKeyStoreError>;
 
     /// Remove the secret. Idempotent — deleting an absent alias
     /// returns `Ok(())`.
     fn delete(&self, service_name: &str, key: &str) -> Result<(), SecureKeyStoreError>;
+
+    /// Compare the exact committed UTF-8 bytes and durably replace them.
+    /// `None` expects absence. Every host put/delete/CAS must share a real
+    /// cross-process OS lock or native transaction. A process mutex or a get
+    /// followed by put does not implement this port. No fallback is allowed.
+    fn compare_exchange(
+        &self,
+        service_name: &str,
+        key: &str,
+        expected: Option<&str>,
+        replacement: &str,
+    ) -> Result<bool, SecureKeyStoreError>;
 
     /// Optional human-readable label surfaced via
     /// [`SecureKeyStore::backend_name`]. Default is
@@ -219,6 +239,33 @@ impl SecureKeyStore for HostBridgeSecureKeyStore {
             .map(|value| KeyBytes::new(value.into_bytes())))
     }
 
+    fn read_secret_bytes_durable<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> HostStoreFuture<'a, Result<Option<KeyBytes>, SecureKeyStoreError>> {
+        Box::pin(async move { self.get_secret_bytes(key) })
+    }
+
+    fn compare_exchange_secret_bytes_durable<'a>(
+        &'a self,
+        key: &'a str,
+        expected: Option<&'a [u8]>,
+        replacement: &'a [u8],
+    ) -> HostStoreFuture<'a, Result<bool, SecureKeyStoreError>> {
+        Box::pin(async move {
+            let invalid =
+                |_| SecureKeyStoreError::Backend("host-bridge CAS secret not utf8".to_owned());
+            let expected = expected
+                .map(std::str::from_utf8)
+                .transpose()
+                .map_err(invalid)?;
+            let replacement = std::str::from_utf8(replacement).map_err(invalid)?;
+            self.require_biometric("Authenticate to update secret")?;
+            self.bridge
+                .compare_exchange(&self.service_name, key, expected, replacement)
+        })
+    }
+
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
         // Deletion is intentionally NOT biometric-gated — letting users
         // remove an entry without re-auth lets them recover from a lost
@@ -228,7 +275,7 @@ impl SecureKeyStore for HostBridgeSecureKeyStore {
     }
 
     fn list_secret_keys(&self, _prefix: Option<&str>) -> Result<Vec<String>, SecureKeyStoreError> {
-        // The `HostSecretBridge` FFI contract exposes only put/get/delete, so the
+        // The `HostSecretBridge` FFI contract has no enumeration port, so the
         // platform keystore behind it cannot be enumerated from here.
         Err(SecureKeyStoreError::Unsupported(
             "host-bridge backend does not support secret key enumeration",

@@ -122,20 +122,35 @@ impl PendingFreshDeviceRecovery {
         })
     }
 
-    pub(crate) fn clear(&self, secure_store: &dyn SecureKeyStore) -> garth::Result<()> {
-        let current = secure_store
-            .get_secret_bytes(&self.storage_key)
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        match current {
-            None => Ok(()),
-            Some(current) if current.as_slice() == self.canonical_pointer.as_slice() => {
-                secure_store
-                    .delete_secret(&self.storage_key)
-                    .map_err(|error| garth::Error::Protocol(error.to_string()))
+    pub(crate) async fn clear(&self, secure_store: &dyn SecureKeyStore) -> garth::Result<()> {
+        let cleared = b"{\"transaction_id\":null}";
+        loop {
+            let current = secure_store
+                .read_secret_bytes_durable(&self.storage_key)
+                .await
+                .map_err(|e| garth::Error::Protocol(e.to_string()))?;
+            let Some(current) = current else {
+                return Ok(());
+            };
+            if current.as_slice() == cleared {
+                return Ok(());
             }
-            Some(_) => Err(garth::Error::Protocol(
-                "pending recovery was replaced before cleanup".to_owned(),
-            )),
+            if current.as_slice() != self.canonical_pointer.as_slice() {
+                return Err(garth::Error::Protocol(
+                    "pending Recovery was replaced before cleanup".into(),
+                ));
+            }
+            if secure_store
+                .compare_exchange_secret_bytes_durable(
+                    &self.storage_key,
+                    Some(current.as_slice()),
+                    cleared,
+                )
+                .await
+                .map_err(|e| garth::Error::Protocol(e.to_string()))?
+            {
+                return Ok(());
+            }
         }
     }
 }
@@ -154,17 +169,34 @@ pub(crate) async fn store_pending_fresh_device_recovery(
     transaction_id: &arkret_sdk::TransactionId,
 ) -> garth::Result<()> {
     let bytes = pending_fresh_device_recovery_bytes(transaction_id)?;
-    secure_store
-        .put_secret(
-            &pending_fresh_device_recovery_storage_key()?,
-            &bytes,
-            PutSecretOptions {
-                durability: SecretDurability::DurableBeforeReturn,
-                class: SecretClass::General,
-            },
-        )
-        .await
-        .map_err(|error| garth::Error::Protocol(error.to_string()))
+    let key = pending_fresh_device_recovery_storage_key()?;
+    loop {
+        let current = secure_store
+            .read_secret_bytes_durable(&key)
+            .await
+            .map_err(|e| garth::Error::Protocol(e.to_string()))?;
+        if let Some(current) = current.as_ref() {
+            if current.as_slice() == bytes {
+                return Ok(());
+            }
+            if current.as_slice() != b"{\"transaction_id\":null}" {
+                return Err(garth::Error::Protocol(
+                    "another frozen Recovery intent is pending; resume it".into(),
+                ));
+            }
+        }
+        if secure_store
+            .compare_exchange_secret_bytes_durable(
+                &key,
+                current.as_ref().map(|v| v.as_slice()),
+                &bytes,
+            )
+            .await
+            .map_err(|e| garth::Error::Protocol(e.to_string()))?
+        {
+            return Ok(());
+        }
+    }
 }
 
 pub(crate) fn pending_fresh_device_recovery(
@@ -178,6 +210,9 @@ pub(crate) fn pending_fresh_device_recovery(
     };
     let value: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    if value.get("transaction_id") == Some(&Value::Null) {
+        return Ok(None);
+    }
     let transaction_id = value
         .get("transaction_id")
         .and_then(serde_json::Value::as_str)
@@ -191,15 +226,6 @@ pub(crate) fn pending_fresh_device_recovery(
         .map_err(|error| garth::Error::Protocol(error.to_string()))
 }
 
-pub(crate) fn clear_pending_fresh_device_recovery(
-    secure_store: &(dyn SecureKeyStore + Send + Sync),
-) -> garth::Result<()> {
-    match secure_store.delete_secret(&pending_fresh_device_recovery_storage_key()?) {
-        Ok(()) | Err(SecureKeyStoreError::NotFound) => Ok(()),
-        Err(error) => Err(garth::Error::Protocol(error.to_string())),
-    }
-}
-
 fn audit_public_transaction_state(state: &DurableSecurityTransaction) -> garth::Result<()> {
     audit_canonical_public_json("canonical_create_request", &state.canonical_create_request)?;
     if let Some(pending) = &state.pending_continue {
@@ -207,6 +233,9 @@ fn audit_public_transaction_state(state: &DurableSecurityTransaction) -> garth::
             "pending_continue.canonical_request",
             &pending.canonical_request,
         )?;
+    }
+    if let Some(bytes) = &state.pending_recovery_completion {
+        audit_canonical_public_json("pending_recovery_completion", bytes)?;
     }
     if let Some(receipt) = state.completed_recovery_receipt()? {
         let canonical = arkret_sdk::canonical::canonical_json_bytes(&receipt).map_err(|error| {
@@ -301,6 +330,51 @@ impl SecurityTransactionStore for InksonSecurityTransactionStore {
                 )
                 .await
                 .map_err(|error| garth::Error::Protocol(error.to_string()))
+        }
+    }
+
+    fn load_committed<'a>(
+        &'a self,
+        id: &'a arkret_sdk::TransactionId,
+    ) -> impl std::future::Future<Output = garth::Result<Option<DurableSecurityTransaction>>>
+    + garth::MaybeSend
+    + 'a {
+        async move {
+            let key = Self::storage_key(id)?;
+            self.secure_store
+                .read_secret_bytes_durable(&key)
+                .await
+                .map_err(|e| garth::Error::Protocol(e.to_string()))?
+                .map(|bytes| {
+                    serde_json::from_slice(&bytes)
+                        .map_err(|e| garth::Error::Protocol(e.to_string()))
+                })
+                .transpose()
+        }
+    }
+    fn compare_exchange<'a>(
+        &'a self,
+        expected: Option<&'a DurableSecurityTransaction>,
+        next: &'a DurableSecurityTransaction,
+    ) -> impl std::future::Future<Output = garth::Result<bool>> + garth::MaybeSend + 'a {
+        async move {
+            if expected.is_some_and(|old| old.transaction_id != next.transaction_id) {
+                return Err(garth::Error::Protocol(
+                    "security record CAS changed transaction identity".into(),
+                ));
+            }
+            audit_public_transaction_state(next)?;
+            let key = Self::storage_key(&next.transaction_id)?;
+            let old = expected
+                .map(serde_json::to_vec)
+                .transpose()
+                .map_err(|e| garth::Error::Protocol(e.to_string()))?;
+            let bytes =
+                serde_json::to_vec(next).map_err(|e| garth::Error::Protocol(e.to_string()))?;
+            self.secure_store
+                .compare_exchange_secret_bytes_durable(&key, old.as_deref(), &bytes)
+                .await
+                .map_err(|e| garth::Error::Protocol(e.to_string()))
         }
     }
 
@@ -431,8 +505,16 @@ mod tests {
                 .as_ref(),
             Some(&transaction_id)
         );
-        clear_pending_fresh_device_recovery(&secure_store).unwrap();
-        clear_pending_fresh_device_recovery(&secure_store).unwrap();
+        PendingFreshDeviceRecovery::capture(&transaction_id)
+            .unwrap()
+            .clear(&secure_store)
+            .await
+            .unwrap();
+        PendingFreshDeviceRecovery::capture(&transaction_id)
+            .unwrap()
+            .clear(&secure_store)
+            .await
+            .unwrap();
         assert!(
             pending_fresh_device_recovery(&secure_store)
                 .unwrap()
@@ -454,15 +536,26 @@ mod tests {
             .await
             .unwrap();
         let cleanup = PendingFreshDeviceRecovery::capture(&original).unwrap();
+        assert!(
+            store_pending_fresh_device_recovery(&secure, &replacement)
+                .await
+                .is_err()
+        );
+        cleanup.clear(&secure).await.unwrap();
         store_pending_fresh_device_recovery(&secure, &replacement)
             .await
             .unwrap();
-        assert!(cleanup.clear(&secure).is_err());
+        assert!(cleanup.clear(&secure).await.is_err());
         assert_eq!(
             pending_fresh_device_recovery(&secure).unwrap(),
             Some(replacement.clone())
         );
 
+        PendingFreshDeviceRecovery::capture(&replacement)
+            .unwrap()
+            .clear(&secure)
+            .await
+            .unwrap();
         store_pending_fresh_device_recovery(&secure, &original)
             .await
             .unwrap();
@@ -472,8 +565,8 @@ mod tests {
         store_pending_fresh_device_recovery(&secure, &replacement)
             .await
             .unwrap();
-        cleanup.clear(&secure).unwrap();
-        cleanup.clear(&secure).unwrap();
+        cleanup.clear(&secure).await.unwrap();
+        cleanup.clear(&secure).await.unwrap();
         assert_eq!(
             pending_fresh_device_recovery(&secure).unwrap(),
             Some(replacement)
@@ -482,7 +575,7 @@ mod tests {
             secure
                 .get_secret_bytes(&cleanup.storage_key)
                 .unwrap()
-                .is_none()
+                .is_some_and(|bytes| bytes.as_slice() == b"{\"transaction_id\":null}")
         );
     }
 
@@ -500,6 +593,7 @@ mod tests {
             canonical_create_request: br#"{"prepared_plan":"public"}"#.to_vec(),
             staged_secret_ref: Some("secure-store://recovery/staged-1".to_owned()),
             pending_continue: None,
+            pending_recovery_completion: None,
             completed_recovery_receipt: None,
             last_observed_resource: None,
         };
@@ -520,45 +614,13 @@ mod tests {
         let secure_store: Arc<dyn SecureKeyStore + Send + Sync> =
             Arc::new(garth::MemorySecureKeyStore::new());
         let store = InksonSecurityTransactionStore::new(secure_store);
+        let fixture = arkret_schema_conformance::spec_json_artifact(
+            "fixtures/security-transaction-resilience-fixture.json",
+        )
+        .unwrap();
+        let receipt = fixture["single_submit_recovery_kat"]["receipt"].clone();
         let transaction_id =
-            arkret_sdk::TransactionId::new("ak:transaction:01904100-0000-7000-8000-abcdefabcda1")
-                .unwrap();
-        let receipt = serde_json::json!({
-            "schema": "ak.schema.recovery_receipt.v1",
-            "receipt_id": "ak:receipt:01904100-0000-7000-8000-abcdefabcda2",
-            "transaction_id": transaction_id,
-            "transaction_request_digest": format!("sha256:{}", "1".repeat(64)),
-            "prepared_plan_digest": format!("sha256:{}", "2".repeat(64)),
-            "account_id": {
-                "principal_id": "ak:did_core:webvh:z6mkfixtureprincipalexample",
-                "station_id": "ak:did_core:webvh:z6mkfixtureserviceexample"
-            },
-            "recovery_session_id": "ak:recovery_session:01904100-0000-7000-8000-abcdefabcda3",
-            "policy_id": "ak:policy:01904100-0000-7000-8000-abcdefabcda4",
-            "policy_version": 1,
-            "trust_domain": "ak:trust_domain:fixture.example",
-            "new_device_id": "ak:device:01904100-0000-7000-8000-abcdefabcda5",
-            "identity_model": "pcr_policy",
-            "recovery_authority_kind": "pcr_policy",
-            "previous_model_generation_ref": 7,
-            "new_model_generation_ref": 8,
-            "authorization_event_id": "ak:event:AWKDhmQTc5zyfilaLwPF3xnhoZAjxSha7Z-6grioN9aW",
-            "reanchor_event_id": "ak:event:AR8bu-n-kOOB3nRUvYuIEglCX5B-JpFaNTex9gxs_cWY",
-            "proof_summary": {
-                "kind": "recovery_unlock",
-                "proof_digest": format!("sha256:{}", "3".repeat(64))
-            },
-            "unlocked_backups": [],
-            "welcome_count": 0,
-            "outcome": "completed",
-            "started_at": "2026-09-19T10:00:00.000Z",
-            "completed_at": "2026-09-19T10:00:01.000Z",
-            "signature_proof": {
-                "verification_method": "did:web:alice.example#device-1",
-                "signature_algorithm": "Ed25519",
-                "signature": "AA"
-            }
-        });
+            arkret_sdk::TransactionId::new(receipt["transaction_id"].as_str().unwrap()).unwrap();
         let canonical_receipt = arkret_sdk::canonical::canonical_json_bytes(&receipt).unwrap();
         let state: DurableSecurityTransaction = serde_json::from_value(serde_json::json!({
             "transaction_id": transaction_id,
@@ -567,6 +629,7 @@ mod tests {
             ).unwrap(),
             "staged_secret_ref": null,
             "pending_continue": null,
+            "pending_recovery_completion": null,
             "completed_recovery_receipt": {
                 "canonical_receipt": canonical_receipt,
             },
@@ -647,6 +710,7 @@ mod tests {
                 br#"{"binding":{"plaintext_keybag":"synthetic-sensitive-material"}}"#.to_vec(),
             staged_secret_ref: Some("secure-store://recovery/staged-2".to_owned()),
             pending_continue: None,
+            pending_recovery_completion: None,
             completed_recovery_receipt: None,
             last_observed_resource: None,
         };
@@ -657,6 +721,42 @@ mod tests {
         assert!(error.contains("plaintext_keybag"), "{error}");
         assert!(!error.contains("synthetic-sensitive-material"), "{error}");
         assert!(store.load(&transaction_id).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn completion_bytes_are_secret_audited_before_durable_cas() {
+        let _scope = activate_test_scope();
+        let secure: Arc<dyn SecureKeyStore + Send + Sync> =
+            Arc::new(garth::MemorySecureKeyStore::new());
+        let store = InksonSecurityTransactionStore::new(secure);
+        let id =
+            arkret_sdk::TransactionId::new("ak:transaction:01904100-0000-7000-8000-abcdefabcdba")
+                .unwrap();
+        let mut state = DurableSecurityTransaction {
+            transaction_id: id.clone(),
+            canonical_create_request: b"{}".to_vec(),
+            staged_secret_ref: None,
+            pending_continue: None,
+            pending_recovery_completion: None,
+            completed_recovery_receipt: None,
+            last_observed_resource: None,
+        };
+        assert!(store.compare_exchange(None, &state).await.unwrap());
+        let original = state.clone();
+        state.pending_recovery_completion = Some(
+            arkret_sdk::canonical::canonical_json_bytes(
+                &serde_json::json!({"session_grant":"credential-sentinel"}),
+            )
+            .unwrap(),
+        );
+        let error = store
+            .compare_exchange(Some(&original), &state)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("forbidden secret field"));
+        assert!(!error.contains("credential-sentinel"));
+        assert_eq!(store.load_committed(&id).await.unwrap().unwrap(), original);
     }
 
     #[tokio::test]
@@ -677,6 +777,7 @@ mod tests {
             .unwrap(),
             staged_secret_ref: Some("secure-store://recovery/staged-3".to_owned()),
             pending_continue: None,
+            pending_recovery_completion: None,
             completed_recovery_receipt: None,
             last_observed_resource: None,
         };
@@ -708,6 +809,7 @@ mod tests {
             .unwrap(),
             staged_secret_ref: Some("secure-store://recovery/staged-4".to_owned()),
             pending_continue: None,
+            pending_recovery_completion: None,
             completed_recovery_receipt: None,
             last_observed_resource: None,
         };

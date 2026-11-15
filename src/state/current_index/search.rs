@@ -1678,9 +1678,13 @@ pub(crate) mod tests {
         store.set_current_reset_required(false);
         let now = chrono::Utc::now();
         store.set_session_grant(Some(crate::state::PersistedSessionGrant {
-            grant_jwt: "fixture-grant".into(),
+            session_grant: crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+                "fixture-grant",
+            ),
             session_private_key_pem: String::new(),
-            grant_id: "fixture-grant-id".into(),
+            grant_ref: crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+                account.authority.station_id.clone(),
+            ),
             audience_id: account.authority.station_id.clone(),
             granted_scope: Vec::new(),
             account_id: account.authority.clone(),
@@ -1688,6 +1692,7 @@ pub(crate) mod tests {
             station_url: account.server_url.clone(),
             grant_expires_at: Some(now + chrono::Duration::hours(1)),
             stored_at: now,
+            pending_refresh: None,
         }));
         store
             .set_device_authoring_authority(Some(crate::state::PersistedDeviceAuthoringAuthority {

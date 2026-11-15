@@ -663,7 +663,7 @@ impl NativeAccountHost {
             secure.as_ref(),
         )?;
         anyhow::ensure!(
-            grant.account_id == account.authority && grant.grant_id == session.grant_id().as_str(),
+            grant.account_id == account.authority && grant.grant_ref == *session.grant_ref(),
             "native search grant differs from its live SDK session"
         );
         let result = crate::views::global_search::search_native_index(
@@ -2248,35 +2248,23 @@ pub(crate) async fn publish_current_product_view(
 ) -> anyhow::Result<()> {
     #[cfg(feature = "wasm-localstorage-secrets-test")]
     tracing::warn!(stage = "entered", "joint current product publication");
-    // Absence of a selector answers only at one complete verified cut, so the
-    // cut is read before and after the pages and must be the same durable
-    // generation both times.
+    // Freeze the local row versions and their progress with the existing
+    // publication lease. Live service heads may advance while this read runs.
     guard()?;
-    let cut_before = index.read_complete_cut(realm_id).await?;
+    let mut cut = index.read_realm_cut(realm_id).await?;
     guard()?;
     #[cfg(feature = "wasm-localstorage-secrets-test")]
     tracing::warn!(
         stage = "cut_read",
-        cut_present = cut_before.is_some(),
+        cut_present = cut.complete,
         "joint current product publication"
     );
-    let mut entries = Vec::new();
-    let mut after: Option<String> = None;
-    loop {
-        let page = index
-            .read_realm_page(realm_id, after.as_deref(), CURRENT_VIEW_PAGE)
-            .await?;
-        guard()?;
-        entries.extend(page.entries);
-        match page.next_cursor {
-            Some(next) => after = Some(next),
-            None => break,
-        }
-    }
-    guard()?;
-    let cut_after = index.read_complete_cut(realm_id).await?;
-    guard()?;
-    let complete_cut = cut_before.is_some() && cut_before == cut_after;
+    let entries = std::mem::take(&mut cut.entries);
+    let complete_cut = cut.complete;
+    let read_generation = cut.generation;
+    // Product summary persistence takes the same cross-process publication
+    // lock. Release the read lease first and retain its exact generation fence.
+    drop(cut);
     #[cfg(feature = "wasm-localstorage-secrets-test")]
     tracing::warn!(
         stage = "rows_read",
@@ -2291,7 +2279,7 @@ pub(crate) async fn publish_current_product_view(
         if store.active_authority().as_ref() != Some(account) {
             anyhow::bail!("current product account changed");
         }
-        if complete_cut && cut_after != Some(store.current_generation()) {
+        if read_generation != store.current_generation() {
             anyhow::bail!("current product generation changed before publication");
         }
         store.install_current_product_view(view)
@@ -2328,7 +2316,6 @@ async fn publish_realm_security_view(
 }
 
 /// Rows per bounded index read while installing the product view.
-const CURRENT_VIEW_PAGE: usize = 100;
 
 fn scope_rotate_realm_ids(
     response: &AccountFrameStep,
@@ -4228,7 +4215,7 @@ mod tests {
         );
         problem.extensions.insert(
             "session_grant_id".into(),
-            json!("ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7"),
+            json!("ak:session_grant:019a0000-0000-7000-8000-000000000001"),
         );
         problem.extensions.insert("state".into(), json!("revoked"));
         anyhow::Error::new(garth::Error::Api {

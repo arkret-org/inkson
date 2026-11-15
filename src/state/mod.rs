@@ -1022,7 +1022,7 @@ impl LocalStateStore {
             epoch: crate::identity::device_directory::cache_epoch(),
             device: crate::secure_key_store::active_device_seed_scope()
                 .map(|scope| (scope.authority, scope.device_id)),
-            grant: self.session_grant().map(|grant| grant.grant_id),
+            grant: self.session_grant().map(|grant| grant.grant_ref),
             pending: self
                 .pending_login()
                 .map(|pending| (pending.device_id, pending.anonymous_storage_incarnation)),

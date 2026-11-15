@@ -205,7 +205,7 @@ fn applet_capability_issuer_basis(
 fn build_formal_applet_install_events(
     package: &AppletPackage,
     registration_epoch_evidence: &AppletRegistrationEpochEvidence,
-    expected_revision: Option<arkret_sdk::CurrentRevision>,
+    expected_commit_id: Option<arkret_sdk::RealmCommitId>,
     effective_scope: &ScopeRef,
     approved_actions: &[String],
     actor_id: &str,
@@ -220,7 +220,7 @@ fn build_formal_applet_install_events(
         .map_err(|error| anyhow::anyhow!("invalid install actor DID: {error}"))?;
     package.validate_with_epoch_evidence(registration_epoch_evidence)?;
     let registration_payload: arkret_sdk::AppletRegistrationPayload =
-        package.to_registration(registration_epoch_evidence, expected_revision)?;
+        package.to_registration(registration_epoch_evidence, expected_commit_id)?;
     let registration = operation_builder_for_scope::<arkret_sdk::event_spec::AppletRegistration>(
         &ScopeRef::Realm {
             realm_id: effective_scope.realm_id().clone(),
@@ -598,8 +598,8 @@ impl AppletPage {
                                                            }),
                                                        }, issuer_authority_basis.authority_generation,
                                                    ).await?;
-                                                   let expected_revision = match registration_current {
-                                                       ExactCurrentStateReadResponseBody::Present { current_state: ExactCurrentState::AppletRegistration(row), .. } => Some(row.revision),
+                                                   let expected_commit_id = match registration_current {
+                                                       ExactCurrentStateReadResponseBody::Present { current_state: ExactCurrentState::AppletRegistration(row), .. } => Some(row.revision.commit_id),
                                                        ExactCurrentStateReadResponseBody::NeverWritten { selector: NeverWrittenExactCurrentSelector::AppletRegistration(_), .. } => None,
                                                        _ => anyhow::bail!("registration current returned a different selector"),
                                                    };
@@ -607,7 +607,7 @@ impl AppletPage {
                                                        build_formal_applet_install_events(
                                                            &authored_package,
                                                            &registration_epoch_evidence,
-                                                           expected_revision,
+                                                           expected_commit_id,
                                                            &authored_scope,
                                                            &approve_actions,
                                                            actor_id.as_str(),

@@ -156,9 +156,13 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
     let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let secure = MemorySecureKeyStore::new();
     let grant = PersistedSessionGrant {
-        grant_jwt: "alice.grant".to_owned(),
+        session_grant: crate::identity::account_auth::grant_dpop::test_session_grant_secret(
+            "alice.grant",
+        ),
         session_private_key_pem: "pem".to_owned(),
-        grant_id: "g-alice".to_owned(),
+        grant_ref: crate::identity::account_auth::grant_dpop::test_session_grant_ref(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+        ),
         audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
         granted_scope: Vec::new(),
         account_id: arkret_sdk::AccountId::new(
@@ -172,6 +176,7 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
         station_url: url::Url::parse("https://principal.example").unwrap(),
         grant_expires_at: None,
         stored_at: chrono::Utc::now(),
+        pending_refresh: None,
     };
     let dpop = DpopDeviceKeyRecord {
         seed_b64: "seed".to_owned(),
@@ -202,7 +207,7 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
         store.set_session_grant(Some(grant));
         store.set_dpop_device_key(Some(dpop));
 
-        store.clear_session_scoped_for_logout();
+        store.clear_session_memory_for_logout();
         assert!(store.private_plaintext_for(realm, strand, "body").is_none());
         assert!(store.mls_decrypted_plaintext_for(realm, digest).is_none());
 

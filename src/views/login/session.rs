@@ -1153,7 +1153,7 @@ pub(crate) async fn issue_bound_handoff_session(
     let session_grant = session_engine
         .current_state()
         .ok_or_else(|| "Account Authority handoff session issue did not yield state.".to_owned())?;
-    correlation.session_grant_id = Some(session_grant.grant_id.as_str().to_owned());
+    correlation.session_grant_ref = Some(session_grant.grant_ref.clone());
     if session_grant.account_id.principal_id != principal_id
         || session_grant.device_id.as_ref() != Some(&device_id)
     {
@@ -1164,7 +1164,10 @@ pub(crate) async fn issue_bound_handoff_session(
     let principal = TransportClient::unauthenticated(station_url)
         .map_err(|error| format!("Invalid Station URL: {error}"))?;
     let authed_principal = principal
-        .with_session_grant_dpop(session_grant.grant_jwt.clone(), dpop_handle.clone())
+        .with_session_grant_dpop(
+            session_grant.session_grant.as_str().to_owned(),
+            dpop_handle.clone(),
+        )
         .map_err(|error| format!("Attach returning SessionGrant + DPoP: {error}"))?;
     let principal_http = authed_principal
         .sdk_http_client()
@@ -1258,7 +1261,7 @@ pub(crate) async fn issue_bound_handoff_session(
             },
         )?,
         dpop_device_key,
-        session_credential: session_grant.grant_jwt.clone(),
+        session_credential: session_grant.session_grant.as_str().to_owned(),
         session_grant: persisted_session_grant,
         consumed_handoff: pending_handoff.clone(),
     })
@@ -1271,9 +1274,9 @@ pub(super) fn persisted_session_grant_from_state(
     device_id: arkret_sdk::DeviceId,
 ) -> PersistedSessionGrant {
     PersistedSessionGrant {
-        grant_jwt: grant.grant_jwt.clone(),
+        session_grant: grant.session_grant.clone(),
         session_private_key_pem: session_private_key_pem.to_owned(),
-        grant_id: grant.grant_id.as_str().to_owned(),
+        grant_ref: grant.grant_ref.clone(),
         audience_id: grant.audience_id.clone(),
         granted_scope: grant.granted_scope.clone(),
         account_id: grant.account_id.clone(),
@@ -1281,6 +1284,7 @@ pub(super) fn persisted_session_grant_from_state(
         station_url,
         grant_expires_at: Some(grant.expires_at),
         stored_at: Utc::now(),
+        pending_refresh: grant.pending_refresh.clone(),
     }
 }
 

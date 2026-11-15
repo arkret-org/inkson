@@ -5,7 +5,7 @@ pub(super) fn session_grant_boot_usable(
     active_account: &crate::config::ActiveAccountContext,
     now_unix: i64,
 ) -> bool {
-    if grant.grant_jwt.trim().is_empty()
+    if grant.grant_ref.issuer_id != grant.audience_id
         || !crate::identity::session_refresh::grant_matches_station(
             grant,
             active_account.server_url.as_str(),
@@ -19,9 +19,10 @@ pub(super) fn session_grant_boot_usable(
     {
         return false;
     }
-    if grant
-        .grant_expires_at
-        .is_some_and(|expires_at| expires_at.timestamp() <= now_unix)
+    if grant.pending_refresh.is_none()
+        && grant
+            .grant_expires_at
+            .is_none_or(|expires_at| expires_at.timestamp() <= now_unix)
     {
         return false;
     }
@@ -233,7 +234,7 @@ pub(super) fn initial_session_credential_from_state(
             .as_ref()
             .is_some_and(|account| session_grant_boot_usable(grant, account, now_unix))
         {
-            grant.grant_jwt.clone()
+            grant.session_grant.as_str().to_owned()
         } else {
             String::new()
         };
@@ -517,12 +518,12 @@ pub(super) async fn inject_test_session_grant(
             }
         }
     }
-    let Some(grant_jwt) = parsed
-        .get("grant_jwt")
+    let Some(session_grant) = parsed
+        .get("session_grant")
         .and_then(Value::as_str)
-        .map(str::to_owned)
+        .and_then(|secret| arkret_sdk::SessionGrantSecret::new(secret).ok())
     else {
-        tracing::warn!("test session injection skipped: grant_jwt is missing or not a string");
+        tracing::warn!("test session injection skipped: session_grant is missing or noncanonical");
         return None;
     };
     let Some(dpop_seed_b64url) = parsed
@@ -535,18 +536,15 @@ pub(super) async fn inject_test_session_grant(
         );
         return None;
     };
-    if grant_jwt.trim().is_empty() || dpop_seed_b64url.trim().is_empty() {
+    if dpop_seed_b64url.trim().is_empty() {
         tracing::warn!(
             target: "mls_admission",
-            "test session injection skipped: empty grant_jwt or dpop_seed"
+            "test session injection skipped: empty session_grant or dpop_seed"
         );
         return None;
     }
-    let grant_id = parsed
-        .get("grant_id")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
+    let grant_ref: arkret_sdk::SessionGrantRef =
+        serde_json::from_value(parsed.get("grant_ref")?.clone()).ok()?;
     let audience = parsed
         .get("audience")
         .and_then(Value::as_str)
@@ -630,12 +628,12 @@ pub(super) async fn inject_test_session_grant(
     let granted_scope: Vec<String> =
         serde_json::from_value(parsed.get("granted_scope")?.clone()).ok()?;
     let grant = PersistedSessionGrant {
-        grant_jwt: grant_jwt.clone(),
+        session_grant: session_grant.clone(),
         // ②(A+②): the grant rotation proof is signed by the grant-binding DPoP
         // key, not a separate session key, so no PEM is needed; e2e never
         // refreshes the injected grant.
         session_private_key_pem: String::new(),
-        grant_id,
+        grant_ref,
         audience_id: arkret_sdk::DidCoreId::new(audience.clone()).ok()?,
         granted_scope,
         account_id: fixture_account_id,
@@ -645,6 +643,7 @@ pub(super) async fn inject_test_session_grant(
         station_url: url::Url::parse(server_url).ok()?,
         grant_expires_at: Some(expires_at),
         stored_at: now,
+        pending_refresh: None,
     };
     let user_store = match crate::secure_key_store::UserLocalStore::new(
         grant.account_id.clone(),
@@ -716,7 +715,7 @@ pub(super) async fn inject_test_session_grant(
         server_url.to_owned(),
         Some(account_key),
         device_id.to_owned(),
-        grant_jwt.clone(),
+        session_grant.as_str().to_owned(),
     );
     // The handoff is single-use. The live session coordinator may rotate this
     // grant immediately after boot; retaining the original fixture in
@@ -725,7 +724,7 @@ pub(super) async fn inject_test_session_grant(
     if let Some(storage) = crate::browser_storage::browser_storage() {
         let _ = storage.remove_item(TEST_SESSION_INJECTION_KEY);
     }
-    Some(grant_jwt)
+    Some(session_grant.into_string())
 }
 
 #[cfg(test)]

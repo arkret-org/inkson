@@ -96,43 +96,6 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// Clear only browser-session credentials for a user-initiated logout.
-    ///
-    /// This is deliberately narrower than [`Self::clear_account_scoped`]: a
-    /// hard browser re-login must rotate the grant-binding/DPoP key while
-    /// preserving the account's encrypted E2EE checkpoint, projections, and
-    /// device identity so the same account can continue decrypting and writing
-    /// after it signs in again. Plaintext sidecars are cleared from memory and
-    /// restored from the encrypted checkpoint only after the next sign-in.
-    pub fn clear_session_scoped_for_logout(&mut self) {
-        #[cfg(not(test))]
-        {
-            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            match active_user_local_store() {
-                Ok(user_store) => {
-                    if let Err(error) = user_store
-                        .delete_secret(secure_store.as_ref(), Self::SECURE_DPOP_DEVICE_KEY)
-                    {
-                        tracing::debug!(?error, "secure DPoP key delete on logout failed");
-                    }
-                    if let Err(error) = user_store
-                        .delete_secret(secure_store.as_ref(), Self::SECURE_SESSION_GRANT_KEY)
-                    {
-                        tracing::debug!(?error, "secure session grant delete on logout failed");
-                    }
-                    if let Err(error) = user_store.delete_grant_binding_seed(secure_store.as_ref())
-                    {
-                        tracing::debug!(?error, "grant-binding seed delete on logout failed");
-                    }
-                }
-                Err(error) => {
-                    tracing::debug!(?error, "logout had no active user local store");
-                }
-            }
-        }
-        self.clear_session_memory_for_logout();
-    }
-
     pub(crate) fn clear_session_memory_for_logout(&mut self) {
         self.invalidate_e2ee_cache_clear_rollback();
         self.ensure_cached_loaded();

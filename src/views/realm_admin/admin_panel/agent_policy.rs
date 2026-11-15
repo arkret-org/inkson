@@ -616,7 +616,7 @@ impl PolicyPage {
                         };
                         message.revise(|value|{*value=format!("Accepted current {} at {}. Editing does not change the accepted value.",current.id,revision.commit_id);});
                     } else {
-                        message.revise(|value|{*value="Authoritative never_written: this exact id can be created with null expected_revision.".into();});
+                        message.revise(|value|{*value="Authoritative never_written: this exact id can be created with null expected_commit_id.".into();});
                     }
                     loaded.revise(|value| {
                         *value = Some(current);

@@ -942,15 +942,15 @@ impl VerifiedRelationCurrent {
         }
     }
 
-    pub(crate) fn expected_revision_for_create(
+    pub(crate) fn expected_commit_id_for_create(
         &self,
         domain: &arkret_sdk::RelationPrimaryConflictDomain,
-    ) -> anyhow::Result<Option<arkret_wire::CurrentRevision>> {
+    ) -> anyhow::Result<Option<arkret_wire::RealmCommitId>> {
         anyhow::ensure!(
             &self.primary_conflict_domain == domain,
             "verified Relation current basis belongs to another primary conflict domain"
         );
-        Ok(self.revision.clone())
+        Ok(self.revision.as_ref().map(|revision| revision.commit_id.clone()))
     }
 
     pub(crate) fn present(
@@ -997,11 +997,11 @@ impl VerifiedModerationCurrent {
         }
     }
 
-    pub(crate) fn revision_for_decision(
+    pub(crate) fn commit_id_for_decision(
         &self,
         target_ref: &str,
         decision_ref: &arkret_sdk::EventId,
-    ) -> anyhow::Result<arkret_wire::CurrentRevision> {
+    ) -> anyhow::Result<arkret_wire::RealmCommitId> {
         anyhow::ensure!(
             self.target_ref.as_str() == target_ref,
             "verified moderation current basis belongs to another target"
@@ -1017,7 +1017,7 @@ impl VerifiedModerationCurrent {
             decision_is_current,
             "moderation decision is not present in the governing Station's exact current result"
         );
-        Ok(self.revision.clone())
+        Ok(self.revision.commit_id.clone())
     }
 }
 

@@ -201,18 +201,6 @@ fn push_reaction_member(reactions: &mut Vec<(String, Vec<String>)>, key: &str, a
     }
 }
 
-fn remove_reaction_member(reactions: &mut Vec<(String, Vec<String>)>, key: &str, actor: &str) {
-    let key = key.trim();
-    let actor = actor.trim();
-    if key.is_empty() || actor.is_empty() {
-        return;
-    }
-    if let Some((_, senders)) = reactions.iter_mut().find(|(existing, _)| existing == key) {
-        senders.retain(|existing| existing != actor);
-    }
-    reactions.retain(|(_, senders)| !senders.is_empty());
-}
-
 fn sort_reactions(reactions: &mut Vec<(String, Vec<String>)>) {
     for (_, senders) in reactions.iter_mut() {
         senders.sort();
@@ -222,125 +210,47 @@ fn sort_reactions(reactions: &mut Vec<(String, Vec<String>)>) {
     reactions.sort_by(|left, right| left.0.cmp(&right.0));
 }
 
-#[derive(Clone, Debug)]
-struct ReactionMarker {
-    target_ref: String,
-    key: String,
-    actor: String,
-    active: bool,
-}
-
-fn apply_reaction_marker_to_messages(messages: &mut [ChatMessage], marker: &ReactionMarker) {
-    let Some(message) = messages
-        .iter_mut()
-        .find(|message| message_matches_target_ref(message, &marker.target_ref))
-    else {
-        return;
-    };
-    if message.redacted {
-        return;
-    }
-    if marker.active {
-        push_reaction_member(&mut message.reactions, &marker.key, &marker.actor);
-    } else {
-        remove_reaction_member(&mut message.reactions, &marker.key, &marker.actor);
-    }
-    sort_reactions(&mut message.reactions);
-}
-
-fn apply_verified_reaction_assertions(
-    messages: &mut [ChatMessage],
-    state: Option<&ClientLocalState>,
-    state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
-) {
-    // A signed Event alone has no ordering authority. In particular, account
-    // timeline rows and raw-operation arrival order cannot resurrect an older
-    // add after a later accepted remove.
+fn apply_current_reactions(messages: &mut [ChatMessage], state_store: Option<&LocalStateStore>) {
     for message in messages.iter_mut() {
         message.reactions.clear();
     }
-    let Some(state) = state else {
+    let Some(store) = state_store else {
         return;
     };
-    for assertion in &state.verified_reaction_assertions {
-        let accepted = &assertion.accepted_ref;
-        let Some(prefix_key) = serde_json::to_string(&accepted.stream_ref).ok() else {
-            continue;
-        };
-        let Some(prefix) = state.verified_poll_prefixes.get(&prefix_key) else {
-            continue;
-        };
-        if !prefix.contiguous
-            || prefix.head.stream_ref != accepted.stream_ref
-            || prefix.head.stream_position < accepted.stream_position
-            || (prefix.head.stream_position == accepted.stream_position
-                && prefix.head.commit_id != accepted.commit_id)
-        {
+    let Some(view) = store.current_product_view() else {
+        return;
+    };
+    if store
+        .current_product_cut_generation(&view.realm_id)
+        .is_none()
+    {
+        return;
+    }
+    for message in messages {
+        if message.redacted || message.realm_id != view.realm_id {
             continue;
         }
-        let event = &assertion.event;
-        if accepted.event_id != event.event_id
-            || accepted.stream_ref.realm_id() != &event.realm_id
-            || !matches!(
-                event.kind,
-                arkret_sdk::EventKind::ReactionAdd | arkret_sdk::EventKind::ReactionRemove
-            )
-        {
-            continue;
-        }
-        let Ok(event_value) = serde_json::to_value(event) else {
-            continue;
-        };
-        if verify_chat_envelope_proof_for_realm(
-            event.realm_id.as_str(),
-            &event_value,
-            state_store,
-            decrypt_identity,
-        ) != ChatProofVerdict::Verified
-            || !ordinary_chat_event_scope(
-                event.realm_id.as_str(),
-                &event_value,
-                state_store,
-                decrypt_identity,
-            )
-        {
-            continue;
-        }
-        let Ok(payload) = serde_json::to_value(&event.payload)
-            .and_then(serde_json::from_value::<arkret_sdk::ReactionPayload>)
+        let Some(target) = message
+            .protocol_message_id
+            .as_deref()
+            .and_then(|id| arkret_sdk::MessageId::new(id).ok())
         else {
             continue;
         };
-        let Ok(target) = arkret_sdk::MessageId::new(payload.target_ref.clone()) else {
+        let Some(scope) = message.local_scope.as_ref() else {
             continue;
         };
-        let Some(target_create) = state.verified_message_commits.iter().find(|create| {
-            arkret_sdk::MessageId::from_event_id(&create.accepted_ref.event_id) == target
-        }) else {
-            // A visible controller seed or bare Event does not establish a
-            // committed target or its effective security scope.
+        let Ok(Some(entries)) = view.message_reactions(&target, scope) else {
             continue;
         };
-        // A reaction cannot precede its accepted target. The complete chain
-        // from that MessageCreate through the assertion is sufficient even
-        // when the caller's verified readable floor is later than genesis.
-        if target_create.scope_ref != event.scope_ref
-            || target_create.accepted_ref.stream_ref != accepted.stream_ref
-            // Reactions cannot predate their target. A verified contiguous
-            // suffix covering the target is complete even for since-join reads.
-            || prefix.start_position > target_create.accepted_ref.stream_position
-            || target_create.accepted_ref.stream_position >= accepted.stream_position
-        {
-            continue;
+        for entry in entries {
+            push_reaction_member(
+                &mut message.reactions,
+                &entry.key,
+                &entry.actor_id.to_string(),
+            );
         }
-        let marker = ReactionMarker {
-            target_ref: payload.target_ref.to_string(),
-            key: payload.key,
-            actor: event.actor_id.to_string(),
-            active: event.kind == arkret_sdk::EventKind::ReactionAdd,
-        };
-        apply_reaction_marker_to_messages(messages, &marker);
+        sort_reactions(&mut message.reactions);
     }
 }
 
@@ -625,14 +535,7 @@ fn chat_messages_from_event_list_with_sidecar(
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<ChatMessage> {
-    fold_event_list_into_chat_messages(
-        Vec::new(),
-        realm_id,
-        events,
-        None,
-        state_store,
-        decrypt_identity,
-    )
+    fold_event_list_into_chat_messages(Vec::new(), realm_id, events, state_store, decrypt_identity)
 }
 
 fn canonical_message_revision_target(target_ref: &str) -> String {
@@ -682,15 +585,6 @@ fn fold_revision_group(
 /// into the shared timeline. Missing proof/scope stays out of this fold.
 /// Unresolved producer evidence remains explicitly flagged by the renderer;
 /// it never becomes verified sender authority or reaction membership.
-fn ordinary_chat_event_scope(
-    realm_id: &str,
-    event: &Value,
-    state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
-) -> bool {
-    ordinary_chat_event_proof(realm_id, event, state_store, decrypt_identity).is_some()
-}
-
 fn ordinary_chat_event_proof(
     realm_id: &str,
     event: &Value,
@@ -774,7 +668,6 @@ fn fold_event_list_into_chat_messages(
     mut messages: Vec<ChatMessage>,
     realm_id: &str,
     events: &[Value],
-    verified_reactions: Option<&ClientLocalState>,
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<ChatMessage> {
@@ -831,12 +724,7 @@ fn fold_event_list_into_chat_messages(
         }
     }
     apply_message_redactions(&mut messages, &ordinary_events);
-    apply_verified_reaction_assertions(
-        &mut messages,
-        verified_reactions,
-        state_store,
-        decrypt_identity,
-    );
+    apply_current_reactions(&mut messages, state_store);
     // A rejected attempt is retained in the holder audit, but stops producing
     // an error bubble once its explicit retry has a verified settled row in
     // the same signed scope. An unknown or rejected retry cannot hide it.
@@ -2129,14 +2017,7 @@ pub(crate) fn chat_messages_from_local_state_with_sidecar(
             payload
         })
         .collect::<Vec<_>>();
-    fold_event_list_into_chat_messages(
-        Vec::new(),
-        "",
-        &events,
-        Some(state),
-        state_store,
-        decrypt_identity,
-    )
+    fold_event_list_into_chat_messages(Vec::new(), "", &events, state_store, decrypt_identity)
 }
 
 /// Bounded originals selected by the durable search index at one current cut.
@@ -2156,7 +2037,6 @@ pub(crate) fn chat_messages_from_search_originals(
         Vec::new(),
         "",
         &events,
-        None,
         Some(store),
         Some((authority, authority.principal_id.as_str(), device)),
     )
@@ -2216,14 +2096,7 @@ pub(crate) fn fold_local_state_into_chat_messages_with_sidecar(
             payload
         })
         .collect::<Vec<_>>();
-    fold_event_list_into_chat_messages(
-        seed,
-        "",
-        &events,
-        Some(state),
-        state_store,
-        decrypt_identity,
-    )
+    fold_event_list_into_chat_messages(seed, "", &events, state_store, decrypt_identity)
 }
 
 pub(crate) fn poll_cards_from_local_state_with_sidecar(
