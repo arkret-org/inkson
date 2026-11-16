@@ -2,19 +2,10 @@
  * nav items, realm tree, row menus, server switcher, resize handle.
  */
 .sidebar {
-  background: var(--nav-bg);
-  color: var(--nav-text);
-  padding: 22px;
-  display: grid;
-  grid-template-rows: auto auto 1fr auto;
-  gap: 18px;
-}
-.sidebar {
   background: var(--ak-nav);
   color: var(--nav-text);
+  display: grid;
   border-right: 1px solid var(--nav-border);
-}
-.sidebar {
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   gap: 14px;
   padding: 18px;
