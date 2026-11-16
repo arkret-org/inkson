@@ -3240,7 +3240,11 @@ impl CurrentIndex {
                                     } else {
                                         plan.progress
                                             .baseline_started_generation
-                                            .unwrap_or(generation)
+                                            .ok_or_else(|| {
+                                                anyhow::anyhow!(
+                                                    "completed current baseline has no starting generation"
+                                                )
+                                            })?
                                     },
                                     stream_heads: incoming
                                         .current
@@ -5695,6 +5699,99 @@ mod tests {
         assert_eq!(
             store.read_selector_ready(REALM, &selector).await.unwrap(),
             Some(row(1, false))
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_baseline_start_rejects_completion_until_a_fresh_instance_rebuilds_it() {
+        let store = index(&path(), 0).await;
+        let original = row(1, false);
+        let selector = selector_of(&original);
+        store
+            .stage_frame(
+                0,
+                &frame(vec![original.clone()], Some(baseline(CURSORS[0], 1, false))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        assert_eq!(
+            store
+                .read_progress(REALM)
+                .await
+                .unwrap()
+                .baseline_started_generation,
+            Some(1)
+        );
+        let progress_prefix = store.progress_prefix(REALM).unwrap();
+        let key = format!("{progress_prefix}{}", version(1));
+        let bytes = store.backend.get(&key).await.unwrap().unwrap();
+        let mut stored: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        stored
+            .as_object_mut()
+            .unwrap()
+            .remove("baseline_started_generation");
+        store
+            .backend
+            .apply(vec![], vec![(key, serde_json::to_vec(&stored).unwrap())])
+            .await
+            .unwrap();
+        let progress = store.read_progress(REALM).await.unwrap();
+        let keys = current_keys(&store, &store.prefix).await;
+        let error = store
+            .stage_frame(
+                1,
+                &page(
+                    frame(vec![], Some(baseline(CURSORS[0], 1, true))),
+                    CURSORS[1],
+                ),
+            )
+            .await
+            .err()
+            .expect("a completed baseline must not invent its starting generation");
+        assert!(
+            error
+                .to_string()
+                .contains("baseline has no starting generation")
+        );
+        assert_eq!(store.generation.load(Ordering::Acquire), 1);
+        assert_eq!(store.read_progress(REALM).await.unwrap(), progress);
+        assert_eq!(current_keys(&store, &store.prefix).await, keys);
+        assert_eq!(
+            store.read_selector(REALM, &selector).await.unwrap(),
+            Some(original.clone())
+        );
+
+        // A fresh authority instance establishes its own boundary instead of
+        // treating the damaged instance as if it had started at completion.
+        store
+            .stage_frame(
+                1,
+                &page(
+                    frame(vec![original.clone()], Some(baseline(CURSORS[1], 1, true))),
+                    CURSORS[2],
+                ),
+            )
+            .await
+            .unwrap()
+            .finish();
+        assert_eq!(
+            store
+                .read_progress(REALM)
+                .await
+                .unwrap()
+                .baseline_started_generation,
+            Some(2)
+        );
+        let mark = store
+            .latest::<CoverageMark>(&store.mark_prefix(REALM).unwrap(), 2)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(mark.started_generation, 2);
+        assert_eq!(
+            store.read_selector_ready(REALM, &selector).await.unwrap(),
+            Some(original)
         );
     }
 
