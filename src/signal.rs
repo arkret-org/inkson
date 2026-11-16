@@ -692,7 +692,7 @@ pub fn restore_signal_mls_session(
     expected_epoch: u64,
 ) -> anyhow::Result<SignalMlsSession> {
     let realm_id = scope_ref.realm_id().as_str();
-    if state_store.realm_projection_is_minimal_metadata(realm_id) {
+    if state_store.realm_projection_has_retired_minimal_metadata_marker(realm_id) {
         anyhow::bail!("minimal-metadata endpoints have no registered Signal device carrier");
     }
     // Realm and Circle groups each carry their own Signal key material;

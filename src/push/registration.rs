@@ -375,7 +375,6 @@ fn build_request(
         visible_notification_opt_in: false,
         idempotency_key: Some(idempotency_key.as_str()),
         request_id: None,
-        proof: None,
     };
     build_register_device_request(&config, &binding, &prefs).map_err(|err| {
         PushRegistrationError::BuildRequest(anyhow::anyhow!("build register-device request: {err}"))

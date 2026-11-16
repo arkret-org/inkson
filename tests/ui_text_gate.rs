@@ -51,10 +51,11 @@ fn rust_files_under(root: &Path) -> Vec<PathBuf> {
         return vec![root.to_path_buf()];
     }
     let mut out = Vec::new();
-    let Ok(entries) = fs::read_dir(root) else {
-        return out;
-    };
-    for entry in entries.flatten() {
+    let entries = fs::read_dir(root)
+        .unwrap_or_else(|error| panic!("read source directory {}: {error}", root.display()));
+    for entry in entries {
+        let entry = entry
+            .unwrap_or_else(|error| panic!("read directory entry {}: {error}", root.display()));
         let path = entry.path();
         if path.is_dir() {
             out.extend(rust_files_under(&path));
@@ -281,9 +282,8 @@ fn native_nonprose_literals(source: &str) -> std::collections::BTreeSet<(usize, 
     ignored
 }
 fn bare_prose_in_file(path: &Path) -> Vec<(usize, String)> {
-    let Ok(source) = fs::read_to_string(path) else {
-        return Vec::new();
-    };
+    let source = fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("read source {}: {error}", path.display()));
     let structural = native_nonprose_literals(&source);
     let mut findings = Vec::new();
     let mut tracing_depth = 0_isize;
@@ -327,7 +327,13 @@ fn migrated_ui_modules_carry_no_bare_english_text() {
             "MIGRATED_ROOTS entry no longer exists: {root} — update the list \
              instead of dropping coverage"
         );
-        for file in rust_files_under(&root_path) {
+        let files = rust_files_under(&root_path);
+        assert!(
+            !files.is_empty(),
+            "no Rust source files under {}",
+            root_path.display()
+        );
+        for file in files {
             let relative = file
                 .strip_prefix(&src)
                 .unwrap_or(&file)
@@ -350,7 +356,13 @@ fn migrated_ui_modules_carry_no_bare_english_text() {
 #[test]
 fn realm_creation_has_no_private_sovereign_deployment_controls() {
     let setup = crate_src_dir().join("views/setup");
-    let source = rust_files_under(&setup)
+    let files = rust_files_under(&setup);
+    assert!(
+        !files.is_empty(),
+        "no Realm setup sources under {}",
+        setup.display()
+    );
+    let source = files
         .into_iter()
         .map(|path| {
             fs::read_to_string(&path)

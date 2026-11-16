@@ -3289,16 +3289,6 @@ impl CurrentIndex {
                 )
                 .await?;
             }
-            for page in history.pages() {
-                self.stage_recovered_search_rows(
-                    page.rows(),
-                    expected_generation,
-                    &suffix,
-                    &mut writes,
-                    &mut unversioned,
-                )
-                .await?;
-            }
             history.check_session()?;
         }
         for (realm, progress) in progress_updates {

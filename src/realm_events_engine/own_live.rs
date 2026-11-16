@@ -3514,6 +3514,179 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn preview_account_window_keeps_exact_sibling_and_requires_an_explicit_preview_flag() {
+        use arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow;
+        let first = withheld(0, None);
+        let mut snapshot = frozen(std::slice::from_ref(&first));
+        let realm = snapshot.realm_id.clone();
+        let circle = CommitStreamRef::Circle {
+            realm_id: realm.clone(),
+            circle_id: arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [43; 32],
+            )),
+        };
+        let circle_head = arkret_sdk::CommitStreamHead {
+            stream_ref: circle.clone(),
+            stream_position: 5,
+            commit_id: arkret_sdk::RealmCommitId::from_digest([44; 32]),
+        };
+        snapshot.visible_stream_heads.push(circle_head.clone());
+        snapshot
+            .retention_and_history_floor
+            .stream_floors
+            .push(arkret_sdk::StreamHistoryFloor {
+                stream_ref: circle.clone(),
+                oldest_position: 3,
+            });
+        seal_current_snapshot(&mut snapshot);
+        let account = crate::test_support::authority_at_station(
+            "did:web:alice.example",
+            "ak:did_core:web:station.example",
+        );
+        let realm_stream = first.commit().stream_ref.clone();
+        for preview in [true, false] {
+            let windows = vec![
+                RealmStreamWindow {
+                    stream_ref: circle.clone(),
+                    head_commit_ref: circle_head.commit_id.clone(),
+                    next_position: 6,
+                    limited: true,
+                    max_window_event_count: 1,
+                    complete: true,
+                    preview_only: preview.then_some(true),
+                    window_start_basis: None,
+                    e2ee_epoch: None,
+                },
+                RealmStreamWindow {
+                    stream_ref: realm_stream.clone(),
+                    head_commit_ref: first.commit().commit_id.clone(),
+                    next_position: 1,
+                    limited: false,
+                    max_window_event_count: 1,
+                    complete: true,
+                    preview_only: None,
+                    window_start_basis: None,
+                    e2ee_epoch: None,
+                },
+            ];
+            let frame: arkret_sdk::sync::AccountSubscribeFrame =
+                serde_json::from_value(serde_json::json!({
+                    "kind":"delta", "cursor":"ak:cursor:YQ", "realms":{realm.as_str():{
+                        "streams":windows, "committed_events":[first.clone()],
+                        "current":{"realm_id":realm,"governance_generation":"0",
+                            "stream_heads":snapshot.visible_stream_heads,"entries":[]}
+                    }}
+                }))
+                .unwrap();
+            let mut bodies = vec![
+                serde_json::to_value(&snapshot).unwrap(),
+                serde_json::json!({
+                    "committed_events":[],"readable_floor":{"oldest_position":3,
+                        "floor_commit_id":arkret_sdk::RealmCommitId::from_digest([45;32]),
+                        "floor_reason":"membership_join"},"truncated":false,
+                }),
+            ];
+            if preview {
+                bodies.push(
+                    serde_json::json!({"committed_events":[first.clone()], "readable_floor":{
+                    "oldest_position":0,"floor_commit_id":first.commit().commit_id,
+                    "floor_reason":"stream_start"},"truncated":false}),
+                );
+            }
+            let (client, server) =
+                crate::transport::own_station_results::test_http::client(&account, bodies);
+            let result = own_station::account_frame(client, &frame, &mut Default::default()).await;
+            server.join().unwrap();
+            if preview {
+                let proof = result.unwrap();
+                assert!(proof.preview_streams().contains(&circle));
+                assert!(!proof.preview_streams().contains(&realm_stream));
+                assert!(!proof.resolved_preview_streams().contains(&circle));
+                assert_eq!(proof.own_pages().len(), 1);
+                assert_eq!(
+                    proof.own_pages()[0].rows().unwrap(),
+                    std::slice::from_ref(&first)
+                );
+                assert!(proof.current_snapshots().contains_key(realm.as_str()));
+            } else {
+                assert!(
+                    result.is_err(),
+                    "an exact window above genesis needs its own basis"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_second_live_page_does_not_publish_first_page_or_current() {
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
+        let first = withheld(0, None);
+        let second = withheld(1, Some(arkret_sdk::RealmCommitId::from_digest([91; 32])));
+        let snapshot = current_snapshot(&[first.clone(), second.clone()], 1);
+        let account = crate::test_support::authority_at_station(
+            "did:web:alice.example",
+            "ak:did_core:web:station.example",
+        );
+        let (client, server) = crate::transport::own_station_results::test_http::client(
+            &account,
+            vec![
+                serde_json::to_value(&snapshot).unwrap(),
+                serde_json::json!({"committed_events":[first.clone()], "readable_floor":{
+                "oldest_position":0,"floor_commit_id":first.commit().commit_id,
+                "floor_reason":"stream_start"}, "truncated":true}),
+                serde_json::json!({"committed_events":[second], "readable_floor":{
+                "oldest_position":0,"floor_commit_id":first.commit().commit_id,
+                "floor_reason":"stream_start"}, "truncated":false}),
+            ],
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let mut local =
+            crate::state::LocalStateStore::with_path(directory.path().join("second-page.json"));
+        let active = crate::test_support::AccountFixture::new("did:web:alice.example")
+            .station("ak:did_core:web:station.example")
+            .build();
+        local.switch_active_account(&active).unwrap();
+        local.save_sync_cursor("ak:cursor:unchanged-account");
+        let store = Arc::new(Mutex::new(local));
+        let projector = test_projector(store.clone(), &snapshot.realm_id);
+        let stream = snapshot.visible_stream_heads[0].stream_ref.clone();
+        let raw = arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
+            .allow_insecure_localhost()
+            .build()
+            .unwrap();
+        let result = drain(
+            &client,
+            &raw,
+            &snapshot.realm_id,
+            &stream,
+            &projector,
+            &|| true,
+            &mut OwnStationReplica::new(snapshot.realm_id.clone()),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "a forked second page must reject the complete live batch"
+        );
+        server.join().unwrap();
+        let local = store.lock().unwrap();
+        assert!(
+            local
+                .verified_commit_stream_cursor(&stream)
+                .unwrap()
+                .is_none()
+        );
+        assert!(local.load().raw_operations.is_empty());
+        assert!(local.current_product_view().is_none());
+        assert_eq!(
+            local.sync_cursor().as_deref(),
+            Some("ak:cursor:unchanged-account")
+        );
+        assert_eq!(projector.realm_live_epoch.get(), 0);
+    }
+
+    #[tokio::test]
     async fn actual_live_prefix_keeps_withheld_commit_chain_and_rejects_fork_or_late_session() {
         for fork in [false, true] {
             let first = withheld(0, None);

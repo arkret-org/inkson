@@ -38,7 +38,6 @@ pub fn build_unregister_request(
         visible_notification_opt_in: false,
         idempotency_key: Some(&idempotency_key),
         request_id: None,
-        proof: None,
     };
 
     // P4 hygiene: reuse `push_preferences()` (with

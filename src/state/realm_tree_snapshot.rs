@@ -567,12 +567,6 @@ impl LocalStateStore {
                 .is_some_and(realm_tree_projection_has_retired_minimal_metadata_marker)
         })
     }
-
-    /// Transitional old callers still use this predicate; each authoring and
-    /// receive path is being migrated to reject the marker explicitly.
-    pub fn realm_projection_is_minimal_metadata(&self, realm_id: &str) -> bool {
-        self.realm_projection_has_retired_minimal_metadata_marker(realm_id)
-    }
 }
 
 /// Mark the installed view of `realm_id` as no longer covering the Realm's

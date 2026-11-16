@@ -38,10 +38,11 @@ const ALLOWED: &[(&str, &str)] = &[(
 )];
 
 fn rust_sources(root: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
+    let entries = fs::read_dir(root)
+        .unwrap_or_else(|error| panic!("read source directory {}: {error}", root.display()));
+    for entry in entries {
+        let entry = entry
+            .unwrap_or_else(|error| panic!("read directory entry {}: {error}", root.display()));
         let path = entry.path();
         if path.is_dir() {
             rust_sources(&path, out);
