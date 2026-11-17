@@ -195,9 +195,9 @@ pub(super) fn stop_creator(
 pub(super) fn decode_for_recovery(
     raw: Option<&str>,
     authority: Option<&arkret_sdk::AccountId>,
-) -> garth::Result<(DurableOutboundState, bool, bool)> {
+) -> garth::Result<(DurableOutboundState, bool)> {
     let Some(raw) = raw else {
-        return Ok((DurableOutboundState::default(), false, false));
+        return Ok((DurableOutboundState::default(), false));
     };
     let mut value: Value = serde_json::from_str(raw).map_err(|error| {
         garth::Error::Storage(format!("decode authenticated outbound vault: {error}"))
@@ -205,49 +205,6 @@ pub(super) fn decode_for_recovery(
     let root = value
         .as_object_mut()
         .ok_or_else(|| garth::Error::Storage("outbound vault is not an object".into()))?;
-    // The old SendQueueSnapshot also kept a top-level sequence counter, even
-    // for empty queues. Archive it without giving it any current queue meaning.
-    // Tagged old snapshots have one known schema marker too. Do not accept a
-    // different schema or an incomplete tagged snapshot as an old queue.
-    if let Some(schema) = root.get("schema").cloned() {
-        if schema.as_str() != Some("org.arkret.garth.send_queue.v1")
-            || !root.contains_key("next_sequence")
-        {
-            return Err(garth::Error::Storage(
-                "unknown or incomplete retired ingress snapshot schema".into(),
-            ));
-        }
-        if let Some(archived) = root.get("retired_ingress_schema") {
-            if archived != &schema {
-                return Err(garth::Error::Storage(
-                    "retired ingress schema diagnostics conflict".into(),
-                ));
-            }
-        } else {
-            root.insert("retired_ingress_schema".into(), schema);
-        }
-        root.remove("schema");
-    }
-    // Only the known u64 counter is retired; other unknown fields still fail.
-    let retired_sequence = if let Some(sequence) = root.remove("next_sequence") {
-        if sequence.as_u64().is_none() {
-            return Err(garth::Error::Storage(
-                "retired ingress next_sequence is not a u64".into(),
-            ));
-        }
-        if let Some(archived) = root.get("retired_ingress_next_sequence") {
-            if archived != &sequence {
-                return Err(garth::Error::Storage(
-                    "retired ingress sequence diagnostics conflict".into(),
-                ));
-            }
-        } else {
-            root.insert("retired_ingress_next_sequence".into(), sequence);
-        }
-        true
-    } else {
-        false
-    };
     let records_value = root
         .remove("creator_bootstrap_records")
         .unwrap_or_else(|| Value::Array(vec![]));
@@ -260,32 +217,6 @@ pub(super) fn decode_for_recovery(
         root.remove("creator_ready_index")
             .unwrap_or_else(|| Value::Array(vec![])),
     )?;
-    // The removed ingress queue stored records and leases, not frozen
-    // authority submissions. Preserve its bytes as diagnostics, without
-    // interpreting its status or upgrading ingress receipts into acceptance.
-    // Unknown damage to the current queue must still fail closed below.
-    let mut retired_items: Vec<Value> = serde_json::from_value(
-        root.remove("retired_ingress_items")
-            .unwrap_or_else(|| Value::Array(vec![])),
-    )?;
-    let original_retired_count = retired_items.len();
-    items.retain(|item| {
-        let is_ingress_record = item.get("submission").is_none()
-            && item.get("record").is_some_and(Value::is_object)
-            && item.get("transaction_id").is_some_and(Value::is_string)
-            && item
-                .get("canonical_payload_bytes")
-                .is_some_and(Value::is_array);
-        if is_ingress_record {
-            retired_items.push(item.clone());
-        }
-        !is_ingress_record
-    });
-    let retired = retired_items.len() != original_retired_count || retired_sequence;
-    root.insert(
-        "retired_ingress_items".into(),
-        serde_json::to_value(retired_items)?,
-    );
     let mut quarantined = false;
     let intents: Vec<MlsCreatorBootstrapIntent> = records
         .iter()
@@ -455,5 +386,5 @@ pub(super) fn decode_for_recovery(
     // Unrelated malformed queue data still fails closed. No partial repair is
     // persisted unless the entire replacement vault is valid.
     state.validate()?;
-    Ok((state, quarantined, retired))
+    Ok((state, quarantined))
 }
