@@ -340,7 +340,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let directory = media_data_directory()?;
     std::fs::create_dir_all(&directory)?;
     let mut web_context = wry::WebContext::new(Some(directory));
-    let mut builder = wry::WebViewBuilder::new_with_web_context(&mut web_context)
+    let builder = wry::WebViewBuilder::new_with_web_context(&mut web_context)
         .with_incognito(true)
         .with_enable_media_stream(true)
         .with_permission_handler(move |kind| {
@@ -409,10 +409,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         })
         .with_url("inkson-media://localhost/");
     #[cfg(windows)]
-    {
+    let builder = {
         use wry::WebViewBuilderExtWindows;
-        builder = builder.with_https_scheme(true);
-    }
+        builder.with_https_scheme(true)
+    };
     let webview = builder.build(&window)?;
     let mut pending = std::collections::VecDeque::from([initial]);
     let mut ready = false;
