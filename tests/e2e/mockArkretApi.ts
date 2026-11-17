@@ -1393,6 +1393,41 @@ export async function mockArkretApi(
     staticMockResponseFixtures(serverDidDocument),
   );
   let sidecarAgentIds = ["ak:did_core:web:agents.example:assistant"];
+  const sidecarAgentJoinFixtures = new Map<string, string>();
+  const sidecarDesiredAgents = (agentIds: string[]) => agentIds.map(agentId => {
+    const fixture = nativeFixtures.get(DEMO_REALM) ?? demoNative;
+    const member = fixture.snapshot.current_state_entries.find(
+      (row: Record<string, any>) => row.selector.kind === "member_state"
+        && row.selector.actor_id?.kind === "account"
+        && row.selector.actor_id.account_id.principal_id === agentId
+        && row.selector.actor_id.account_id.station_id === accountId.station_id
+        && row.value?.membership === "join",
+    );
+    if (member) {
+      const source = fixture.committed_events.find(
+        full => full.commit.commit_id === member.revision.commit_id,
+      );
+      if (!source || source.commit.realm_id !== fixture.snapshot.realm_id
+        || source.event.realm_id !== fixture.snapshot.realm_id
+        || source.event.kind !== "ak.member.state"
+        || source.event.payload?.membership !== "join"
+        || canonicalJson(source.event.payload.member_id) !== canonicalJson(member.selector.actor_id)
+        || typeof source.event.event_id !== "string"
+        || source.commit.event_ref !== source.event.event_id) {
+        throw new Error("Sidecar member fixture omits its exact accepted join original");
+      }
+      // The membership target is the Agent; its original author may be the controller.
+      return { agent_id: agentId, join_event_ref: source.event.event_id };
+    }
+    // Page-only mocks have explicit stable join fixtures, not accepted/native evidence.
+    let join = sidecarAgentJoinFixtures.get(agentId);
+    if (!join) {
+      join = mockCommitId(["sidecar-member-join-fixture", agentId])
+        .replace("ak:realm_commit:", "ak:event:");
+      sidecarAgentJoinFixtures.set(agentId, join);
+    }
+    return { agent_id: agentId, join_event_ref: join };
+  });
   const circleStates = new Map<string, MockCircleState>([
     [DEMO_CIRCLE, "active"],
   ]);
@@ -3578,11 +3613,8 @@ export async function mockArkretApi(
                 sidecar_id: sidecarId,
                 realm_id: DEMO_REALM,
                 controller_account_id: accountId,
-                desired_agent_ids: desiredAgentIds,
+                desired_agents: sidecarDesiredAgents(desiredAgentIds),
               }),
-              authority_stream_head: [
-                "ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh",
-              ],
               mls_group_id: mockMlsGroupId(sidecarId),
               epoch: "1",
               genesis_event_ref:
@@ -3620,11 +3652,8 @@ export async function mockArkretApi(
             sidecar_id: sidecarId,
             realm_id: DEMO_REALM,
             controller_account_id: accountId,
-            desired_agent_ids: desiredAgentIds,
+            desired_agents: sidecarDesiredAgents(desiredAgentIds),
           }),
-          authority_stream_head: [
-            "ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh",
-          ],
           mls_group_id: mockMlsGroupId(sidecarId),
           epoch: "1",
           genesis_event_ref:

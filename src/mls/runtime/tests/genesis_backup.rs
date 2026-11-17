@@ -36,8 +36,12 @@ fn sidecar_epoch_zero_restores_only_its_pinned_authority_and_creator_device() {
         realm_id: realm.clone(),
         sidecar_id: sidecar.clone(),
     };
+    let desired = [arkret_sdk::SidecarParticipantAuthorityAgent {
+        agent_id: arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
+        join_event_ref: arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [19; 32]),
+    }];
     let digest =
-        arkret_sdk::sidecar_participant_authority_digest(&sidecar, &realm, &authority, &[])
+        arkret_sdk::sidecar_participant_authority_digest(&sidecar, &realm, &authority, &desired)
             .unwrap();
     let binding = arkret_sdk::MlsGovernanceBindingPayload::sidecar(
         realm.clone(),
@@ -47,7 +51,6 @@ fn sidecar_epoch_zero_restores_only_its_pinned_authority_and_creator_device() {
         0,
         0,
         digest.clone(),
-        vec![create.clone()],
     )
     .unwrap();
     let secret = load_device_checkpoint_secret(&secure, &authority, &device).unwrap();
@@ -73,6 +76,9 @@ fn sidecar_epoch_zero_restores_only_its_pinned_authority_and_creator_device() {
     assert_eq!(restored.group_id, original.group_id);
     assert_eq!(restored.group_info_bytes, original.group_info_bytes);
     assert_eq!(restored.ratchet_tree_bytes, original.ratchet_tree_bytes);
+    let mut changed_desired = desired;
+    changed_desired[0].join_event_ref =
+        arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [18; 32]);
     let changed_cut = arkret_sdk::MlsGovernanceBindingPayload::sidecar(
         realm.clone(),
         sidecar.clone(),
@@ -80,11 +86,13 @@ fn sidecar_epoch_zero_restores_only_its_pinned_authority_and_creator_device() {
         0,
         0,
         0,
-        digest,
-        vec![arkret_sdk::EventId::from_digest(
-            arkret_sdk::canonical::DigestSuite::Sha256,
-            [18; 32],
-        )],
+        arkret_sdk::sidecar_participant_authority_digest(
+            &sidecar,
+            &realm,
+            &authority,
+            &changed_desired,
+        )
+        .unwrap(),
     )
     .unwrap();
     assert!(
@@ -140,7 +148,6 @@ fn sidecar_add_keeps_exact_binding_and_stages_private_state_until_acceptance() {
         0,
         0,
         digest.clone(),
-        vec![create.clone()],
     )
     .unwrap();
     let secret = load_device_checkpoint_secret(&secure, &authority, &device).unwrap();
@@ -183,7 +190,6 @@ fn sidecar_add_keeps_exact_binding_and_stages_private_state_until_acceptance() {
         1,
         7,
         digest.clone(),
-        vec![create.clone()],
     )
     .unwrap();
     let build = |binding: &arkret_sdk::MlsGovernanceBindingPayload| {
@@ -223,7 +229,6 @@ fn sidecar_add_keeps_exact_binding_and_stages_private_state_until_acceptance() {
         1,
         7,
         digest,
-        vec![create],
     )
     .unwrap();
     assert!(build(&wrong_base).is_err());
@@ -371,11 +376,21 @@ fn sidecar_withdrawal_keeps_the_other_agent_and_recovers_the_pending_commit() {
         "ak:did_core:web:second-agent.example",
     ]
     .map(|id| arkret_sdk::DidCoreId::new(id).unwrap());
-    let digest = |desired: &[arkret_sdk::DidCoreId]| {
+    let desired_agents = [
+        arkret_sdk::SidecarParticipantAuthorityAgent {
+            agent_id: agents[0].clone(),
+            join_event_ref: event(69),
+        },
+        arkret_sdk::SidecarParticipantAuthorityAgent {
+            agent_id: agents[1].clone(),
+            join_event_ref: event(70),
+        },
+    ];
+    let digest = |desired: &[arkret_sdk::SidecarParticipantAuthorityAgent]| {
         arkret_sdk::sidecar_participant_authority_digest(&sidecar, &realm, &authority, desired)
             .unwrap()
     };
-    let binding = |base, epoch, desired: &[arkret_sdk::DidCoreId]| {
+    let binding = |base, epoch, desired: &[arkret_sdk::SidecarParticipantAuthorityAgent]| {
         arkret_sdk::MlsGovernanceBindingPayload::sidecar(
             realm.clone(),
             sidecar.clone(),
@@ -388,7 +403,6 @@ fn sidecar_withdrawal_keeps_the_other_agent_and_recovers_the_pending_commit() {
             },
             0,
             digest(desired),
-            vec![event(71)],
         )
         .unwrap()
     };
@@ -440,7 +454,7 @@ fn sidecar_withdrawal_keeps_the_other_agent_and_recovers_the_pending_commit() {
             device_authorize_event_id: None,
         };
         let previous = group.verified_leaf_bindings().unwrap();
-        let transition = binding(Some(base.clone()), group.epoch(), &agents);
+        let transition = binding(Some(base.clone()), group.epoch(), &desired_agents);
         let add = group
             .add_member_with_governance_binding(&key_package, &transition)
             .unwrap();
@@ -486,8 +500,8 @@ fn sidecar_withdrawal_keeps_the_other_agent_and_recovers_the_pending_commit() {
         )
         .unwrap();
     let before = state.mls_checkpoint_for_scope(&scope).unwrap();
-    let transition = binding(Some(base.clone()), 2, &agents[1..]);
-    let wrong_base = binding(Some(event(79)), 2, &agents[1..]);
+    let transition = binding(Some(base.clone()), 2, &desired_agents[1..]);
+    let wrong_base = binding(Some(event(79)), 2, &desired_agents[1..]);
     assert!(
         build_sidecar_access_commit(
             &state,
@@ -578,8 +592,7 @@ fn sidecar_withdrawal_keeps_the_other_agent_and_recovers_the_pending_commit() {
         3,
         4,
         0,
-        digest(&agents[1..]),
-        vec![event(71), event(82)],
+        digest(&desired_agents[1..]),
     )
     .unwrap();
     let before = state.mls_checkpoint_for_scope(&scope).unwrap();

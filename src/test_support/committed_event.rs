@@ -28,10 +28,8 @@ pub(crate) fn fixture_time(seconds: i64) -> chrono::DateTime<Utc> {
     time(seconds)
 }
 
-/// The governing Station that signs a fixture's Commits, bundle and
-/// Snapshots. The mutable did:web Station suits current-key tests; the
-/// did:webvh Station also carries the complete method history Garth's
-/// historical key directory requires.
+/// The governing did:web Station that signs a fixture's Commits, bundle and
+/// Snapshots for current-key tests.
 pub(crate) struct FixtureStation {
     method: DidUrl,
     service_id: DidCoreId,
@@ -67,50 +65,6 @@ impl FixtureStation {
             method,
             service_id,
             route: serde_json::to_value(route).unwrap(),
-            key,
-        }
-    }
-
-    /// A did:webvh Station incepted at `inception_at` whose signing method
-    /// is derived from `seed`.
-    pub(crate) fn webvh(seed: u8, inception_at: chrono::DateTime<Utc>) -> Self {
-        use rand_core::SeedableRng as _;
-        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(u64::from(seed));
-        let prepared = arkret_signatures::webvh::prepare_service_inception_with_did_key_seed(
-            &mut rng,
-            &arkret_signatures::webvh::ServiceInceptionInput {
-                principal_endpoint: &url::Url::parse("https://station.example/").unwrap(),
-                local_id: "service",
-                also_known_as: &[],
-                version_created_at: inception_at,
-                did_key_fragment: Some("realm-authority"),
-            },
-            &[seed; 32],
-        )
-        .unwrap();
-        let did = Did::new(prepared.did.clone()).unwrap();
-        let service_id = arkret_sdk::project_did_to_core_id(&did).unwrap();
-        let resolution = arkret_identity::build_authenticated_webvh_service_resolution(
-            service_id.clone(),
-            "station".to_owned(),
-            serde_json::from_value(prepared.log_entry["state"].clone()).unwrap(),
-            vec![prepared.log_entry.clone()],
-            vec![],
-            inception_at + Duration::seconds(30),
-        )
-        .unwrap();
-        let key = SigningKey::from_bytes(&[seed; 32]);
-        assert_eq!(
-            arkret_sdk::canonical::ed25519_pubkey_to_did_key_multibase(
-                key.verifying_key().as_bytes()
-            ),
-            prepared.did_public_key_multibase,
-            "the did:webvh method key is the seeded signing key"
-        );
-        Self {
-            method: DidUrl::new(prepared.did_key_id.clone()).unwrap(),
-            service_id,
-            route: serde_json::to_value(&resolution).unwrap(),
             key,
         }
     }

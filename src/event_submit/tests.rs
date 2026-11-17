@@ -463,14 +463,7 @@ async fn device_authoring_requeries_only_across_a_same_session_device_refresh() 
                 arkret_sdk::sidecar_participant_authority_digest(&sidecar, &realm, &account, &[])
                     .unwrap();
             let binding = arkret_sdk::MlsGovernanceBindingPayload::sidecar(
-                realm,
-                sidecar,
-                None,
-                0,
-                0,
-                0,
-                digest,
-                vec![create],
+                realm, sidecar, None, 0, 0, 0, digest,
             )
             .unwrap();
             let (checkpoint, summary) = crate::mls::runtime::generate_creator_epoch_zero(

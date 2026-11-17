@@ -1851,7 +1851,6 @@ mod tests {
             0,
             arkret_sdk::sidecar_participant_authority_digest(&sidecar, &realm_id(), &account, &[])
                 .unwrap(),
-            vec![create],
         )
         .unwrap();
         let before = group.export_state_record().unwrap();

@@ -1508,10 +1508,6 @@ fn sidecar_author_leaf_view_preserves_exact_scope_and_historical_epoch() {
         0,
         arkret_sdk::sidecar_participant_authority_digest(sidecar_id, &realm, &authority, &[])
             .unwrap(),
-        vec![arkret_sdk::EventId::from_digest(
-            arkret_sdk::DigestSuite::Sha256,
-            [0x61; 32],
-        )],
     )
     .unwrap();
     let update = group

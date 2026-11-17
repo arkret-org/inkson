@@ -873,12 +873,6 @@ mod tests {
                     "1".repeat(64)
                 ))
                 .unwrap(),
-                authority_stream_head: vec![
-                    arkret_sdk::EventId::new(
-                        "ak:event:AVeCvdcuh1hDJWwYlZJb_1yRzWQwN1-pXxgZYTyd7BGT",
-                    )
-                    .unwrap(),
-                ],
                 mls_group_id: None,
                 epoch: None,
                 genesis_event_ref: None,

@@ -44,16 +44,7 @@ fn genesis_binding(
             && view.sidecar.state == arkret_sdk::AgentSidecarState::Active,
         "Sidecar MLS requires its active exact controller Account"
     );
-    let digest = arkret_sdk::sidecar_participant_authority_digest(
-        &view.sidecar.id,
-        &view.sidecar.realm_id,
-        authority,
-        &view.desired_agent_ids,
-    )?;
-    anyhow::ensure!(
-        digest == view.mls_context.participant_authority_digest,
-        "Sidecar current participant transcript differs from its authority digest"
-    );
+    let digest = view.mls_context.participant_authority_digest.clone();
     arkret_sdk::MlsGovernanceBindingPayload::sidecar(
         view.sidecar.realm_id.clone(),
         view.sidecar.id.clone(),
@@ -62,7 +53,6 @@ fn genesis_binding(
         0,
         0,
         digest,
-        view.mls_context.authority_stream_head.clone(),
     )
     .map_err(Into::into)
 }
@@ -570,7 +560,6 @@ async fn reconcile_existing_sidecar_leaves(
             && after.desired_agent_ids == view.desired_agent_ids
             && after.mls_context.participant_authority_digest
                 == view.mls_context.participant_authority_digest
-            && after.mls_context.authority_stream_head == view.mls_context.authority_stream_head
             && after.mls_context.epoch == Some(current.epoch),
         "Sidecar authority cut changed during roster repair"
     );
@@ -588,7 +577,6 @@ async fn reconcile_existing_sidecar_leaves(
             .ok_or_else(|| anyhow::anyhow!("MLS epoch overflow"))?,
         current.current_key_access_revision,
         view.mls_context.participant_authority_digest.clone(),
-        view.mls_context.authority_stream_head.clone(),
     )?;
     trace_preparation_stage("roster_history_check_started");
     let staged = state.read(
@@ -953,8 +941,6 @@ async fn reconcile_sidecar_mls_attempt(
             after.sidecar.realm_id == *scope.realm_id()
                 && after.mls_context.participant_authority_digest
                     == view.mls_context.participant_authority_digest
-                && after.mls_context.authority_stream_head
-                    == view.mls_context.authority_stream_head
                 && after.desired_agent_ids == view.desired_agent_ids
                 && after.mls_context.epoch == Some(current.epoch)
                 && current.genesis_event_ref.as_str()
@@ -976,7 +962,6 @@ async fn reconcile_sidecar_mls_attempt(
             next_epoch,
             current.current_key_access_revision,
             view.mls_context.participant_authority_digest.clone(),
-            view.mls_context.authority_stream_head.clone(),
         )?;
         let claim_id = crate::mls_api_helpers::generate_mls_claim_request_id()?;
         let clients = crate::transport::EndpointClients::from_http(http.clone());
@@ -1099,14 +1084,19 @@ pub(crate) mod tests {
         genesis: EventId,
         expected: EndpointCut,
     }
+    fn participant(name: &str, join: u8) -> arkret_sdk::SidecarParticipantAuthorityAgent {
+        arkret_sdk::SidecarParticipantAuthorityAgent {
+            agent_id: account(name).principal_id,
+            join_event_ref: event(join),
+        }
+    }
     fn binding(
         scope: &ScopeRef,
         authority: &AccountId,
-        desired: &[DidCoreId],
+        desired: &[arkret_sdk::SidecarParticipantAuthorityAgent],
         base: Option<EventId>,
         previous: u64,
         next: u64,
-        head: u8,
     ) -> arkret_sdk::MlsGovernanceBindingPayload {
         let ScopeRef::Sidecar {
             realm_id,
@@ -1126,7 +1116,6 @@ pub(crate) mod tests {
                 sidecar_id, realm_id, authority, desired,
             )
             .unwrap(),
-            vec![event(head)],
         )
         .unwrap()
     }
@@ -1170,29 +1159,18 @@ pub(crate) mod tests {
             paused_identity.endpoint_identity(),
             remaining_identity.endpoint_identity(),
         ];
-        let desired = vec![
-            account("paused").principal_id,
-            account("remaining").principal_id,
-        ];
+        let desired = vec![participant("paused", 62), participant("remaining", 63)];
         let genesis = event(61);
         let mut owner = owner_identity
             .create_group_with_governance_binding(
                 &scope,
-                &binding(&scope, &authority, &desired, None, 0, 0, 62),
+                &binding(&scope, &authority, &desired, None, 0, 0),
             )
             .unwrap();
         owner
             .install_test_leaf_bindings(vec![endpoints[0].clone()])
             .unwrap();
-        let first_binding = binding(
-            &scope,
-            &authority,
-            &desired,
-            Some(genesis.clone()),
-            0,
-            1,
-            62,
-        );
+        let first_binding = binding(&scope, &authority, &desired, Some(genesis.clone()), 0, 1);
         let first = owner
             .add_member_with_governance_binding(
                 &fixture::claimed_mls_key_package(
@@ -1239,7 +1217,6 @@ pub(crate) mod tests {
             Some(first_accepted.event.event_id.clone()),
             1,
             2,
-            62,
         );
         let second = owner
             .add_member_with_governance_binding(
@@ -1296,7 +1273,7 @@ pub(crate) mod tests {
             )
             .unwrap();
             endpoints.push(identity.endpoint_identity());
-            let next = binding(&scope, &authority, &desired, Some(base.clone()), 2, 3, 62);
+            let next = binding(&scope, &authority, &desired, Some(base.clone()), 2, 3);
             let add = owner
                 .add_member_with_governance_binding(
                     &fixture::claimed_mls_key_package(
@@ -1404,11 +1381,10 @@ pub(crate) mod tests {
         let next = binding(
             &f.scope,
             &f.authority,
-            &[account("remaining").principal_id],
+            &[participant("remaining", 63)],
             Some(f.base.clone()),
             2,
             3,
-            65,
         );
         let staged = stage_sidecar_repair(
             &f.state,
@@ -1528,11 +1504,10 @@ pub(crate) mod tests {
         let next = binding(
             &f.scope,
             &f.authority,
-            &[account("remaining").principal_id],
+            &[participant("remaining", 63)],
             Some(f.base.clone()),
             3,
             4,
-            65,
         );
         assert_eq!(
             sidecar_repair_plan(
@@ -1653,11 +1628,10 @@ pub(crate) mod tests {
         let wrong = binding(
             &f.scope,
             &f.authority,
-            &[account("remaining").principal_id],
+            &[participant("remaining", 63)],
             Some(event(90)),
             3,
             4,
-            65,
         );
         assert!(
             stage_sidecar_repair(
@@ -1679,11 +1653,10 @@ pub(crate) mod tests {
         let wrong_scope = binding(
             &scope,
             &f.authority,
-            &[account("remaining").principal_id],
+            &[participant("remaining", 63)],
             Some(f.base.clone()),
             3,
             4,
-            65,
         );
         assert!(
             stage_sidecar_repair(
@@ -1731,14 +1704,10 @@ pub(crate) mod tests {
         let next = binding(
             &f.scope,
             &f.authority,
-            &[
-                account("paused").principal_id,
-                account("remaining").principal_id,
-            ],
+            &[participant("paused", 65), participant("remaining", 63)],
             Some(f.base.clone()),
             2,
             3,
-            65,
         );
         let staged = stage_sidecar_repair(
             &f.state,
@@ -1879,14 +1848,13 @@ pub(crate) mod tests {
             &f.scope,
             &f.authority,
             &[
-                account("paused").principal_id,
-                account("remaining").principal_id,
-                account("new-agent").principal_id,
+                participant("paused", 62),
+                participant("remaining", 63),
+                participant("new-agent", 66),
             ],
             Some(f.base.clone()),
             2,
             3,
-            65,
         );
         assert!(
             stage_sidecar_repair(
@@ -1927,14 +1895,13 @@ pub(crate) mod tests {
             &f.scope,
             &f.authority,
             &[
-                account("paused").principal_id,
-                account("remaining").principal_id,
-                account("new-desired").principal_id,
+                participant("paused", 62),
+                participant("remaining", 63),
+                participant("new-desired", 74),
             ],
             Some(f.base.clone()),
             2,
             3,
-            74,
         );
         let mut attempts = 0;
         let mut claims = 0;
@@ -2052,14 +2019,10 @@ pub(crate) mod tests {
             .self_update_commit_with_governance_binding(&binding(
                 &f.scope,
                 &f.authority,
-                &[
-                    account("paused").principal_id,
-                    account("remaining").principal_id,
-                ],
+                &[participant("paused", 75), participant("remaining", 63)],
                 Some(f.base),
                 2,
                 3,
-                75,
             ))
             .unwrap();
         let before = f.owner.export_state_record().unwrap();

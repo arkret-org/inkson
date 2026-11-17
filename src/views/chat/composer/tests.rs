@@ -54,7 +54,6 @@ fn prior_private_session(controller: arkret_sdk::AccountId) -> crate::sidecar::H
                 "1".repeat(64)
             ))
             .unwrap(),
-            authority_stream_head: vec![],
             mls_group_id: None,
             epoch: None,
             genesis_event_ref: None,

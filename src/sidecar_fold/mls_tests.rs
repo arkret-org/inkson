@@ -80,10 +80,12 @@ impl MlsFixture {
                 sidecar_id,
                 scope.realm_id_opt().unwrap(),
                 &controller,
-                &[agent.signing_principal_id().clone()],
+                &[arkret_sdk::SidecarParticipantAuthorityAgent {
+                    agent_id: agent.signing_principal_id().clone(),
+                    join_event_ref: id(9),
+                }],
             )
             .unwrap(),
-            vec![id(9)],
         )
         .unwrap();
         let add = sender
