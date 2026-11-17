@@ -2093,6 +2093,7 @@ mod tests {
             realm_id: event.realm_id.clone(),
             genesis_event: event.clone(),
             genesis_commit: commit.clone(),
+            producer_signer_fact: None,
             authority_transitions: vec![],
             current_generation: 0,
             current_service_id: fixture::core_id(fixture::STATION_ID),

@@ -468,6 +468,7 @@ pub(crate) fn verified_realm_fixture_from_genesis(
         realm_id: realm_id.clone(),
         genesis_event: genesis,
         genesis_commit,
+        producer_signer_fact: None,
         authority_transitions: vec![],
         current_generation: 0,
         current_service_id: station.service_id.clone(),

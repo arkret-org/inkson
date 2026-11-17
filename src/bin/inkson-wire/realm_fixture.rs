@@ -2178,6 +2178,7 @@ fn authority_bundle_with_nonce(input: Value, nonce: Base64UrlString) -> Result<V
         realm_id: fixture.snapshot.realm_id,
         genesis_event: genesis.event.clone(),
         genesis_commit: genesis.commit.clone(),
+        producer_signer_fact: None,
         authority_transitions: vec![],
         current_generation: 0,
         current_service_id: authority.service_id,

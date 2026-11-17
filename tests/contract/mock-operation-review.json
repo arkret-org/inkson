@@ -31,7 +31,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:3a61e4c451b99ed43815b6c7d939557a2a0284384424e466fa8623f2ecdf836e"
+      "contract_digest": "sha256:9c774a6f96db6f29c189bace15e20cbdec269369d7b331c52eb197410e5c0f65"
     },
     {
       "operation_id": "ak.edge.applet.managed_actor.command.author.v1",
@@ -46,7 +46,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:7ae9e82f7dc362caaf712235ffe5a347db58174351df9f25856a87698497cdc3"
+      "contract_digest": "sha256:b1085518698088240ed5f29f22f672d415ac004e097df069e5b34e42b284cc5e"
     },
     {
       "operation_id": "ak.edge.applet.read.describe.v1",
@@ -213,7 +213,7 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:cb0a3184e64877f38ec06bdc1f7b0f6bfb37a553c2b204c52cc6ac55d73cc3e1"
+      "contract_digest": "sha256:a0cbbaf0deb670c73c8d0a020721f34a2d48d3192321e01e4d809f0fd6308b7f"
     },
     {
       "operation_id": "ak.gate.account.command.issue_identity_binding_challenge.v1",
@@ -229,7 +229,7 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:0b2e34cdf8774e002e5034a76c48e3d58b335811da484298edf481162b0db5b8"
+      "contract_digest": "sha256:f23a09f496f46006b9bd83a17b0bd182ac881bf6955894599905b94bad994ab1"
     },
     {
       "operation_id": "ak.gate.account.command.issue_recovery_completion_grant.v1",
@@ -245,7 +245,7 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:5ddd8eb707944b2b021b219b29f2de578fc85b4ad1221f6a9f5569a4dbae022a"
+      "contract_digest": "sha256:4cd4062a56102f19da05ed27ad4aed63107ef7cfecf2cf0407bbc9f2cf0bc51e"
     },
     {
       "operation_id": "ak.gate.account.command.issue_session_grant.v1",
@@ -309,7 +309,7 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:f0780ed672e734688c6e01f28f7ae53c2e4a08df8fffa5899da9bed9324faea5"
+      "contract_digest": "sha256:5d616bccf1ef2dceb2790ffd9f8b8e9f449d4bf6c184ad1e66f68c665a665136"
     },
     {
       "operation_id": "ak.gate.account.command.request_erasure.v1",
@@ -341,7 +341,7 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:edebcec9993473ca66b35a5e6407f7224552f134b7d81c4366cebcf43aafc000"
+      "contract_digest": "sha256:71c6ea37e58a04706f084a1199b42863a98eeef1684b73dfc3e33423950af459"
     },
     {
       "operation_id": "ak.gate.account.read.claim_device_pairing_code.v1",
@@ -373,7 +373,7 @@
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:6a2fad60f6cb0378fd2ff7a7cf9cbfa1208acbacb35f970efc7704464c388704"
+      "contract_digest": "sha256:5765d2fe94e16cbd12516d89f6e1631ab40fa564cf121c77908f5dbcf79c81c6"
     },
     {
       "operation_id": "ak.open.agent_pairing.command.submit_runtime_key_request.v1",
@@ -511,7 +511,7 @@
         "coland/crates/http/src/state/authority_mimi_unit.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:71a43be3f57c498f148c8db7066783a01056c4090a2194f316d083e14538c299"
+      "contract_digest": "sha256:65e92c6f1676d821de74f6ea173bd357a48c0632f72b3105bf5d301b623f34db"
     },
     {
       "operation_id": "ak.open.mimi.command.update_room.v1",
@@ -525,7 +525,7 @@
         "coland/crates/http/src/state/authority_mimi_unit.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:5ab85cab0cb1b3b123531c65502aa8863306f3370107276880c88df73e7f5d94"
+      "contract_digest": "sha256:ff0d32b4ea062905dd977f26ff9eeb3255806bcc31b882d0d1b4d36e89bfb92b"
     },
     {
       "operation_id": "ak.open.mimi.exchange.request_key_material.v1",
@@ -568,7 +568,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.open.realm_authority.read.bundle.v1"
       },
-      "contract_digest": "sha256:5b776b1ee5114be3ac95cf0e3e79d0bf5514aee2d3848330365f5a722c747d43"
+      "contract_digest": "sha256:65d542abb934f1143f0a03826fec52bc3273e09843b70389f6d291bfc5683eb3"
     },
     {
       "operation_id": "ak.peer.account_status.command.submit.v1",
@@ -607,7 +607,7 @@
         "coland/crates/http/src/routing/events/peer.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:fbb90d82d7720845922ca8b974126ae42d87421a9583311a26c5e309ae48b175"
+      "contract_digest": "sha256:6d271c4bff063f112ddd1355096714c61aca80c93f3d8329843617c35dea58e8"
     },
     {
       "operation_id": "ak.peer.erasure_receipt.command.submit.v1",
@@ -646,7 +646,7 @@
         "coland/crates/http/src/routing/events/peer.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:a0fe063773bfae082cbb032a0f3f8b84d23f8b4c5c120445b6884b8f00830624"
+      "contract_digest": "sha256:d3ea49b589e937f724d07c07f0eff5838a7afd0daae9e609af93febb639b3a32"
     },
     {
       "operation_id": "ak.peer.committed_event.read.scan.v1",
@@ -663,7 +663,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.peer.committed_event.read.scan.v1"
       },
-      "contract_digest": "sha256:4ec52edb2493df12e8a46a098eae4f95a27dcbc1b49efe9fa2b55b2023e70317"
+      "contract_digest": "sha256:284fa26b7e9f843da74966c006bcc8653171ceaea91a8768b8f87dbab7985f3b"
     },
     {
       "operation_id": "ak.peer.invites.command.submit.v1",
@@ -677,7 +677,7 @@
         "coland/crates/http/src/routing/invites.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:0c08bca41b253623e6ae2c5c716d731ef8cca75f71b2cf944964f95fa862ccf0"
+      "contract_digest": "sha256:e4760b87254ab8f1087cd65aae09a700ebedaac1524eb80d7212409a07cb7a29"
     },
     {
       "operation_id": "ak.peer.keys.keypackages.command.claim.v1",
@@ -765,7 +765,7 @@
         "file": "tests/contract/native-read-evidence.spec.ts",
         "name": "native accepted read replay preserves original contract: ak.peer.mls.read.roster_authority.v1"
       },
-      "contract_digest": "sha256:00122b0b3d6f088534f0b622c81f2b5a94978ac39e9870f4cfa7f392ca84babf"
+      "contract_digest": "sha256:e94ae404868d28c6b685ed9f82d6840e69c999f49ea6e64d242aeccb890ef329"
     },
     {
       "operation_id": "ak.peer.realm_authority.command.handoff.v1",
@@ -778,7 +778,7 @@
         "coland/crates/http/src/routing/events/peer.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:1735355ae6c55d94c6f2f511993a28ef89a381ecd68455c6b22aa69f25dff04f"
+      "contract_digest": "sha256:e39f3cb2bb30b5cb33ed31795329ad7dbcd28c779a6e3758a9e66f567a115010"
     },
     {
       "operation_id": "ak.peer.realm_join.read.bootstrap.v1",
@@ -791,7 +791,7 @@
         "coland/crates/http/src/routing/events/peer.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:3f2818761ecb0f97e81deeda12d9bf1a3c7fe33a7aac72080024d09403e37ee8"
+      "contract_digest": "sha256:f1469758f704e0308b448f78ccff10376b0e34f8a19c2ab4859d1b00f00da29b"
     },
     {
       "operation_id": "ak.peer.realm_join.read.preview.v1",
@@ -1074,7 +1074,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.self.account_data.resource.delete.v1"
       },
-      "contract_digest": "sha256:8cacff66826e63226338f29468dd542649b02a7900972e7fd5cb3d4e5769c6a1"
+      "contract_digest": "sha256:eeac1c301bfa9b0f1fe6b4c383e79115f6c7c683c4ceb99ee2fdaede0f5f39b2"
     },
     {
       "operation_id": "ak.self.account_data.resource.replace.v1",
@@ -1091,7 +1091,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.self.account_data.resource.replace.v1"
       },
-      "contract_digest": "sha256:27141435424d0fe3f7acf9a9292bfb8259c56289a48c81611fa6c84934fcc41e"
+      "contract_digest": "sha256:17596e8ce8aa7a2f58099110c59fe6d40d610e70fdfb6f532bdde6102d459015"
     },
     {
       "operation_id": "ak.self.actor_private_events.command.submit.v1",
@@ -1104,7 +1104,7 @@
         "coland/crates/http/src/routing/events/peer.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:575a53cc9f134ab8844de11f8e9d1f51bffbb7df45da136c053c23d86fdb96c7"
+      "contract_digest": "sha256:62c98b663a50e9e8e600d19f3139223e466a3fde17849948afc532d1e1dc8767"
     },
     {
       "operation_id": "ak.self.actor_profile.read.resolve.v1",
@@ -1121,7 +1121,7 @@
         "file": "tests/contract/native-read-evidence.spec.ts",
         "name": "native accepted read replay preserves original contract: ak.self.actor_profile.read.resolve.v1"
       },
-      "contract_digest": "sha256:e76ae55f106ff931c178517c7fa35172421c0d8f30b4d13041037a441e9ad09b"
+      "contract_digest": "sha256:2dedb409c8d1ea8bba39c83d48af5c6791f07b56f71b4480aed4993ee794f215"
     },
     {
       "operation_id": "ak.self.agent.participation.resource.replace.v1",
@@ -1151,7 +1151,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:981563b04d67c2c3ef3f31a1ce11a81d2de8fa8d213da6c96c6ac9149ebe4ca1"
+      "contract_digest": "sha256:636e70a686f17a685ef214eda073cf112b3223c86b4279b1b807aac61f90191e"
     },
     {
       "operation_id": "ak.self.applet.command.revoke.v1",
@@ -1166,7 +1166,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:1d885184adc4ad31b2ff29a5ae7d1c4a2112d5bb357aa522e152f45f8654ff5d"
+      "contract_digest": "sha256:e82cfba344c584f73683a55f6d89bb6b68f43588240e0b046a075e9280c996b1"
     },
     {
       "operation_id": "ak.self.applet.ghost.command.preview.v1",
@@ -1196,7 +1196,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:7d6254f9d95fa42b96807e86932352b4c0bde7db50926572fd86887422afade6"
+      "contract_digest": "sha256:5183d00332607428a9575e7349eede92d193c591713a92f53439d089257a8237"
     },
     {
       "operation_id": "ak.self.applet.revoke.command.preview.v1",
@@ -1258,7 +1258,7 @@
     {
       "operation_id": "ak.self.circle.command.rotate_scope.v1",
       "verification_need": "native_authority",
-      "reason": "Normative operation notes explicitly forbid acknowledging rotation without the MLS genesis/commit/welcome cascade actually changing the cryptographic scope. No rotation fixture is wired; an empty success would be false.",
+      "reason": "Requires a caller-authored member public MLS Commit with UpdatePath for the exact already-accepted Circle group, the ordinary current producer/member/native-scope gates and atomic full Commit/Welcome retry unit. No positive native rotation fixture is wired; an empty success cannot prove the cryptographic transition. The service creates no Genesis and CircleManage supplies no extra MLS permission.",
       "normative_documents": [
         "zh/models/circle.md"
       ],
@@ -1266,7 +1266,7 @@
         "arkret-rust-sdk/crates/crypto/src/lib.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:90b2027a9c834b33f77b23cb60c4fe0b9497d6ae17c3f628fc4867a95b6c9b2f"
+      "contract_digest": "sha256:29bec816bb7f5d472802ef79543ca2c8b282a27d1a91f7d19c43d9a9c1a106a2"
     },
     {
       "operation_id": "ak.self.circle.resource.get.v1",
@@ -1281,7 +1281,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.self.circle.resource.get.v1"
       },
-      "contract_digest": "sha256:d6e4c267eb1d69989891844b71e72d4c7f17bda3e9610c70a1e93e0b95fdc5fe"
+      "contract_digest": "sha256:f55ade4813ec17774a8412d302cd68ac075ba265f2ab0ba0e3559f61462594bc"
     },
     {
       "operation_id": "ak.self.consent.command.replace.v1",
@@ -1295,7 +1295,7 @@
         "coland/crates/http/src/routing/consent_private.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:74260c28b89fc0092565dd59ffaaed41625be64ad1b128d279f2b862530cedd3"
+      "contract_digest": "sha256:dfb46704f332d90d21b9ea896b2c4f45f7c2869506352d25640505931afb35f3"
     },
     {
       "operation_id": "ak.self.consent.command.request.v1",
@@ -1375,7 +1375,7 @@
         "file": "tests/contract/native-read-evidence.spec.ts",
         "name": "native accepted read replay preserves original contract: ak.self.identity.read.resolution_audit.v1"
       },
-      "contract_digest": "sha256:9f34513a51b2129850b4e55395d759cbe505d58df3121e7d20c38f19ae1ddb9e"
+      "contract_digest": "sha256:33dc4627272c17f46104b666865b702266ab81372e00d67950f7bab411bba543"
     },
     {
       "operation_id": "ak.self.keys.backups.command.issue_delete_challenge.v1",
@@ -1414,7 +1414,7 @@
         "coland/crates/http/src/routing/identity/key_backup.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:fad99e31b6c3d4f65eb1ecca188baad47911aa53a69404e5204716a01e4ebf2a"
+      "contract_digest": "sha256:af6b7cc8523c502835baba89f25e990c62e84a3d8d47216f8d8764ae7efe48b3"
     },
     {
       "operation_id": "ak.self.keys.backups.resource.delete.v1",
@@ -1543,7 +1543,7 @@
         "file": "tests/contract/remaining-operations.spec.ts",
         "name": "remaining valid request and response contract: ak.self.read_cursor.command.advance.v1"
       },
-      "contract_digest": "sha256:b761dfc56bd940ce8694b182f2cdd8f9de0f7e96e57f57f8630959cddeb7fe5a"
+      "contract_digest": "sha256:7d627814ffccaa65ec7f7d1fed487a06f1525da4d180ab0639a0737f91d5e298"
     },
     {
       "operation_id": "ak.self.read_cursor.read.list.v1",
@@ -1593,7 +1593,7 @@
         "file": "tests/contract/native-read-evidence.spec.ts",
         "name": "native accepted read replay preserves original contract: ak.self.mls.read.roster_authority.v1"
       },
-      "contract_digest": "sha256:173f56b7630d55d6c074df146aa7a5294bbd6efb8f70ba13a5ec8b7986ca2298"
+      "contract_digest": "sha256:7f1691c3342f9b2c93252ee498714a54bc8d987baf828b44be4bb1968203a6eb"
     },
     {
       "operation_id": "ak.self.realm.read.export.v1",
@@ -1666,7 +1666,7 @@
         "coauth/crates/backend/src/handlers/arkret/recovery_authority.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:613914101d271a58216a9cc57313ea360d059e0aaa849c631bf19ccc0ca25586"
+      "contract_digest": "sha256:138d27ee384f0bb960301a14196f271de9516a6f47c08f7eba5f27de6440707b"
     },
     {
       "operation_id": "ak.self.security_transaction.command.create.v1",
@@ -1681,7 +1681,7 @@
         "coauth/crates/backend/src/handlers/arkret/recovery_authority.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:6094445e38e69505bb5e8ba086f6e1cb830e0fe2ed43c2583843dff0845b472a"
+      "contract_digest": "sha256:f4e12ffbc21f8e3dfa774344a3f11b96b78d4656bb1dddda67fc54b0dec7dbb9"
     },
     {
       "operation_id": "ak.self.security_transaction.resource.get.v1",
@@ -1696,7 +1696,7 @@
         "coauth/crates/backend/src/handlers/arkret/recovery_authority.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:6bdaf73e11d165132617fcba31b21dc697b8ec8bba12ccfc76f8402fbc02f14f"
+      "contract_digest": "sha256:57584d7a8d93563d20e66d445f6fc007aa0069a50986d8ede7d1d74e45404c7f"
     },
     {
       "operation_id": "ak.self.applet.bot.command.preview.v1",
@@ -1726,7 +1726,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:589ada38e61f3cd4d3a67eb4577feeb88f77f2d76a07e3d1e344e466f6185d91"
+      "contract_digest": "sha256:b968d38a52750a8417384e9b69162a0870cf540fad09d1ca7aa29c04f44e82ea"
     },
     {
       "operation_id": "ak.self.management_review.command.request.v1",
@@ -1741,7 +1741,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:ba0fb861efcd58600c2dae25ac9fb60a8f008de5e75dd131c4839bb70ef93555"
+      "contract_digest": "sha256:f4296b4c87711b4c5ecf42bb419de3593443437cc45cb0bd2d87b96e2482d3cc"
     },
     {
       "operation_id": "ak.self.management_review.command.decide.v1",
@@ -1868,7 +1868,7 @@
         "coland/crates/http/src/routing/events/peer.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:06e7b81784c707fe111b2fb407f4f428d6d8dbe0a80dc6ae1bf70e816e62d799"
+      "contract_digest": "sha256:f8a065f7e2dcf6a8a71cb78a4a363d671731274a8e0a3fd69db97e936ef2660b"
     },
     {
       "operation_id": "ak.peer.strand.watch.command.audit_read.v1",
@@ -1881,7 +1881,7 @@
         "coland/crates/http/src/routing/events/peer.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:f22a1e1770e2397464504e9124f682184b6906d9bde691bcc7ee87492616e00c"
+      "contract_digest": "sha256:e439135392ebe1d51c66a6dd9a49c0e52537f8e7417715821611363043ae6757"
     },
     {
       "operation_id": "ak.peer.consent.command.proxy.v1",
@@ -1895,7 +1895,7 @@
         "coland/crates/http/src/routing/consent_private.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:bb4bebea56abeabc90295d6a12a45c4d52c47707a0bac1d6e9ed7422eef35bc5"
+      "contract_digest": "sha256:ddad96ca938e9acaf5f93f11c747cc4318b2dfbe26150e3308a4f357c066029c"
     },
     {
       "operation_id": "ak.peer.consent.command.publish_effects.v1",
@@ -1924,7 +1924,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:b30ee3493c15b8e2f9422cd1611df4870dcc110c153142b825b97755af327c03"
+      "contract_digest": "sha256:137ab67aacce44dba90c244f289d234ebed5f440b7065c40832bc0137bba0213"
     },
     {
       "operation_id": "ak.peer.applet.configuration.command.submit.v1",
@@ -1939,7 +1939,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:4c4cf92f36d9a4a83827f649d2888ea3eeeacb433de10378e6de74ffdd8131d8"
+      "contract_digest": "sha256:c3bea9fbe0e9a893f78f131641d6a7f1a43930a3e9958cfe88b7bcf99b8be074"
     },
     {
       "operation_id": "ak.edge.applet.configuration.command.execute.v1",
@@ -1954,7 +1954,7 @@
         "coland/crates/http/src/routing/identity/realm_actor_control.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:298711a14147aa0f379dd5f76e7ec88c0dd34c761071b2a1fccfa2a0471d9107"
+      "contract_digest": "sha256:0e43dfdf751f2f2fd497827f4a390e48d20b5f3270e3a6579c54b592632594aa"
     },
     {
       "operation_id": "ak.self.realm_actor.read.material.v1",
@@ -1972,7 +1972,7 @@
         "file": "tests/contract/native-read-evidence.spec.ts",
         "name": "native accepted read replay preserves original contract: ak.self.realm_actor.read.material.v1"
       },
-      "contract_digest": "sha256:df21d4bd5eadcf41e656f8d1e538858fc80cf371dc9b8fa46810e98699cfafbc"
+      "contract_digest": "sha256:7b836164d52ccc068edef59ac8b17840cf226641e1181bd0a9e00de67a27db27"
     },
     {
       "operation_id": "ak.peer.realm_actor.read.material.v1",
@@ -1990,7 +1990,7 @@
         "file": "tests/contract/native-read-evidence.spec.ts",
         "name": "native accepted read replay preserves original contract: ak.peer.realm_actor.read.material.v1"
       },
-      "contract_digest": "sha256:114e1039a390d2be29d8e44e6e0c91af8fc3773035f67485b2077a8e5c8913c9"
+      "contract_digest": "sha256:0d85d8026c19c794a37d8c054e022cc899bbdc76741aafdbadad25bddcff574a"
     }
   ]
 }

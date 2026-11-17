@@ -64,7 +64,7 @@ def source_files():
         "coland/crates/http/src/state/replica_anchor.rs",
     ]
     files += [str(path.relative_to(ROOT)).replace("\\", "/") for path in
-              (ROOT / "coland/crates/storage-postgres/tests/support").glob("*.rs")]
+              (ROOT / "coland/crates/storage-postgres/tests/support").rglob("*.rs")]
     files += [str(path.relative_to(ROOT)).replace("\\", "/") for path in
               (ROOT / "arkret-spec/spec/v1/artifacts").rglob("*.json")]
     files.append("arkret-spec/spec/v1/artifacts/openapi/arkret-service-api.openapi.yaml")
@@ -72,7 +72,8 @@ def source_files():
     # the producing SUT, including transitive helpers beyond the test module.
     for repository, crates in (
         ("arkret-rust-sdk", ("canonical", "crypto", "identifiers", "wire", "models-crypto", "models-identity",
-            "models-collaboration", "models-discovery", "models-integration", "identity", "signatures", "mls", "sdk", "http-client")),
+            "models-collaboration", "models-discovery", "models-integration", "identity", "signatures", "mls", "sdk", "http-client",
+            "policy", "test-kit", "bootstrap", "event-draft", "egress-reqwest")),
         ("coland", ("contracts", "domain", "storage", "storage-postgres", "services", "http", "test-support")),
         ("bridges", ("runtime",)),
     ):
