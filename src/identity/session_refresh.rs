@@ -122,12 +122,14 @@ impl InksonAuthenticatedTransportFactory {
             && self.station_url.fragment().is_none()
         {
             let host = self.station_url.host_str().unwrap_or_default();
-            let namespace = ["localhost", "local.host"].into_iter().find(|namespace| {
-                host == *namespace
-                    || host
-                        .strip_suffix(*namespace)
-                        .is_some_and(|prefix| prefix.ends_with('.'))
-            });
+            let namespace = ["localhost", "local.host", "arkret_local"]
+                .into_iter()
+                .find(|namespace| {
+                    host == *namespace
+                        || host
+                            .strip_suffix(*namespace)
+                            .is_some_and(|prefix| prefix.ends_with('.'))
+                });
             if let Some(namespace) = namespace {
                 return Some((namespace, self.station_url.port_or_known_default()?));
             }
@@ -1594,7 +1596,7 @@ mod tests {
             device_handle: test_device_handle(),
             refresh_transport: ReplaceableSessionTransport::default(),
         };
-        for namespace in ["localhost", "local.host"] {
+        for namespace in ["localhost", "local.host", "arkret_local"] {
             factory.station_url =
                 Url::parse(&format!("https://coland-server1.{namespace}:24630/")).unwrap();
             #[cfg(feature = "wasm-localstorage-secrets-test")]

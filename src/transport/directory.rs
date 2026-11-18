@@ -39,8 +39,9 @@ fn public_directory_client(base_url: &str) -> anyhow::Result<arkret_sdk::http_cl
     // Only the existing explicit joint-fixture feature permits method-native
     // reads in this development namespace. A remote DID cannot widen it.
     #[cfg(feature = "wasm-localstorage-secrets-test")]
-    let builder = if let Some(namespace) =
-        ["localhost", "local.host"].into_iter().find(|namespace| {
+    let builder = if let Some(namespace) = ["localhost", "local.host", "arkret_local"]
+        .into_iter()
+        .find(|namespace| {
             let host = base_url.host_str().unwrap_or_default();
             host == *namespace
                 || host
