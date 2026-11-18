@@ -685,6 +685,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.notifications.dnd", " Do not disturb");
     dict.set("settings.notifications.dnd_off", "Off");
     dict.set("settings.notifications.dnd_now", "Now");
+    dict.set("settings.notifications.dnd_scheduled", "Saved schedule");
     dict.set(
         "settings.notifications.overrides_title",
         "Per-realm overrides",

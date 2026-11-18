@@ -921,6 +921,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.notifications.dnd", " 免打扰");
     dict.set("settings.notifications.dnd_off", "关闭");
     dict.set("settings.notifications.dnd_now", "现在");
+    dict.set("settings.notifications.dnd_scheduled", "已保存的时段");
     dict.set("settings.notifications.overrides_title", "按 Realm 覆盖");
     dict.set(
         "settings.notifications.overrides_body",

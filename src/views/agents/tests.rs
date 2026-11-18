@@ -24,35 +24,6 @@ mod agent_tests {
         summarize_runtime_key_approval_request,
     };
 
-    fn provision_outcome_fixture() -> arkret_sdk::AgentProvisionComplete {
-        arkret_sdk::AgentProvisionComplete {
-            status: arkret_sdk::AgentProvisionCompleteStatus::Complete,
-            agent_id: crate::mls_api_helpers::principal_core_id("did:web:agents.example:summary")
-                .unwrap(),
-            did: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
-            initial_resolution: arkret_sdk::ResolutionCommitment {
-                did: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
-                method_history_head:
-                    "sha256:0707070707070707070707070707070707070707070707070707070707070707"
-                        .to_owned(),
-                version_id: "1-fixture".to_owned(),
-            },
-            principal_control_realm_id: arkret_sdk::RealmId::new(
-                "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
-            )
-            .unwrap(),
-            controller_authorization_ref: arkret_sdk::DidUrl::new(
-                "did:web:agents.example:summary#managed-controller",
-            )
-            .unwrap(),
-            pairing_request_id: arkret_sdk::OpaqueLocalId::new("0197-req").unwrap(),
-            pairing_code: Some("123456".to_owned()),
-            expires_at: chrono::DateTime::parse_from_rfc3339("2026-06-26T00:00:00.000Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc),
-        }
-    }
-
     #[test]
     fn actor_kind_label_maps_canonical_variants() {
         assert_eq!(actor_kind_label(Some("user")), Some("User"));
@@ -348,59 +319,9 @@ mod agent_tests {
     }
 
     #[test]
-    fn bootstrap_serializes_spec_six_fields_without_scope_or_private_key() {
-        let outcome = provision_outcome_fixture();
-
-        let raw = build_agent_pairing_bootstrap_json(
-            "https://arkret.example/",
-            "ak:did_core:web:arkret.example",
-            &outcome,
-        )
-        .unwrap();
-        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
-
-        // §4.4: exactly the six pairing fields, no scope payload. The
-        // Base URI field is the SDK/spec wire name `arkret_base_url`.
-        assert_eq!(value["arkret_base_url"], "https://arkret.example");
-        assert_eq!(value["service_id"], "ak:did_core:web:arkret.example");
-        assert_eq!(value["agent_id"], "ak:did_core:web:agents.example:summary");
-        assert_eq!(value["pairing_request_id"], "0197-req");
-        assert_eq!(value["pairing_code"], "123456");
-        assert_eq!(value["pairing_expires_at"], "2026-06-26T00:00:00.000Z");
-        assert!(value.get("schema").is_none());
-        assert!(value.get("requested_scope").is_none());
-        assert!(value.get("service_scope").is_none());
-        assert!(value.get("content_grant_summary").is_none());
-        assert_eq!(value.as_object().unwrap().len(), 6);
-        assert!(!raw.contains("private_key"));
-    }
-
-    #[test]
-    fn bootstrap_rejects_complete_outcome_without_one_time_pairing_code() {
-        let mut outcome = provision_outcome_fixture();
-        outcome.pairing_code = None;
-
-        let error = build_agent_pairing_bootstrap_json(
-            "https://arkret.example/",
-            "ak:did_core:web:arkret.example",
-            &outcome,
-        )
-        .unwrap_err();
-
-        assert!(error.to_string().contains("omitted pairing_code"));
-    }
-
-    #[test]
     fn deep_link_is_https_universal_link_wrapping_a_short_pairing_token() {
-        let outcome = provision_outcome_fixture();
-        let raw = build_agent_pairing_bootstrap_json(
-            "https://arkret.example/",
-            "ak:did_core:web:arkret.example",
-            &outcome,
-        )
-        .unwrap();
-
-        let token = build_agent_pairing_handoff_token("0197-req", "123456");
+        let request_id = "agent_pairing_request:01999999-0000-7000-8000-00000000feed";
+        let token = build_agent_pairing_handoff_token(request_id, "01234567");
         let deep_link = build_agent_pairing_deep_link("https://arkret.example/", &token);
         let encoded = deep_link
             .strip_prefix("https://arkret.example/_arkret/open/agent-pairing/resolve#token=")
@@ -410,9 +331,8 @@ mod agent_tests {
 
         assert_eq!(
             decoded,
-            serde_json::json!({ "r": "0197-req", "c": "123456" })
+            serde_json::json!({ "r": request_id, "c": "01234567" })
         );
-        assert!(deep_link.len() < raw.len());
         assert!(!deep_link.contains("savfox"));
         assert!(!deep_link.contains("agent_id"));
         assert!(!deep_link.contains("private_key"));

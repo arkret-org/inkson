@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { Buffer } from "node:buffer";
-import { buildMockProblem, guardMockRoute, mockArkretApi, validateMockTransportResponse, DEMO_REALM } from "../e2e/mockArkretApi";
-import { captureRouteHandler, driveOnce, mockOperations } from "./mockShapeDriver";
+import { buildMockProblem, guardMockRoute, mockArkretApi, mockOperationForRequest, validateMockSchema, validateMockTransportResponse, DEMO_REALM } from "../e2e/mockArkretApi";
+import { captureRouteHandler, concretePath, driveOnce, mockOperations } from "./mockShapeDriver";
 
 const circles = { method: "GET", url: "https://local.host/_arkret/self/circles" };
 const stream = { method: "GET", url: "https://local.host/_arkret/self/committed-events/subscribe" };
@@ -70,6 +70,31 @@ test("raw fulfill cannot bypass JSON status, media, fields, or operation ownersh
     { ...validJson, json: {} }, { ...validJson, path: "uninspected.json" },
   ]) await expect(emit(circles, response)).rejects.toThrow();
   await expect(emit({ ...circles, url: "https://local.host/_arkret/not-registered" }, validJson)).rejects.toThrow("embedded OpenAPI operations");
+});
+
+test("Circle scope rotation requires a client MLS submission and an authority submit outcome", async () => {
+  const path = concretePath("/_arkret/self/circles/{circle_id}/scope-rotate");
+  const operation = mockOperationForRequest("POST", path);
+  expect(operation.operation_id).toBe("ak.self.circle.command.rotate_scope.v1");
+  const requestSchema = "schemas/authority-commit-operations.schema.json#/$defs/client_mls_commit_submission";
+  expect(operation.request).toMatchObject({ required: true, schema_ref: requestSchema });
+  expect(() => validateMockSchema(requestSchema, {})).toThrow();
+  const request = { method: "POST", url: `https://local.host${path}` };
+  const response = { status: 200, contentType: "application/json" };
+  const circle_id = concretePath("{circle_id}");
+  await expect(emit(request, { ...response, json: { circle_id } })).rejects.toThrow();
+  const outcome = { status: "rejected", reason_code: "schema_violation" };
+  expect((await emit(request, { ...response, json: outcome })).emitted).toBe(1);
+
+  const captured = captureRouteHandler();
+  try {
+    await mockArkretApi(captured.page as never);
+    let emitted = 0;
+    await expect(driveOnce(captured.handler(), {
+      ...request, postData: {}, onFulfill: () => { emitted += 1; },
+    })).rejects.toThrow(`mock operation is not implemented: ${operation.operation_id}`);
+    expect(emitted).toBe(0);
+  } finally { captured.close(); }
 });
 
 test("raw fulfill validates every NDJSON frame, delimiters and media", async () => {

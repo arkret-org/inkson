@@ -1,5 +1,10 @@
 use super::*;
 use crate::notification_rules::{DndPeriod, DndSchedule, DndSettings};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{
+    notification_rules::parse_dnd_settings, state::LocalStateStore,
+    views::settings::account_data::save_dnd_edits,
+};
 
 #[test]
 fn contact_permissions_are_available_in_privacy_settings() {
@@ -17,7 +22,7 @@ fn dnd(enabled: bool, periods: Vec<DndPeriod>) -> DndSettings {
     DndSettings {
         enabled,
         schedule: DndSchedule {
-            timezone: "UTC".to_owned(),
+            timezone: "Europe/Berlin".to_owned(),
             tzdb_version: crate::notification_rules::DND_TZDB_VERSION.to_owned(),
             all_day: false,
             periods,
@@ -145,26 +150,90 @@ fn dnd_seed_is_off_without_persisted_settings() {
 
 #[test]
 fn dnd_enabled_without_periods_is_still_mode_off() {
-    // The saved body only carries a period when the user picked "now", so an
-    // enabled setting with an empty schedule must not render as "now".
     let settings = dnd(true, Vec::new());
     let seed = dnd_editor_seed(Some(&settings));
     assert!(seed.enabled);
     assert_eq!(seed.mode, "off");
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn dnd_store() -> (tempfile::TempDir, LocalStateStore, arkret_sdk::AccountId) {
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = LocalStateStore::with_path(directory.path().join("state.json"));
+    store.switch_test_account("did:web:alice.example");
+    let authority = store.active_authority().unwrap();
+    (directory, store, authority)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn dnd_enabled_with_a_period_rehydrates_as_now() {
-    let settings = dnd(
-        true,
-        vec![DndPeriod {
-            start: "00:00".to_owned(),
-            end: "23:59".to_owned(),
-        }],
-    );
-    let seed = dnd_editor_seed(Some(&settings));
+fn saved_all_day_dnd_reopens_as_now() {
+    let (_directory, mut store, authority) = dnd_store();
+    let (body, _) = save_dnd_edits(&mut store, &authority, Some(true), Some(true))
+        .unwrap()
+        .unwrap();
+    let saved = parse_dnd_settings(&body).unwrap();
+    assert!(saved.schedule.all_day && saved.schedule.periods.is_empty());
+    let seed = dnd_editor_seed(Some(&saved));
     assert!(seed.enabled);
     assert_eq!(seed.mode, "now");
+    assert_eq!(
+        save_dnd_edits(&mut store, &authority, None, None)
+            .unwrap()
+            .unwrap(),
+        (body, true)
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn saving_dnd_preserves_current_account_periods_and_exceptions() {
+    let (_directory, mut store, authority) = dnd_store();
+    let initial = dnd(false, Vec::new());
+    store.set_notification_dnd_settings(Some(initial));
+    assert_eq!(
+        dnd_editor_seed(store.notification_dnd_settings().as_ref()).mode,
+        "off"
+    );
+
+    // The account sync refreshes the untouched schedule while the editor is open.
+    let mut settings = dnd(
+        true,
+        vec![DndPeriod {
+            start: "22:00".to_owned(),
+            end: "07:00".to_owned(),
+        }],
+    );
+    settings.exceptions = vec!["override.priority".to_owned()];
+    store.set_notification_dnd_settings(Some(settings.clone()));
+    let seed = dnd_editor_seed(store.notification_dnd_settings().as_ref());
+    assert!(seed.enabled);
+    assert_eq!(seed.mode, "scheduled");
+    let mut expected = settings.clone();
+    for enabled in [false, true] {
+        let (body, _) = save_dnd_edits(&mut store, &authority, Some(enabled), None)
+            .unwrap()
+            .unwrap();
+        let saved = parse_dnd_settings(&body).unwrap();
+        expected.enabled = enabled;
+        assert_eq!(saved, expected);
+        assert_eq!(dnd_editor_seed(Some(&saved)).mode, "scheduled");
+    }
+    let (body, _) = save_dnd_edits(&mut store, &authority, None, Some(true))
+        .unwrap()
+        .unwrap();
+    let changed = parse_dnd_settings(&body).unwrap();
+    assert!(changed.schedule.all_day && changed.schedule.periods.is_empty());
+    assert_eq!(changed.schedule.timezone, settings.schedule.timezone);
+    assert_eq!(changed.exceptions, settings.exceptions);
+
+    store.switch_test_account("did:web:bob.example");
+    assert!(
+        save_dnd_edits(&mut store, &authority, Some(true), Some(true))
+            .unwrap()
+            .is_none()
+    );
+    assert!(store.notification_dnd_settings().is_none());
 }
 
 #[test]

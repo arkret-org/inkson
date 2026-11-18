@@ -272,24 +272,6 @@ pub async fn fetch_mls_restore_payload(
     })?)
 }
 
-/// Fresh-device discovery can race the projection of backups uploaded moments
-/// earlier by another device. Retry the real LIST read briefly instead of
-/// caching the first empty projection for the lifetime of the app session.
-pub async fn fetch_mls_restore_payload_after_projection(
-    api: &crate::transport::TransportClient,
-    actor_id: &str,
-) -> Result<Value> {
-    let mut payload = fetch_mls_restore_payload(api, actor_id).await?;
-    for _ in 0..5 {
-        if crate::mls::runtime::select_recovery_backup_candidate(&payload).is_some() {
-            break;
-        }
-        crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(1)).await;
-        payload = fetch_mls_restore_payload(api, actor_id).await?;
-    }
-    Ok(payload)
-}
-
 /// An encrypted projection can arrive before its portable backup metadata.
 /// Wait briefly for an active recoverable candidate. This metadata probe
 /// never establishes the candidate's contents or decryptability.

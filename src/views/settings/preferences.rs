@@ -31,11 +31,28 @@ fn watch_options(_context: &InksonContext) -> Vec<(String, String)> {
 }
 pub(super) fn notifications(scope: &Scope, context: Rc<InksonContext>) -> View {
     let controller = controller::SettingsController::new(scope, context.clone());
-    let seed = context
+    let saved_dnd = context
         .state_store
-        .read(|store| model::dnd_editor_seed(store.notification_dnd_settings().as_ref()));
+        .read(|store| store.notification_dnd_settings());
+    let seed = model::dnd_editor_seed(saved_dnd.as_ref());
+    let mut mode_options = vec![
+        ("off".into(), context.tr("settings.notifications.dnd_off")),
+        ("now".into(), context.tr("settings.notifications.dnd_now")),
+    ];
+    if seed.mode == "scheduled" {
+        mode_options.push((
+            "scheduled".into(),
+            context.tr("settings.notifications.dnd_scheduled"),
+        ));
+    }
     let dnd = scope.cage(seed.enabled);
     let mode = scope.cage(seed.mode);
+    let editor_account = context
+        .active_account
+        .get()
+        .map(|account| account.authority.clone());
+    let edited_enabled = scope.cage(None::<bool>);
+    let edited_all_day = scope.cage(None::<bool>);
     let feedback = scope.cage(String::new());
     let sound = scope.cage(
         context
@@ -261,7 +278,10 @@ pub(super) fn notifications(scope: &Scope, context: Rc<InksonContext>) -> View {
                         "settings.notifications.dnd",
                         dnd,
                         true,
-                        move |next| dnd.revise(|value| *value = next),
+                        move |next| {
+                            dnd.revise(|value| *value = next);
+                            edited_enabled.revise(|value| *value = Some(next));
+                        },
                     ),
                     choice(
                         scope,
@@ -269,12 +289,17 @@ pub(super) fn notifications(scope: &Scope, context: Rc<InksonContext>) -> View {
                         "dnd-mode-select",
                         "settings.notifications.dnd",
                         mode,
-                        vec![
-                            ("off".into(), context.tr("settings.notifications.dnd_off")),
-                            ("now".into(), context.tr("settings.notifications.dnd_now")),
-                        ],
+                        mode_options,
                         true,
-                        move |next| mode.revise(|value| *value = next),
+                        move |next| {
+                            let all_day = match next.as_str() {
+                                "off" => Some(false),
+                                "now" => Some(true),
+                                _ => None,
+                            };
+                            mode.revise(|value| *value = next);
+                            edited_all_day.revise(|value| *value = all_day);
+                        },
                     ),
                     action(
                         scope,
@@ -287,6 +312,9 @@ pub(super) fn notifications(scope: &Scope, context: Rc<InksonContext>) -> View {
                             let Some(account) = save_context.active_account.get() else {
                                 return;
                             };
+                            if editor_account.as_ref() != Some(&account.authority) {
+                                return;
+                            }
                             push_dnd_account_data(
                                 save_context.clone(),
                                 save_context.base_url.get(),
@@ -294,12 +322,14 @@ pub(super) fn notifications(scope: &Scope, context: Rc<InksonContext>) -> View {
                                 account.authority.clone(),
                                 account.principal_id().to_string(),
                                 account.device_id.to_string(),
-                                dnd.get(),
-                                mode.get(),
+                                edited_enabled.get(),
+                                edited_all_day.get(),
                                 save_context.state_store.clone(),
                                 None,
                                 feedback,
                             );
+                            edited_enabled.revise(|value| *value = None);
+                            edited_all_day.revise(|value| *value = None);
                             sync_watches(save_context.clone());
                         },
                     ),

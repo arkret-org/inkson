@@ -1258,15 +1258,17 @@
     {
       "operation_id": "ak.self.circle.command.rotate_scope.v1",
       "verification_need": "native_authority",
-      "reason": "Requires a caller-authored member public MLS Commit with UpdatePath for the exact already-accepted Circle group, the ordinary current producer/member/native-scope gates and atomic full Commit/Welcome retry unit. No positive native rotation fixture is wired; an empty success cannot prove the cryptographic transition. The service creates no Genesis and CircleManage supplies no extra MLS permission.",
+      "reason": "The browser contract test checks the required client MLS submission and the response gate validates the authority submit outcome. Cotest submits signed Commit and Welcome material to the registered Circle route, checks the accepted rotation and recipient delivery, and rejects a retry against another Circle. Admission and epoch transitions require the native authority.",
       "normative_documents": [
         "zh/models/circle.md"
       ],
       "source_references": [
-        "arkret-rust-sdk/crates/crypto/src/lib.rs"
+        "arkret-rust-sdk/crates/http-client/src/endpoints/circle.rs",
+        "coland/crates/http/src/routing/circles.rs",
+        "cotest/src/scenarios/native_operation_contracts/circle_rotation.rs"
       ],
       "mock_test": null,
-      "contract_digest": "sha256:29bec816bb7f5d472802ef79543ca2c8b282a27d1a91f7d19c43d9a9c1a106a2"
+      "contract_digest": "sha256:289e010eafbbef1f57eed9b2fd3595000e4ac8edd013b16ecb0cb2008aa00692"
     },
     {
       "operation_id": "ak.self.circle.resource.get.v1",

@@ -89,15 +89,12 @@ pub(super) struct DndEditorSeed {
     pub mode: String,
 }
 
-/// Rehydrates from the persisted snapshot instead of always rendering "off".
-/// The saved body only carries a full-day period when the user picked "now",
-/// so an enabled setting with no periods is still mode `off`.
 pub(super) fn dnd_editor_seed(settings: Option<&DndSettings>) -> DndEditorSeed {
     let enabled = settings.is_some_and(|dnd| dnd.enabled);
-    let mode = if settings.is_some_and(|dnd| dnd.enabled && !dnd.schedule.periods.is_empty()) {
-        "now"
-    } else {
-        "off"
+    let mode = match settings.map(|dnd| &dnd.schedule) {
+        Some(schedule) if schedule.all_day => "now",
+        Some(schedule) if !schedule.periods.is_empty() => "scheduled",
+        _ => "off",
     };
     DndEditorSeed {
         enabled,

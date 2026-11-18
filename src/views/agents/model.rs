@@ -12,11 +12,10 @@ use arkret_models_collaboration::events_payloads::agent::{
 };
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
-    AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap,
-    AgentRequestedScopeDisclosure, AgentRuntimeApprovalControllerProjection, CapabilityActionId,
-    Did, DidCoreId, DidUrl, GrantConstraint, GrantConstraintEffect, GrantConstraintKind,
-    GrantConstraintSubkind, Hash, KeyState, NonEmptyString, OpaqueLocalId, PayloadProof, RequestId,
-    ServiceOperationId,
+    AgentKeyPairRequestBody, AgentKeySupersession, AgentRequestedScopeDisclosure,
+    AgentRuntimeApprovalControllerProjection, CapabilityActionId, Did, DidCoreId, DidUrl,
+    GrantConstraint, GrantConstraintEffect, GrantConstraintKind, GrantConstraintSubkind, Hash,
+    KeyState, NonEmptyString, OpaqueLocalId, PayloadProof, RequestId, ServiceOperationId,
 };
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -358,34 +357,7 @@ pub fn requested_scope_for_presets(
     })
 }
 
-/// Builds the legacy stored bootstrap (agent spec §4.4). New link-based pairing
-/// resolves the complete runtime identity from the Station. This value carries
-/// no scope payload — the authoritative ceiling lives in `ak.agent.key.authorize`
-/// and the effective-permission intersection, and the requested scope is shown
-/// separately in the admin card, not baked into the QR.
-pub fn build_agent_pairing_bootstrap_json(
-    base_url: &str,
-    service_id: &str,
-    outcome: &arkret_sdk::AgentProvisionComplete,
-) -> serde_json::Result<String> {
-    let base_url = base_url.trim_end_matches('/');
-    let bootstrap = AgentPairingBootstrap {
-        runtime_identity: None,
-        arkret_base_url: base_url.to_owned(),
-        service_id: arkret_sdk::DidCoreId::new(service_id.trim().to_owned())
-            .map_err(json_invalid_input)?,
-        agent_id: outcome.agent_id.clone(),
-        pairing_request_id: outcome.pairing_request_id.clone(),
-        pairing_code: outcome
-            .pairing_code
-            .clone()
-            .ok_or_else(|| json_invalid_input("complete Agent outcome omitted pairing_code"))?,
-        pairing_expires_at: outcome.expires_at,
-    };
-    serde_json::to_string_pretty(&bootstrap)
-}
-
-/// Wraps the bootstrap into a standard HTTPS Universal/App Link whose host is the
+/// Builds a standard HTTPS Universal/App Link whose host is the
 /// deployment's `arkret_base_url` (a custom URI scheme is forbidden).
 /// The fragment carries only a short handoff token; runtimes resolve it through
 /// `POST /_arkret/open/agent-pairing/resolve` to obtain the bootstrap and its
@@ -417,13 +389,6 @@ pub fn render_agent_pairing_qr_svg(deep_link: &str) -> String {
             .build(),
         Err(_) => String::new(),
     }
-}
-
-fn json_invalid_input(error: impl std::fmt::Display) -> serde_json::Error {
-    serde_json::Error::io(std::io::Error::new(
-        std::io::ErrorKind::InvalidInput,
-        error.to_string(),
-    ))
 }
 
 pub fn into_agent_key_pair_request(

@@ -10,7 +10,10 @@ use glory::Cage;
 use serde_json::json;
 
 use super::build_read_receipt_preferences_body;
-use crate::notification_rules::{WatchLevel, parse_dnd_settings};
+use crate::notification_rules::{
+    DND_TZDB_VERSION, DndSchedule, DndSettings, DndSettingsRejection, WatchLevel,
+    parse_dnd_settings,
+};
 use crate::presentation::{InksonContext, SharedStateStore};
 use crate::state::{LocalStateStore, PresencePreference, PresenceVisibility};
 use crate::transport::auth::with_event_submitter;
@@ -336,19 +339,39 @@ pub(super) fn push_notification_rules_account_data(
     };
 }
 
-pub(super) fn build_dnd_account_data_body(enabled: bool, mode: &str) -> serde_json::Value {
-    json!({
-        "dnd": {
-            "enabled": enabled,
-            "schedule": {
-                "timezone": "Etc/UTC",
-                "tzdb_version": crate::notification_rules::DND_TZDB_VERSION,
-                "all_day": enabled && mode == "now",
-                "periods": []
+pub(super) fn save_dnd_edits(
+    store: &mut LocalStateStore,
+    authority: &arkret_sdk::AccountId,
+    enabled: Option<bool>,
+    all_day: Option<bool>,
+) -> Result<Option<(serde_json::Value, bool)>, DndSettingsRejection> {
+    if store.active_authority().as_ref() != Some(authority) {
+        return Ok(None);
+    }
+    let mut settings = store
+        .notification_dnd_settings()
+        .unwrap_or_else(|| DndSettings {
+            enabled: false,
+            schedule: DndSchedule {
+                timezone: "Etc/UTC".to_owned(),
+                tzdb_version: DND_TZDB_VERSION.to_owned(),
+                all_day: false,
+                periods: Vec::new(),
             },
-            "exceptions": ["override.priority"]
-        }
-    })
+            exceptions: vec!["override.priority".to_owned()],
+        });
+    if let Some(enabled) = enabled {
+        settings.enabled = enabled;
+    }
+    if let Some(all_day) = all_day {
+        settings.schedule.all_day = all_day;
+        settings.schedule.periods.clear();
+    }
+    let plaintext = json!({ "dnd": settings });
+    let parsed = parse_dnd_settings(&plaintext)?;
+    let enabled = parsed.enabled;
+    store.set_notification_dnd_settings(Some(parsed));
+    Ok(Some((plaintext, enabled)))
 }
 
 pub(super) fn push_dnd_account_data(
@@ -358,23 +381,23 @@ pub(super) fn push_dnd_account_data(
     authority: arkret_sdk::AccountId,
     actor_id: String,
     device_id: String,
-    enabled: bool,
-    mode: String,
+    enabled: Option<bool>,
+    all_day: Option<bool>,
     state_store: SharedStateStore,
     backup_trigger_signal: Option<Cage<bool>>,
     notification_settings_status: Cage<String>,
 ) {
-    let plaintext_body = build_dnd_account_data_body(enabled, &mode);
-    let parsed_settings = match parse_dnd_settings(&plaintext_body) {
-        Ok(settings) => settings,
-        Err(rejection) => {
-            notification_settings_status.revise(|value| {
-                *value = format!("DND save failed validation: {}", rejection.reason)
-            });
-            return;
-        }
-    };
-    state_store.write(|store| store.set_notification_dnd_settings(Some(parsed_settings)));
+    let (plaintext_body, enabled) =
+        match state_store.write(|store| save_dnd_edits(store, &authority, enabled, all_day)) {
+            Ok(Some(saved)) => saved,
+            Ok(None) => return,
+            Err(rejection) => {
+                notification_settings_status.revise(|value| {
+                    *value = format!("DND save failed validation: {}", rejection.reason)
+                });
+                return;
+            }
+        };
     if api_token.trim().is_empty() {
         notification_settings_status
             .revise(|value| *value = "DND settings saved locally; sign in to sync.".to_owned());

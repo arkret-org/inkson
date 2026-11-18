@@ -100,21 +100,6 @@ pub fn capability_grant_owned_agent(
     ))
 }
 
-/// Legacy no-current entry point retained only so forbidden callers fail
-/// closed before Event construction. New callers must use one of the two
-/// carrier-specific builders below.
-pub fn capability_revoke(
-    _realm_id: &str,
-    _actor: &str,
-    _grant_id: &str,
-    _reason: Option<&str>,
-) -> anyhow::Result<TypedOperationBuilder> {
-    anyhow::bail!(
-        "capability revoke blocked: exact accepted CurrentRevision is unavailable; read an \
-         EffectiveCapabilityGrantView or use an Applet revoke preview intent"
-    )
-}
-
 fn capability_revoke_exact(
     realm_id: &str,
     actor: &str,

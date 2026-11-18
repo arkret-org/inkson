@@ -3,7 +3,7 @@
 use arkret_models_collaboration::governance::authorization::EffectiveGrantSnapshot;
 use arkret_models_integration::AppletCapabilityRevokeIntent;
 use inkson::operation::ak_ops::{
-    capability_revoke, capability_revoke_from_applet_preview, capability_revoke_from_effective_row,
+    capability_revoke_from_applet_preview, capability_revoke_from_effective_row,
     effective_grant_row_for_revoke,
 };
 use serde_json::json;
@@ -133,15 +133,6 @@ fn manual_revoke_fails_closed_without_one_exact_row() {
     assert!(effective_grant_row_for_revoke(&grants, "ak:grant:missing").is_err());
     grants.grants.push(grants.grants[0].clone());
     assert!(effective_grant_row_for_revoke(&grants, GRANT_ID).is_err());
-    assert!(
-        capability_revoke(
-            REALM_ID,
-            "did:web:alice.example",
-            GRANT_ID,
-            Some("operator_request")
-        )
-        .is_err()
-    );
 }
 
 #[test]

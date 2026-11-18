@@ -35,29 +35,6 @@ impl crate::transport::TransportClient {
             .map_err(anyhow::Error::from)
     }
 
-    pub async fn put_key_backup_returning_sent_body(
-        &self,
-        backup_id: &str,
-        record: arkret_sdk::KeyBackup,
-    ) -> anyhow::Result<(
-        arkret_sdk::KeysBackupsReplaceResponseBody,
-        arkret_sdk::KeyBackup,
-    )> {
-        let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
-        if record.backup_id != backup_id {
-            anyhow::bail!("key backup path id does not match envelope backup_id");
-        }
-        record
-            .validate()
-            .map_err(|err| anyhow::anyhow!("invalid signed key backup envelope: {err}"))?;
-        let response = arkret_sdk::http_client::KeyBackupClient::new(self.sdk_http_client()?)
-            .put_key_backup(&record)
-            .await
-            .map_err(anyhow::Error::from)?;
-        Ok((response, record))
-    }
-
     pub(crate) async fn key_backup_authorization_binding(
         &self,
         account_id: &arkret_sdk::AccountId,
