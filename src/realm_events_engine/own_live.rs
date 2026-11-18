@@ -3621,24 +3621,45 @@ pub(super) mod tests {
     #[tokio::test]
     async fn failed_second_live_page_does_not_publish_first_page_or_current() {
         let _scope = DeviceSeedScopeTestGuard::replace(None);
-        let first = withheld(0, None);
-        let second = withheld(1, Some(arkret_sdk::RealmCommitId::from_digest([91; 32])));
-        let snapshot = current_snapshot(&[first.clone(), second.clone()], 1);
+        let (mut prefix, mut snapshot) = burst_fixture();
+        let original_tail = prefix.pop().unwrap();
+        let mut fork = original_tail.commit().clone();
+        fork.previous_commit_ref = Some(arkret_sdk::RealmCommitId::from_digest([91; 32]));
+        let fork =
+            crate::test_support::committed_event::FixtureStation::did_web().seal_commit(fork);
+        snapshot.visible_stream_heads[0].commit_id = fork.commit_id.clone();
+        for arkret_sdk::CurrentState::Value { revision, .. } in &mut snapshot.current_state_entries
+        {
+            if revision.commit_id == original_tail.commit().commit_id {
+                revision.commit_id = fork.commit_id.clone();
+            }
+        }
+        seal_current_snapshot(&mut snapshot);
+        own_station::validate_current_product(&snapshot, &snapshot.realm_id).unwrap();
+        let floor_commit_id = prefix[0].commit().commit_id.clone();
+        let after = prefix.last().unwrap().commit().stream_position;
+        let stream = snapshot.visible_stream_heads[0].stream_ref.clone();
         let account = crate::test_support::authority_at_station(
             "did:web:alice.example",
             "ak:did_core:web:station.example",
         );
-        let (client, server) = crate::transport::own_station_results::test_http::client(
-            &account,
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let (client, _, server) = http_for_account_observed(
             vec![
                 serde_json::to_value(&snapshot).unwrap(),
-                serde_json::json!({"committed_events":[first.clone()], "readable_floor":{
-                "oldest_position":0,"floor_commit_id":first.commit().commit_id,
+                serde_json::json!({"committed_events":prefix, "readable_floor":{
+                "oldest_position":0,"floor_commit_id":floor_commit_id,
                 "floor_reason":"stream_start"}, "truncated":true}),
-                serde_json::json!({"committed_events":[second], "readable_floor":{
-                "oldest_position":0,"floor_commit_id":first.commit().commit_id,
-                "floor_reason":"stream_start"}, "truncated":false}),
+                serde_json::json!({"__scan_request": StreamScanRequestBody {
+                    realm_id:snapshot.realm_id.clone(), stream_ref:stream.clone(),
+                    direction:arkret_sdk::StreamScanDirection::After(Some(after)), limit:1,
+                }, "response":{"committed_events":[{"commit":fork,"event_disclosure":{"status":"withheld"}}],
+                    "readable_floor":{"oldest_position":0,"floor_commit_id":floor_commit_id,
+                    "floor_reason":"stream_start"}, "truncated":false}}),
             ],
+            account,
+            None,
+            Some(observed.clone()),
         );
         let directory = tempfile::tempdir().unwrap();
         let mut local =
@@ -3650,7 +3671,6 @@ pub(super) mod tests {
         local.save_sync_cursor("ak:cursor:unchanged-account");
         let store = Arc::new(Mutex::new(local));
         let projector = test_projector(store.clone(), &snapshot.realm_id);
-        let stream = snapshot.visible_stream_heads[0].stream_ref.clone();
         let raw = arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
             .allow_insecure_localhost()
             .build()
@@ -3665,11 +3685,13 @@ pub(super) mod tests {
             &mut OwnStationReplica::new(snapshot.realm_id.clone()),
         )
         .await;
+        let error = result.expect_err("a forked second page must reject the complete live batch");
         assert!(
-            result.is_err(),
-            "a forked second page must reject the complete live batch"
+            error.to_string().contains("ordinary scan has a fork"),
+            "{error}"
         );
         server.join().unwrap();
+        assert_eq!(observed.lock().unwrap().len(), 3, "both pages must be read");
         let local = store.lock().unwrap();
         assert!(
             local
