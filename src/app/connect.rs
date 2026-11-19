@@ -1079,16 +1079,35 @@ pub(super) fn connect(
                         return;
                     };
                     let current_account = active_account.get_untracked().clone();
-                    let mut accepted_account = match accepted_account_context(
-                        &authed,
-                        canonical_principal_id.clone(),
-                        description.as_ref(),
-                        current_account.as_ref(),
-                        &device,
-                        &base,
+                    let Some(account_result) = session_scoped_bootstrap_request(
+                        "current principal",
+                        &session,
+                        bootstrap_session_generation,
+                        async {
+                            // The viewer may finish while the issuer replaces its grant.
+                            // Bind the next authenticated read to the current holder.
+                            if description.is_some() {
+                                authed = crate::transport::auth::authed_api_ready(
+                                    &base, session_credential.clone(),
+                                )
+                                .await?;
+                            }
+                            accepted_account_context(
+                                &authed,
+                                canonical_principal_id.clone(),
+                                description.as_ref(),
+                                current_account.as_ref(),
+                                &device,
+                                &base,
+                            )
+                            .await
+                        },
                     )
                     .await
-                    {
+                    else {
+                        return;
+                    };
+                    let mut accepted_account = match account_result {
                         Ok(account) => account,
                         Err(error) => {
                             defer_bootstrap_retry(
