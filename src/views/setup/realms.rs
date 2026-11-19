@@ -139,12 +139,26 @@ fn encrypted_realm_recovery_gate_state(
     }
 }
 
+fn current_recovery_gate(ctx: &InksonContext) -> EncryptedRealmRecoveryGateState {
+    if ctx.active_account.get().is_none() {
+        return EncryptedRealmRecoveryGateState::Checking;
+    }
+    let policy = ctx.account_recovery_configured.get();
+    let _ = ctx.state_revision.get();
+    ctx.state_store.read(|store| {
+        encrypted_realm_recovery_gate_state(
+            policy,
+            crate::views::recovery::recovery_options_configured(store),
+            crate::components::mls_recovery_backup_configured(store),
+        )
+    })
+}
+
 impl super::SetupDraft {
     pub(super) fn create_realm(self, context: Rc<InksonContext>) {
         let token = context.token;
         let active_account = context.active_account;
         let selected_realm_id = context.selected_realm_id;
-        let account_recovery_configured = context.account_recovery_configured;
         let _realm_tree_nodes = context.realm_tree_nodes;
         let _new_space_context_node = context.new_space_context_node;
         let state_store = context.state_store.clone();
@@ -197,19 +211,7 @@ impl super::SetupDraft {
                 // `recovery_material_pending` is a normative hard gate:
                 // explicit MLS initialization requires a recovery path.
                 if request_mls_genesis {
-                    let recovery_gate_state = active_account.get().map_or(
-                        EncryptedRealmRecoveryGateState::Checking,
-                        |_account| {
-                            state_store.read(|store| {
-                                encrypted_realm_recovery_gate_state(
-                                    account_recovery_configured.get(),
-                                    crate::views::recovery::recovery_options_configured(store),
-                                    crate::components::mls_recovery_backup_configured(store),
-                                )
-                            })
-                        },
-                    );
-                    match recovery_gate_state {
+                    match current_recovery_gate(&context) {
                         EncryptedRealmRecoveryGateState::Ready => {}
                         EncryptedRealmRecoveryGateState::Missing => {
                             pending_recovery_gate.revise(|value| {
@@ -642,20 +644,14 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, draft: super::Setu
                 ctx.secure_store_bootstrap_ready.get(),
                 draft.realm_create_busy.get(),
                 !draft.created_realm_id.get().is_empty(),
-            )
+            ) && (!mls_activation_requested(&draft.realm_mls_activation.get())
+                || current_recovery_gate(&ctx) != EncryptedRealmRecoveryGateState::Checking)
         })
     };
     {
         let ctx = context.clone();
         scope.effect(move || {
-            let ready = ctx.active_account.get().is_some()
-                && ctx.state_store.read(|store| {
-                    encrypted_realm_recovery_gate_state(
-                        ctx.account_recovery_configured.get(),
-                        crate::views::recovery::recovery_options_configured(store),
-                        crate::components::mls_recovery_backup_configured(store),
-                    )
-                }) == EncryptedRealmRecoveryGateState::Ready;
+            let ready = current_recovery_gate(&ctx) == EncryptedRealmRecoveryGateState::Ready;
             if ready && draft.pending_recovery_gate.get_untracked() {
                 draft.pending_recovery_gate.revise(|v| *v = false);
             }
@@ -954,6 +950,11 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, draft: super::Setu
                                 Some("setup.blocker.secure_store")
                             } else if draft.realm_create_busy.get() {
                                 Some("setup.blocker.creating")
+                            } else if mls_activation_requested(&draft.realm_mls_activation.get())
+                                && current_recovery_gate(&blocker_context)
+                                    == EncryptedRealmRecoveryGateState::Checking
+                            {
+                                Some("setup.recovery_gate.checking")
                             } else {
                                 None
                             }

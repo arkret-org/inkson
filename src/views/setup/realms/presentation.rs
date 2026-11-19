@@ -451,6 +451,49 @@ mod tests {
     }
 
     #[test]
+    fn encrypted_create_waits_for_the_recovery_check_and_allows_the_missing_policy_gate() {
+        let (app, context, _directory) = harness();
+        context
+            .token
+            .revise(|value| *value = "fixture-session".into());
+        context
+            .secure_store_bootstrap_ready
+            .revise(|value| *value = true);
+        context.active_account.revise(|value| {
+            *value = Some(crate::test_support::AccountFixture::new("did:web:alice.example").build())
+        });
+        let draft = super::super::super::SetupDraft::for_context(app.scope(), &context);
+        draft
+            .create_step
+            .revise(|step| *step = NewRealmStep::Create);
+        draft.realm_title.revise(|title| *title = "Calendar".into());
+        app.mount(super::super::page(app.scope(), context.clone(), draft))
+            .unwrap();
+        let enabled = || {
+            app.flush().unwrap();
+            let id = class(&app, "create-realm-button");
+            matches!(app.tree().node(id).unwrap().descriptor.view().props, Props::Button(button) if button.enabled)
+        };
+        assert!(!enabled());
+        context
+            .account_recovery_configured
+            .revise(|value| *value = Some(false));
+        assert!(enabled());
+        context
+            .account_recovery_configured
+            .revise(|value| *value = Some(true));
+        assert!(enabled());
+        context
+            .account_recovery_configured
+            .revise(|value| *value = None);
+        assert!(!enabled());
+        draft
+            .realm_mls_activation
+            .revise(|value| *value = "not_now".into());
+        assert!(enabled());
+    }
+
+    #[test]
     fn original_step_navigation_allows_blank_title_review_but_create_submission_stays_disabled() {
         let (app, context, _directory) = harness();
         context
