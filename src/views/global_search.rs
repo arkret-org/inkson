@@ -890,7 +890,9 @@ pub fn global_search_panel(
     let state = local_search(scope, context.clone(), initial_query);
     let ctx = context.clone();
     let owner = scope.downgrade();
-    let enabled = scope.bond(move || !query.get().trim().is_empty() && !state.loading.get());
+    // A current update may refresh the old query while the user submits a new
+    // one. run_search cancels that read and fences its result by request epoch.
+    let enabled = scope.bond(move || !query.get().trim().is_empty());
     let query_reference = scope.cage(None);
     let query_focused = scope.cage(false);
     let focus_owner = scope.downgrade();
