@@ -237,7 +237,12 @@ fn apply_current_reactions(messages: &mut [ChatMessage], state_store: Option<&Lo
         else {
             continue;
         };
-        let Some(scope) = message.local_scope.as_ref() else {
+        let Some(scope) = message
+            .protocol_content
+            .as_ref()
+            .map(|content| &content.scope)
+            .or(message.local_scope.as_ref())
+        else {
             continue;
         };
         let Ok(Some(entries)) = view.message_reactions(&target, scope) else {

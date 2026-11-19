@@ -53,6 +53,77 @@ fn verified_chat_create(
 }
 
 #[test]
+fn verified_remote_message_displays_reactions_from_its_current_scope() {
+    use arkret_wire::{CommitStreamRef, CurrentRevision, CurrentSelector, CurrentState};
+
+    let realm = arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+        arkret_sdk::DigestSuite::Sha256,
+        [37; 32],
+    ));
+    let committed = verified_chat_create(&realm, "bob.example", "remote message");
+    let realm = &committed.event.realm_id;
+    let target = arkret_sdk::MessageId::from_event_id(&committed.event.event_id);
+    let stream = CommitStreamRef::Realm {
+        realm_id: realm.clone(),
+    };
+    let reaction_commit = arkret_sdk::RealmCommitId::from_digest([42; 32]);
+    let row = |selector, value| CurrentState::Value {
+        selector,
+        source_stream_ref: stream.clone(),
+        revision: CurrentRevision {
+            commit_id: reaction_commit.clone(),
+            stream_position: 2,
+        },
+        value,
+    };
+    let reactions = row(
+        CurrentSelector::MessageReactions {
+            target_ref: target.to_string(),
+        },
+        json!({"entries":[{"actor_id":committed.event.actor_id,"key":"👍","source":{
+            "event_id":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [43;32]),
+            "commit_id":reaction_commit,"stream_ref":stream,"stream_position":2
+        }}]}),
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = LocalStateStore::with_path(directory.path().join("state.json"));
+    store
+        .switch_active_account(
+            &crate::test_support::AccountFixture::new("did:web:reader.example").build(),
+        )
+        .unwrap();
+    crate::test_support::install_current_entries(
+        &mut store,
+        realm.as_str(),
+        vec![
+            row(
+                CurrentSelector::MessageRevision { message_id: target },
+                json!({}),
+            ),
+            reactions,
+        ],
+    );
+    let records = message_operations_from_events(
+        realm.as_str(),
+        &[serde_json::to_value(&committed.event).unwrap()],
+    );
+    let state = ClientLocalState {
+        raw_operations: records.into(),
+        ..Default::default()
+    };
+    let messages = chat_messages_from_local_state_with_sidecar(&state, Some(&store), None);
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].local_scope.is_none());
+    assert_eq!(
+        messages[0].protocol_content.as_ref().unwrap().scope,
+        committed.event.scope_ref
+    );
+    assert_eq!(messages[0].reactions.len(), 1);
+    assert_eq!(messages[0].reactions[0].0, "👍");
+    assert_eq!(messages[0].reactions[0].1.len(), 1);
+}
+
+#[test]
 fn optimistic_chat_ids_do_not_claim_protocol_identity() {
     let id = new_chat_local_id();
 
