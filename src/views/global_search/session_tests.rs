@@ -5,6 +5,68 @@ use super::*;
 use crate::state::current_index::search::tests::authorized_store;
 
 #[tokio::test(flavor = "current_thread")]
+async fn form_accepts_a_new_query_while_the_previous_read_is_pending() {
+    use glory::render::{Event, NodeId, Props};
+
+    let (_directory, store, account, _) = authorized_store().await;
+    let (dom, harness) = mount(store, account);
+    let (context, _) = harness.handles.borrow().clone().unwrap();
+    dom.app
+        .mount(global_search_panel(dom.scope(), context, "absent".into()))
+        .unwrap();
+    // Flush UI effects without polling the executor that owns the index read.
+    dom.app.flush().unwrap();
+    let node_by_class = |class: &str| -> Option<NodeId> {
+        let tree = dom.tree();
+        let mut pending = tree.roots().to_vec();
+        while let Some(id) = pending.pop() {
+            let node = tree.node(id).unwrap();
+            if node
+                .descriptor
+                .view()
+                .classes
+                .iter()
+                .any(|name| name == class)
+            {
+                return Some(id);
+            }
+            pending.extend(node.children.iter().copied());
+        }
+        None
+    };
+    assert!(node_by_class("global-search-results-loading").is_some());
+    let input = node_by_class("global-search-input").unwrap();
+    let revision = match dom.tree().node(input).unwrap().descriptor.view().props {
+        Props::Input(field) => field.revision,
+        _ => panic!("expected the search text field"),
+    };
+    dom.dispatch(
+        input,
+        Event::ValueChanged {
+            value: "needle".into(),
+            composing: false,
+            revision,
+        },
+    )
+    .unwrap();
+    dom.app.flush().unwrap();
+    let submit = node_by_class("global-search-submit").unwrap();
+    assert!(matches!(
+        dom.tree().node(submit).unwrap().descriptor.view().props,
+        Props::Button(button) if button.enabled
+    ));
+    dom.dispatch(submit, Event::Activate).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while node_by_class("global-search-result-item").is_none() {
+            dom.flush().unwrap();
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the replacement query must find the authorized message");
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn accepted_search_source_remains_readable_after_cold_account_reopen() {
     let (directory, store, account, original) = authorized_store().await;
     drop(store);
