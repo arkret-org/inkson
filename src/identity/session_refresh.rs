@@ -581,6 +581,15 @@ pub(crate) async fn own_station_result_client_for_http(
     own_station_result_client(http.base_url().as_str(), Some(http)).await
 }
 
+/// Capture the provider's authority, device and grant together for a subscription attempt.
+pub(crate) async fn provide_own_station_sdk_client(
+    station_url: &str,
+) -> anyhow::Result<arkret_sdk::http_client::Client> {
+    Ok(own_station_result_client(station_url, None)
+        .await?
+        .http_client()?)
+}
+
 async fn own_station_result_client(
     station_url: &str,
     requested_http: Option<&arkret_sdk::http_client::Client>,
@@ -1096,7 +1105,10 @@ mod tests {
 
     fn test_host_own_client(
         state: &SessionGrantState,
-    ) -> arkret_sdk::http_client::own_station_results::OwnStationStateClient {
+    ) -> (
+        arkret_sdk::http_client::own_station_results::OwnStationStateClient,
+        Arc<TestFormalOwnSource>,
+    ) {
         use arkret_sdk::http_client::own_station_results::{
             OwnStationSessionSource, OwnStationStateClient,
         };
@@ -1120,7 +1132,8 @@ mod tests {
             ),
             binding: binding.clone(),
         });
-        let inner = OwnStationStateClient::new(client.clone(), binding.clone(), formal).unwrap();
+        let inner =
+            OwnStationStateClient::new(client.clone(), binding.clone(), formal.clone()).unwrap();
         let (scope, device_scope_epoch) =
             crate::secure_key_store::active_device_seed_scope_snapshot().unwrap();
         let host = Arc::new(HostOwnStationSessionSource {
@@ -1132,7 +1145,33 @@ mod tests {
             device_scope_epoch,
         });
         host.snapshot().unwrap();
-        OwnStationStateClient::new(client, binding, host).unwrap()
+        (
+            OwnStationStateClient::new(client, binding, host).unwrap(),
+            formal,
+        )
+    }
+
+    #[tokio::test]
+    async fn account_subscription_reconnects_when_its_captured_grant_is_replaced() {
+        use garth::AccountSubscribeTransport;
+
+        let mut state = test_grant_state();
+        let device = state.device_id.clone().unwrap();
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((
+            &state.account_id,
+            &device,
+        )));
+        let (client, formal) = test_host_own_client(&state);
+        let transport =
+            crate::client_core::InksonAccountTransport::new(client.http_client().unwrap());
+        state.session_grant = arkret_sdk::SessionGrantSecret::from_bytes([0x56; 32]);
+        formal.engine.replace_state(Some(state));
+        let error = transport.subscribe(&Default::default()).await.unwrap_err();
+        assert!(matches!(error, garth::Error::OwnStationSessionChanged));
+        assert_eq!(
+            garth::classify_error(&error),
+            garth::RunErrorClass::RetryableTransport
+        );
     }
 
     #[test]
@@ -1154,7 +1193,7 @@ mod tests {
         assert_eq!(account.authority, state.account_id);
         store.switch_active_account(&account).unwrap();
         let frame = crate::realm_events_engine::VerifiedAccountFrame::test_own_context(
-            test_host_own_client(&state),
+            test_host_own_client(&state).0,
         );
         let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         frame
@@ -1179,7 +1218,7 @@ mod tests {
         );
         assert_eq!(serde_json::to_value(store.load()).unwrap(), before);
         let fresh = crate::realm_events_engine::VerifiedAccountFrame::test_own_context(
-            test_host_own_client(&state),
+            test_host_own_client(&state).0,
         );
         reset_session_grant_runtime();
         assert!(

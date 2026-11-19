@@ -287,7 +287,7 @@ impl AccountTransportProvider {
         crate::transport::websocket_rail::StreamRail<crate::client_core::InksonAccountTransport>,
     > {
         let session_generation = self.ctx.session.generation();
-        let http = crate::identity::session_refresh::provide_authenticated_sdk_client(
+        let http = crate::identity::session_refresh::provide_own_station_sdk_client(
             self.ctx.account.server_url.as_str(),
         )
         .await
