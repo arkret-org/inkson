@@ -239,30 +239,42 @@ pub(crate) async fn store_session_grant_in_user_secure_store_durable(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     grant: &PersistedSessionGrant,
 ) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
-    let _mutation = crate::identity::session_refresh::session_credential_mutation_lock()
+    crate::identity::session_refresh::session_credential_mutation_lock()
         .lock()
-        .await;
-    if &grant.account_id != user_store.authority()
-        || &grant.device_id != user_store.device_id()
-        || grant.grant_ref.issuer_id != grant.audience_id
-        || grant.account_id.station_id != grant.audience_id
-    {
-        return Err(crate::secure_key_store::SecureKeyStoreError::Backend(
-            "session grant does not bind this account/device/Station record".into(),
-        ));
-    }
-    let json = serde_json::to_string(grant).map_err(|error| {
-        crate::secure_key_store::SecureKeyStoreError::Backend(format!(
-            "serialize session grant: {error}"
-        ))
-    })?;
-    user_store
-        .save_secret_durable(
-            secure_store,
-            LocalStateStore::SECURE_SESSION_GRANT_KEY,
-            &json,
-        )
         .await
+        .store_grant_durable(user_store, secure_store, grant)
+        .await
+}
+
+impl crate::identity::session_refresh::SessionCredentialMutation {
+    pub(crate) async fn store_grant_durable(
+        &self,
+        user_store: &crate::secure_key_store::UserLocalStore,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+        grant: &PersistedSessionGrant,
+    ) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
+        if &grant.account_id != user_store.authority()
+            || &grant.device_id != user_store.device_id()
+            || grant.grant_ref.issuer_id != grant.audience_id
+            || grant.account_id.station_id != grant.audience_id
+        {
+            return Err(crate::secure_key_store::SecureKeyStoreError::Backend(
+                "session grant does not bind this account/device/Station record".into(),
+            ));
+        }
+        let json = serde_json::to_string(grant).map_err(|error| {
+            crate::secure_key_store::SecureKeyStoreError::Backend(format!(
+                "serialize session grant: {error}"
+            ))
+        })?;
+        user_store
+            .save_secret_durable(
+                secure_store,
+                LocalStateStore::SECURE_SESSION_GRANT_KEY,
+                &json,
+            )
+            .await
+    }
 }
 
 #[cfg_attr(test, allow(dead_code))]

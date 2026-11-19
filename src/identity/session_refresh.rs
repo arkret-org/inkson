@@ -236,9 +236,14 @@ impl PersistedSessionGrantStore {
     }
 }
 
-pub(crate) fn session_credential_mutation_lock() -> &'static tokio::sync::Mutex<()> {
-    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+/// Exclusive access to a credential mutation. Login and cleanup hold it across
+/// their generation checks, durable writes and in-memory state changes.
+pub(crate) struct SessionCredentialMutation(());
+
+pub(crate) fn session_credential_mutation_lock()
+-> &'static tokio::sync::Mutex<SessionCredentialMutation> {
+    static LOCK: OnceLock<tokio::sync::Mutex<SessionCredentialMutation>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(SessionCredentialMutation(())))
 }
 
 impl SessionGrantStore for PersistedSessionGrantStore {
@@ -438,33 +443,37 @@ fn session_grant_runtime() -> SessionGrantRuntimeHandle {
     }
 }
 
-/// Remove only the rejected account/device credential; retain all identity,
-/// recovery and pending-authentication keys. A changed grant is not this denial's target.
-pub(crate) async fn clear_rejected_session_grant(
-    account: &crate::config::ActiveAccountContext,
-    expected: Option<&PersistedSessionGrant>,
-    secure_store: &dyn SecureKeyStore,
-) -> anyhow::Result<()> {
-    let _mutation = session_credential_mutation_lock().lock().await;
-    let user_store = crate::secure_key_store::UserLocalStore::new(
-        account.authority.clone(),
-        account.device_id.clone(),
-    )?;
-    let current =
-        crate::state::load_session_grant_from_user_secure_store(&user_store, secure_store)?;
-    if let Some(current) = current.as_ref() {
-        anyhow::ensure!(
-            expected.is_some_and(|expected| current.account_id == expected.account_id
-                && current.device_id == expected.device_id
-                && current.grant_ref == expected.grant_ref
-                && current.session_grant == expected.session_grant),
-            "session changed before rejected grant cleanup"
-        );
+impl SessionCredentialMutation {
+    /// Remove only the rejected account/device credential; retain all identity,
+    /// recovery and pending-authentication keys. A changed grant is not this denial's target.
+    pub(crate) async fn clear_rejected_session_grant(
+        &self,
+        account: &crate::config::ActiveAccountContext,
+        expected: Option<&PersistedSessionGrant>,
+        secure_store: &dyn SecureKeyStore,
+    ) -> anyhow::Result<()> {
+        let user_store = crate::secure_key_store::UserLocalStore::new(
+            account.authority.clone(),
+            account.device_id.clone(),
+        )?;
+        let current =
+            crate::state::load_session_grant_from_user_secure_store(&user_store, secure_store)?;
+        if let Some(current) = current.as_ref() {
+            anyhow::ensure!(
+                expected.is_some_and(|expected| current.account_id == expected.account_id
+                    && current.device_id == expected.device_id
+                    && current.grant_ref == expected.grant_ref
+                    && current.session_grant == expected.session_grant),
+                "session changed before rejected grant cleanup"
+            );
+        }
+        secure_store
+            .delete_secret_durable(
+                &user_store.secret_key(LocalStateStore::SECURE_SESSION_GRANT_KEY),
+            )
+            .await?;
+        Ok(())
     }
-    secure_store
-        .delete_secret_durable(&user_store.secret_key(LocalStateStore::SECURE_SESSION_GRANT_KEY))
-        .await?;
-    Ok(())
 }
 
 pub fn reset_session_grant_runtime() {
@@ -1682,7 +1691,10 @@ mod tests {
         store
             .store_secret("test.pending-auth", "retained-transaction")
             .unwrap();
-        clear_rejected_session_grant(&account, Some(&grant), &store)
+        session_credential_mutation_lock()
+            .lock()
+            .await
+            .clear_rejected_session_grant(&account, Some(&grant), &store)
             .await
             .unwrap();
         assert!(
@@ -1700,7 +1712,10 @@ mod tests {
             store.get_secret("test.pending-auth").unwrap().as_deref(),
             Some("retained-transaction")
         );
-        clear_rejected_session_grant(&account, Some(&grant), &store)
+        session_credential_mutation_lock()
+            .lock()
+            .await
+            .clear_rejected_session_grant(&account, Some(&grant), &store)
             .await
             .unwrap();
     }
@@ -1729,7 +1744,10 @@ mod tests {
         )
         .unwrap();
         assert!(
-            clear_rejected_session_grant(&account, Some(&old), &store)
+            session_credential_mutation_lock()
+                .lock()
+                .await
+                .clear_rejected_session_grant(&account, Some(&old), &store)
                 .await
                 .is_err()
         );

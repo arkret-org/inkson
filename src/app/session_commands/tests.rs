@@ -284,9 +284,15 @@ async fn captured_logout_cannot_delete_a_later_login_at_the_same_account() {
     newer.grant_ref.id =
         arkret_sdk::SessionGrantId::new("ak:session_grant:01904100-0000-7000-8000-000000000099")
             .unwrap();
-    crate::state::store_session_grant_in_user_secure_store_durable(&user, &f.keys, &newer)
-        .await
-        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let commit = crate::identity::session_refresh::session_credential_mutation_lock()
+            .lock()
+            .await;
+        commit.store_grant_durable(&user, &f.keys, &newer).await
+    })
+    .await
+    .expect("a returning login writes its grant while holding the commit lock")
+    .unwrap();
     assert!(
         clear_account_sessions(&f.accounts[..1], &records, &f.keys)
             .await

@@ -112,7 +112,7 @@ async fn complete_callback(context: Rc<InksonContext>, state: LoginState) {
     match result {
         Ok(OidcCallbackOutcome::Login(completed)) => {
             callback_retry_url.revise(|current| *current = resume_url.clone());
-            let _commit = crate::identity::session_refresh::session_credential_mutation_lock()
+            let commit = crate::identity::session_refresh::session_credential_mutation_lock()
                 .lock()
                 .await;
             if session_generation.get_untracked() != callback_generation {
@@ -171,7 +171,7 @@ async fn complete_callback(context: Rc<InksonContext>, state: LoginState) {
                     return;
                 }
             };
-            if let Err(error) = crate::state::store_session_grant_in_user_secure_store_durable(
+            if let Err(error) = commit.store_grant_durable(
                 &account_store,
                 secure_store.as_ref(),
                 &completed.session_grant,

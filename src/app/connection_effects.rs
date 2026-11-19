@@ -87,7 +87,7 @@ pub(super) fn install(
                 let navigation = navigation.clone();
                 if let Err(error) = scope.spawn(async move {
                     let result = async {
-                        let _commit =
+                        let commit =
                             crate::identity::session_refresh::session_credential_mutation_lock()
                                 .lock()
                                 .await;
@@ -98,7 +98,7 @@ pub(super) fn install(
                         if let Some(account) = rejected_account {
                             let secure_store =
                                 crate::secure_key_store::default_secure_key_store("inkson");
-                            crate::identity::session_refresh::clear_rejected_session_grant(
+                            commit.clear_rejected_session_grant(
                                 &account,
                                 rejected_grant.as_ref(),
                                 secure_store.as_ref(),
