@@ -58,9 +58,11 @@ pub(super) fn transition_session_boot_state(
     if previous == next {
         return;
     }
-    // Debug wasm promotes this audit trail to WARN because its console layer
-    // intentionally filters normal INFO traffic; release builds keep INFO.
-    #[cfg(all(target_arch = "wasm32", debug_assertions))]
+    // Joint and debug browser consoles filter normal INFO traffic.
+    #[cfg(all(
+        target_arch = "wasm32",
+        any(debug_assertions, feature = "wasm-localstorage-secrets-test")
+    ))]
     tracing::warn!(
         target: "session_state",
         from = ?previous,
@@ -68,7 +70,10 @@ pub(super) fn transition_session_boot_state(
         reason,
         "session boot state transition"
     );
-    #[cfg(not(all(target_arch = "wasm32", debug_assertions)))]
+    #[cfg(not(all(
+        target_arch = "wasm32",
+        any(debug_assertions, feature = "wasm-localstorage-secrets-test")
+    )))]
     tracing::info!(
         target: "session_state",
         from = ?previous,

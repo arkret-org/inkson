@@ -66,6 +66,13 @@ where
         return None;
     }
     let result = bootstrap_request(label, future).await;
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    tracing::warn!(
+        label,
+        succeeded = result.is_ok(),
+        current = session.generation() == generation,
+        "session bootstrap request completed"
+    );
     (session.generation() == generation).then_some(result)
 }
 
@@ -332,6 +339,7 @@ fn invalidate_bootstrap_session(
 /// Keep an accepted credential alive when bootstrap is temporarily unable to
 /// finish. The single bootstrap effect is re-armed after a short delay; only a
 /// terminal session result is allowed to call `invalidate_bootstrap_session`.
+#[track_caller]
 fn defer_bootstrap_retry(
     owner: glory::ui::WeakScope,
     session: BootstrapSessionLease,
@@ -341,8 +349,13 @@ fn defer_bootstrap_retry(
     last_error: glory::Cage<Option<String>>,
     sync_bootstrap_complete: glory::Cage<bool>,
     bootstrap_pending: glory::Cage<bool>,
+    session_boot_state: glory::Cage<SessionBootState>,
 ) {
-    let retry_marker = reason.clone();
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    tracing::warn!(
+        line = std::panic::Location::caller().line(),
+        "session bootstrap deferred"
+    );
     connection_status.revise(|current| {
         *current = format!("{}: {reason}", ConnectionState::Reconnecting.label())
     });
@@ -354,7 +367,10 @@ fn defer_bootstrap_retry(
         crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(2)).await;
         if session.is_current()
             && sync_bootstrap_complete.get_untracked()
-            && last_error.get_untracked().as_deref() == Some(retry_marker.as_str())
+            && matches!(
+                session_boot_state.get_untracked(),
+                SessionBootState::Checking | SessionBootState::Restoring
+            )
         {
             bootstrap_pending.revise(|current| *current = true);
         }
@@ -861,6 +877,7 @@ pub(super) fn connect(
                                 last_error,
                                 sync_bootstrap_complete,
                                 bootstrap_pending,
+                                session_boot_state,
                             );
                             return;
                         }
@@ -880,6 +897,7 @@ pub(super) fn connect(
                             last_error,
                             sync_bootstrap_complete,
                             bootstrap_pending,
+                            session_boot_state,
                         );
                         return;
                     };
@@ -950,6 +968,7 @@ pub(super) fn connect(
                                         last_error,
                                         sync_bootstrap_complete,
                                         bootstrap_pending,
+                                        session_boot_state,
                                     );
                                     return;
                                 };
@@ -1020,6 +1039,7 @@ pub(super) fn connect(
                                             last_error,
                                             sync_bootstrap_complete,
                                             bootstrap_pending,
+                                            session_boot_state,
                                         );
                                         return;
                                     }
@@ -1057,6 +1077,7 @@ pub(super) fn connect(
                                     last_error,
                                     sync_bootstrap_complete,
                                     bootstrap_pending,
+                                    session_boot_state,
                                 );
                                 return;
                             }
@@ -1121,6 +1142,7 @@ pub(super) fn connect(
                                 last_error,
                                 sync_bootstrap_complete,
                                 bootstrap_pending,
+                                session_boot_state,
                             );
                             return;
                         }
@@ -1179,6 +1201,7 @@ pub(super) fn connect(
                             last_error,
                             sync_bootstrap_complete,
                             bootstrap_pending,
+                            session_boot_state,
                         );
                         return;
                     }
@@ -1196,6 +1219,7 @@ pub(super) fn connect(
                                 last_error,
                                 sync_bootstrap_complete,
                                 bootstrap_pending,
+                                session_boot_state,
                             );
                             return;
                         }
@@ -1371,6 +1395,7 @@ pub(super) fn connect(
                                         last_error,
                                         sync_bootstrap_complete,
                                         bootstrap_pending,
+                                        session_boot_state,
                                     );
                                     return;
                                 };
@@ -1421,6 +1446,7 @@ pub(super) fn connect(
                                             last_error,
                                             sync_bootstrap_complete,
                                             bootstrap_pending,
+                                            session_boot_state,
                                         );
                                         return;
                                     }
@@ -1461,6 +1487,7 @@ pub(super) fn connect(
                                     last_error,
                                     sync_bootstrap_complete,
                                     bootstrap_pending,
+                                    session_boot_state,
                                 );
                                 return;
                             }
@@ -1534,6 +1561,7 @@ pub(super) fn connect(
                                         last_error,
                                         sync_bootstrap_complete,
                                         bootstrap_pending,
+                                        session_boot_state,
                                     );
                                     return;
                                 };
@@ -1580,6 +1608,7 @@ pub(super) fn connect(
                                     last_error,
                                     sync_bootstrap_complete,
                                     bootstrap_pending,
+                                    session_boot_state,
                                 );
                                 return;
                             }
@@ -1611,6 +1640,7 @@ pub(super) fn connect(
                                 last_error,
                                 sync_bootstrap_complete,
                                 bootstrap_pending,
+                                session_boot_state,
                             );
                             return;
                         }

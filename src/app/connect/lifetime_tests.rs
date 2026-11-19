@@ -152,3 +152,43 @@ fn refresh_captures_the_epoch_before_its_first_executor_poll() {
     );
     assert!(!context.sync_bootstrap_complete.get_untracked());
 }
+
+#[tokio::test]
+async fn delayed_retry_follows_session_state_after_an_unrelated_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let executor = Rc::new(glory::core::executor::Executor::new(64));
+    let app = glory::ui::App::with_host(executor.clone(), glory::render::memory::Memory::new);
+    let cases = [
+        context(&app, directory.path()),
+        context(&app, directory.path()),
+        context(&app, directory.path()),
+    ];
+    for ctx in &cases {
+        ctx.session_boot_state
+            .revise(|state| *state = SessionBootState::Checking);
+        ctx.bootstrap_pending.revise(|pending| *pending = false);
+        let session = &ctx.services.session;
+        defer_bootstrap_retry(
+            app.scope().downgrade(),
+            BootstrapSessionLease::new(session.clone(), session.generation()),
+            "temporary failure".to_owned(),
+            ctx.connection_status,
+            ctx.network_state,
+            ctx.last_error,
+            ctx.sync_bootstrap_complete,
+            ctx.bootstrap_pending,
+            ctx.session_boot_state,
+        );
+        ctx.last_error.revise(|last| *last = None);
+    }
+    settle(&app, &executor);
+    cases[1]
+        .session_boot_state
+        .revise(|state| *state = SessionBootState::Authenticated);
+    cases[2].services.session.suspend();
+    tokio::time::sleep(std::time::Duration::from_millis(2050)).await;
+    settle(&app, &executor);
+    assert!(cases[0].bootstrap_pending.get_untracked());
+    assert!(!cases[1].bootstrap_pending.get_untracked());
+    assert!(!cases[2].bootstrap_pending.get_untracked());
+}
