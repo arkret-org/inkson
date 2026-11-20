@@ -196,7 +196,9 @@ impl AgentServiceScopePreset {
 
     pub fn help(self) -> &'static str {
         match self {
-            Self::SubscribeEvents => "Open the self events stream for live delivery.",
+            Self::SubscribeEvents => {
+                "Discover the Realms this Agent has joined and subscribe to authorized events."
+            }
             Self::ScanCatchUp => "Query missed events after the runtime reconnects.",
             Self::SubmitEvents => {
                 "Submit approved durable Events for governing Station acceptance."
@@ -215,6 +217,7 @@ impl AgentServiceScopePreset {
             // `service_actions_for_presets` completes the atomic runtime floor.
             Self::SubscribeEvents => &[
                 ServiceOperationId::SELF_DIRECT_CONVERSATION_READ_RESOLVE_V1,
+                ServiceOperationId::SELF_ACCOUNT_STREAM_SUBSCRIBE_V1,
                 ServiceOperationId::SELF_COMMITTED_EVENT_STREAM_SUBSCRIBE_V1,
             ],
             Self::ScanCatchUp => &[

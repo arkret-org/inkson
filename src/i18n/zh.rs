@@ -4144,6 +4144,10 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("agent_runtime.permission_draft", "提交草稿和操作供你批准");
     dict.set("agent_runtime.permission_organize", "组织对话和关联");
     dict.set(
+        "agent_runtime.permission_discover_realms",
+        "查看此 Agent 已加入的 Realm",
+    );
+    dict.set(
         "agent_runtime.permission_sync",
         "接收更新并在重连后补齐消息",
     );

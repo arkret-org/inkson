@@ -38,6 +38,9 @@ fn approval_scope_summary(scope: &arkret_sdk::AgentKeyScope) -> Vec<String> {
             | arkret_wire::CapabilityActionId::RELATION_CREATE => {
                 "agent_runtime.permission_organize"
             }
+            arkret_wire::ServiceOperationId::SELF_ACCOUNT_STREAM_SUBSCRIBE_V1 => {
+                "agent_runtime.permission_discover_realms"
+            }
             arkret_wire::CapabilityActionId::SELF_COMMITTED_EVENT_READ_SCAN_V1
             | arkret_wire::CapabilityActionId::SELF_COMMITTED_EVENT_STREAM_SUBSCRIBE_V1
             | arkret_wire::ServiceOperationId::SELF_DIRECT_CONVERSATION_READ_RESOLVE_V1 => {

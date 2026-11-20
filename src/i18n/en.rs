@@ -4839,6 +4839,10 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "Organize conversations and relationships",
     );
     dict.set(
+        "agent_runtime.permission_discover_realms",
+        "See which Realms this Agent has joined",
+    );
+    dict.set(
         "agent_runtime.permission_sync",
         "Receive updates and catch up after reconnecting",
     );
