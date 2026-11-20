@@ -7,6 +7,7 @@ fn move_submission_state_maps_only_station_queue_outcomes() {
     for status in [
         garth::SendQueueStatus::Queued,
         garth::SendQueueStatus::Forwarding,
+        garth::SendQueueStatus::AwaitingConfirmation,
     ] {
         assert_eq!(
             MoveSubmissionState::from_send_queue_status(status),
@@ -21,6 +22,7 @@ fn move_submission_state_maps_only_station_queue_outcomes() {
         garth::SendQueueStatus::Rejected,
         garth::SendQueueStatus::Failed,
         garth::SendQueueStatus::Cancelled,
+        garth::SendQueueStatus::Withdrawn,
     ] {
         assert_eq!(
             MoveSubmissionState::from_send_queue_status(status),

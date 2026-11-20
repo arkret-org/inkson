@@ -900,8 +900,11 @@ pub(crate) async fn build_sidecar_exchange_control_send(
 /// message event id or
 /// a categorised failure the caller renders into its own UI.
 pub(crate) enum SecureSendOutcome {
-    /// Message accepted; `event_id` is the server's `ak.message.create` id.
-    Sent { event_id: String, status: String },
+    /// The local signed submission and its current durable queue status.
+    Sent {
+        event_id: String,
+        status: garth::SendQueueStatus,
+    },
     /// The `ak.message.create` submission failed (commit, if any, accepted).
     MessageFailed { message: String },
     /// The typed authoring engine refused or could not complete the message.
@@ -991,7 +994,7 @@ pub(crate) async fn submit_secure_send(
             {
                 Ok(resp) => SecureSendOutcome::Sent {
                     event_id: resp.event_id,
-                    status: format!("{:?}", resp.status).to_ascii_lowercase(),
+                    status: resp.status,
                 },
                 Err(failure) => {
                     // §2.4.1 `epoch_update_required`: record the receiver's
@@ -1027,7 +1030,7 @@ pub(crate) async fn submit_secure_send(
     } {
         Ok(resp) => SecureSendOutcome::Sent {
             event_id: resp.event_id,
-            status: format!("{:?}", resp.status).to_ascii_lowercase(),
+            status: resp.status,
         },
         // §2.4.1 `epoch_update_required`: record the receiver's coverage
         // refusal so the per-Realm MLS effect advances the epoch instead of

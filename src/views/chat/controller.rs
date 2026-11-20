@@ -1711,19 +1711,19 @@ impl ChatController {
                             }) {
                                 found.id = event_id.clone();
                                 found.protocol_message_id = Some(protocol_message_id);
-                                found.pending = status != "committed";
+                                found.pending = status != garth::SendQueueStatus::Committed;
                                 found.failed = false;
                                 found.error = None;
                             }
                         });
-                        if status == "committed" {
+                        if status == garth::SendQueueStatus::Committed {
                             {
                                 let next_value = event_id;
                                 frontier_state.revise(|value| *value = next_value);
                             };
                         }
                         {
-                            let next_value = if status == "committed" {
+                            let next_value = if status == garth::SendQueueStatus::Committed {
                                 "Message sent".to_owned()
                             } else {
                                 "Message queued; waiting for server confirmation".to_owned()

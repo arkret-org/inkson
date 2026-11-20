@@ -1423,7 +1423,7 @@ async fn submit_source_routed_sidecar_message(
         )
         .await?;
         anyhow::ensure!(
-            status == "committed",
+            status == garth::SendQueueStatus::Committed,
             "private write is queued; awaiting its committed native history"
         );
         crate::realm_events_engine::refresh_accepted_sidecar(

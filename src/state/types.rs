@@ -492,17 +492,17 @@ pub enum MoveSubmissionState {
 impl MoveSubmissionState {
     /// Map a durable send-queue status onto the user-visible submission state.
     ///
-    /// The governance Station is the only source of a terminal answer: a Move
-    /// is effective exactly when its Event carries an authority-signed
-    /// `RealmCommit`, and rejected exactly when the Station refused it. Queued
-    /// and forwarding items stay pending; no local label can promote them.
+    /// A Move is effective only with an authority-signed `RealmCommit`.
+    /// An uncertain send stays pending. A refusal or local terminal failure
+    /// ends the optimistic Move.
     pub fn from_send_queue_status(status: garth::SendQueueStatus) -> Self {
         match status {
-            garth::SendQueueStatus::Queued | garth::SendQueueStatus::Forwarding => {
-                Self::PendingCommit
-            }
+            garth::SendQueueStatus::Queued
+            | garth::SendQueueStatus::Forwarding
+            | garth::SendQueueStatus::AwaitingConfirmation => Self::PendingCommit,
             garth::SendQueueStatus::Committed => Self::Effective,
             garth::SendQueueStatus::Rejected
+            | garth::SendQueueStatus::Withdrawn
             | garth::SendQueueStatus::Failed
             | garth::SendQueueStatus::Cancelled => Self::Rejected,
         }

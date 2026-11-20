@@ -271,6 +271,8 @@ async fn production_command_callback_does_not_allocate_hooks_and_survives_rerend
             (garth::SendQueueStatus::Committed, "", ""),
             (garth::SendQueueStatus::Queued, "", ""),
             (garth::SendQueueStatus::Forwarding, "", ""),
+            (garth::SendQueueStatus::AwaitingConfirmation, "", ""),
+            (garth::SendQueueStatus::Withdrawn, "", "submitted text"),
             (garth::SendQueueStatus::Failed, "", "submitted text"),
             (
                 garth::SendQueueStatus::Rejected,

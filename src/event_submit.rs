@@ -406,10 +406,7 @@ fn queued_event(item: &garth::SendQueueItem) -> &arkret_sdk::Event {
 
 /// An item that has not reached a terminal authority answer yet.
 fn is_unsettled(status: SendQueueStatus) -> bool {
-    matches!(
-        status,
-        SendQueueStatus::Queued | SendQueueStatus::Forwarding
-    )
+    !status.is_terminal()
 }
 
 /// A frozen controller control remains the retry identity until the signed

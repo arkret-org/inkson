@@ -67,10 +67,13 @@ impl PendingComposerDraft {
         // submission completes, rather than capturing only a state field.
         self.submission = match status {
             garth::SendQueueStatus::Committed => ComposerSubmissionState::Committed,
-            garth::SendQueueStatus::Queued | garth::SendQueueStatus::Forwarding => {
+            garth::SendQueueStatus::Queued
+            | garth::SendQueueStatus::Forwarding
+            | garth::SendQueueStatus::AwaitingConfirmation => {
                 ComposerSubmissionState::DurablePending
             }
             garth::SendQueueStatus::Rejected
+            | garth::SendQueueStatus::Withdrawn
             | garth::SendQueueStatus::Failed
             | garth::SendQueueStatus::Cancelled => ComposerSubmissionState::Recoverable,
         };
@@ -2118,14 +2121,7 @@ pub(super) fn send_encrypted_message(
                 }
             };
             let (resp_event_id, resp_status) = resp;
-            pending_draft.record_send_status(match resp_status.as_str() {
-                "committed" => garth::SendQueueStatus::Committed,
-                "queued" => garth::SendQueueStatus::Queued,
-                "forwarding" => garth::SendQueueStatus::Forwarding,
-                "rejected" => garth::SendQueueStatus::Rejected,
-                "cancelled" => garth::SendQueueStatus::Cancelled,
-                _ => garth::SendQueueStatus::Failed,
-            });
+            pending_draft.record_send_status(resp_status);
             // The read-side projection derives the
             // protocol message id from the accepted
             // event id
@@ -2188,7 +2184,7 @@ pub(super) fn send_encrypted_message(
                             "strand_id": strand_id_for_record.clone(),
                             "message_id": protocol_message_id.clone(),
                             "encrypted_content": true,
-                            "status": resp_status.clone(),
+                            "status": resp_status,
                         }),
                     );
                     // Keep a protected local presentation cache. Historical
@@ -2261,19 +2257,19 @@ pub(super) fn send_encrypted_message(
                 {
                     found.id = resp_event_id.clone();
                     found.protocol_message_id = Some(protocol_message_id.clone());
-                    found.pending = resp_status != "committed";
+                    found.pending = resp_status != garth::SendQueueStatus::Committed;
                     found.failed = false;
                     found.error = None;
                 }
             });
-            if resp_status == "committed" {
+            if resp_status == garth::SendQueueStatus::Committed {
                 {
                     let next_value = resp_event_id.clone();
                     frontier_state.revise(|value| *value = next_value);
                 };
             }
             {
-                let next_value = if resp_status == "committed" {
+                let next_value = if resp_status == garth::SendQueueStatus::Committed {
                     "Encrypted message sent".to_owned()
                 } else {
                     "Encrypted message queued; waiting for server confirmation".to_owned()
