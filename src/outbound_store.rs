@@ -3480,7 +3480,10 @@ mod tests {
                 crate::mls::creator_bootstrap::verify_ready_creator_scope(&handle, &ready)
                     .await
                     .unwrap_err();
-            assert!(pending.contains("installed Realm baseline"), "{pending}");
+            assert!(
+                pending.to_string().contains("installed Realm baseline"),
+                "{pending}"
+            );
             assert_eq!(
                 shared
                     .lock()

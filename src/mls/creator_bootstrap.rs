@@ -501,17 +501,17 @@ pub(crate) async fn ensure_creator_circle_mls_genesis(
 pub(crate) async fn verify_ready_creator_scope(
     state_store: &StateStoreHandle,
     record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     if state_store
         .read(|store| store.active_authority().map(arkret_sdk::ActorId::account))
         .as_ref()
         != Some(record.intent().owner_actor_id())
     {
-        return Err("ready creator belongs to another active account".to_owned());
+        anyhow::bail!("ready creator belongs to another active account");
     }
     let receipt = record
         .ready_receipt()
-        .ok_or_else(|| "creator has no durable ready receipt".to_owned())?;
+        .ok_or_else(|| anyhow::anyhow!("creator has no durable ready receipt"))?;
     let scope = record.intent().effective_scope();
     let input = crate::mls::send_gate::MlsSendGateInput::capture(state_store, scope);
     let gate = crate::mls::send_gate::resolve_restorable_mls_send_gate(
@@ -519,16 +519,53 @@ pub(crate) async fn verify_ready_creator_scope(
         scope,
         record.intent().creator_device_id(),
     )
-    .await
-    .map_err(|error| format!("ready creator awaits verified current private state: {error}"))?;
+    .await?;
     match gate {
         crate::mls::send_gate::MlsSendGate::Encrypted(current)
             if &current.genesis_event_ref == receipt.accepted_genesis_event_id() =>
         {
             Ok(())
         }
-        _ => Err("ready creator current does not name its accepted Genesis".to_owned()),
+        _ => Err(anyhow::anyhow!(
+            "ready creator current does not name its accepted Genesis"
+        )),
     }
+}
+
+async fn confirm_ready_creator_scope(
+    api: &crate::transport::TransportClient,
+    state_store: &StateStoreHandle,
+    record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
+    authority: &arkret_sdk::AccountId,
+) -> Result<(), String> {
+    use crate::mls::send_gate::MlsSendGateBlocked;
+    match verify_ready_creator_scope(state_store, record).await {
+        Ok(()) => return Ok(()),
+        Err(error) => match error.downcast_ref::<MlsSendGateBlocked>() {
+            Some(
+                MlsSendGateBlocked::GenesisPending
+                | MlsSendGateBlocked::DetailBaselinePending
+                | MlsSendGateBlocked::NotReady(_),
+            ) => {}
+            _ => return Err(error.to_string()),
+        },
+    }
+    // The durable creator receipt can precede the local replica's signed cut.
+    // Catch up through the account's Station before checking the same receipt again.
+    let realm = record.intent().effective_scope().realm_id();
+    crate::runtime::boxed_future_from(|| {
+        crate::realm_events_engine::refresh_joined_realm(
+            api.http(),
+            authority,
+            realm,
+            state_store.clone(),
+        )
+    })
+    .await
+    .map_err(|error| format!("refresh accepted creator current: {error}"))?;
+    verify_ready_creator_scope(state_store, record)
+        .await
+        .map_err(|error| format!("ready creator awaits verified current private state: {error}"))
 }
 
 async fn resume_durable_scope_creator(
@@ -539,35 +576,21 @@ async fn resume_durable_scope_creator(
     authority: &arkret_sdk::AccountId,
     explicit_retry: bool,
 ) -> Result<(), String> {
-    if let Some(record) = submitter
+    let record = submitter
         .creator_bootstrap_record(scope)
         .await
-        .map_err(|error| format!("read committed creator state: {error}"))?
-        && record.ready_receipt().is_some()
+        .map_err(|error| format!("read committed creator state: {error}"))?;
+    if let Some(ready) = record
+        .as_ref()
+        .filter(|record| record.ready_receipt().is_some())
     {
-        return verify_ready_creator_scope(state_store, &record).await;
+        return confirm_ready_creator_scope(api, state_store, ready, authority).await;
     }
-    if explicit_retry
-        && submitter
-            .creator_bootstrap_record(scope)
-            .await
-            .map_err(|error| error.to_string())?
-            .is_some_and(|record| record.rejection().is_some())
-    {
+    if explicit_retry && record.is_some_and(|record| record.rejection().is_some()) {
         submitter
             .reopen_rejected_creator(scope)
             .await
             .map_err(|error| format!("reopen rejected creator attempt: {error}"))?;
-    }
-    // A completed creator transaction cannot be replayed into a later MLS cut.
-    // Reading the vault already verifies the terminal receipt and its index.
-    if submitter
-        .creator_bootstrap_record(scope)
-        .await
-        .map_err(|error| error.to_string())?
-        .is_some_and(|record| record.ready_receipt().is_some())
-    {
-        return Ok(());
     }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     crate::mls::runtime::ensure_existing_account_mls_secret_durable(
@@ -630,7 +653,12 @@ async fn resume_durable_scope_creator(
         .publish_creator_ready(scope, secure_store.as_ref())
         .await
         .map_err(|error| format!("publish durable creator readiness: {error}"))?;
-    Ok(())
+    let ready = submitter
+        .creator_bootstrap_record(scope)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "published creator receipt is missing".to_owned())?;
+    confirm_ready_creator_scope(api, state_store, &ready, authority).await
 }
 
 async fn bootstrap_creator_realm_mls_genesis(
