@@ -91,6 +91,24 @@ pub(crate) enum UiNotificationGroup {
     ByType,
 }
 
+impl UiNotificationGroup {
+    pub(super) fn key(self) -> &'static str {
+        match self {
+            Self::Latest => "latest",
+            Self::ByRealm => "realm",
+            Self::ByType => "type",
+        }
+    }
+
+    pub(super) fn label_key(self) -> &'static str {
+        match self {
+            Self::Latest => "notifications.view.latest",
+            Self::ByRealm => "notifications.view.realm",
+            Self::ByType => "notifications.view.type",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum UiNotificationAction {
     AcceptInvite {

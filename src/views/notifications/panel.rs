@@ -186,41 +186,28 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
             }
         });
     }
-    let grouping = {
-        let ctx = context.clone();
-        reactive(group, move |scope, current| {
-            Box::new(
-                glory::ui::view()
-                    .class("segmented-control")
-                    .role(glory::render::Role::TabList)
-                    .name(ctx.translated(scope, "notifications.grouping_label"))
-                    .fill(
-                        [
-                            (UiNotificationGroup::Latest, "notifications.view.latest"),
-                            (UiNotificationGroup::ByRealm, "notifications.view.realm"),
-                            (UiNotificationGroup::ByType, "notifications.view.type"),
-                        ]
-                        .into_iter()
-                        .map(|(value, label)| {
-                            action(
-                                scope,
-                                ctx.clone(),
-                                "notification-group",
-                                label,
-                                if value == current {
-                                    "segment active"
-                                } else {
-                                    "segment"
-                                },
-                                true,
-                                move || group.revise(|v| *v = value),
-                            )
-                        })
-                        .collect::<Vec<View>>(),
-                    ),
-            )
-        })
-    };
+    let groupings = [
+        UiNotificationGroup::Latest,
+        UiNotificationGroup::ByRealm,
+        UiNotificationGroup::ByType,
+    ];
+    let grouping = Box::new(
+        sapid::segmented_control(format!("notification-grouping-{}", scope.id().slot()))
+            .theme(context.theme_tokens())
+            .size(sapid::Size::Small)
+            .class("notification-grouping")
+            .name(context.translated(scope, "notifications.grouping_label"))
+            .value(scope.bond(move || group.get().key().to_owned()))
+            .on_value_change(move |key| {
+                if let Some(value) = groupings.into_iter().find(|value| value.key() == key) {
+                    group.revise(|current| *current = value);
+                }
+            })
+            .segments(groupings.into_iter().map(|value| {
+                sapid::segment(value.key())
+                    .label(context.translated(scope, value.label_key()))
+            })),
+    ) as View;
     let all = {
         let st = state.clone();
         icon_button(

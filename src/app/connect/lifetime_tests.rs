@@ -45,40 +45,35 @@ fn stage(app: &glory::ui::App, context: Rc<crate::presentation::InksonContext>) 
                 let response = response.take().unwrap();
                 let observed = observed.clone();
                 let transient_id = scope.id();
-                // This is the same dispatch boundary used by the production refresh
-                // action, with only the remote request replaced by a controlled await.
-                super::super::connection_handlers::refresh_connection_using(
-                    context.clone(),
-                    move |_, _, _, ctx| {
-                        let owner = ctx.owner.upgrade().unwrap();
-                        assert_ne!(
-                            owner.id(),
-                            transient_id,
-                            "the menu must not own the account bootstrap"
-                        );
-                        let completed = ctx.sync_bootstrap_complete;
-                        let session = ctx.session.clone();
-                        spawn_bootstrap(&owner, session.clone(), move |epoch| async move {
-                            observed.set(true);
-                            let result = session_scoped_bootstrap_request(
-                                "controlled refresh",
-                                &session,
-                                epoch,
-                                async move {
-                                    response
-                                        .await
-                                        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-                                    Ok(())
-                                },
-                            )
-                            .await;
-                            if matches!(result, Some(Ok(()))) {
-                                completed.revise(|value| *value = true);
-                            }
-                        })
-                        .unwrap();
-                    },
+                let app_owner = context.state_scope().unwrap();
+                let ctx = ConnectContext::for_application(&app_owner, context.clone());
+                let owner = ctx.owner.upgrade().unwrap();
+                assert_ne!(
+                    owner.id(),
+                    transient_id,
+                    "the menu must not own the account bootstrap"
                 );
+                let completed = ctx.sync_bootstrap_complete;
+                let session = ctx.session.clone();
+                spawn_bootstrap(&owner, session.clone(), move |epoch| async move {
+                    observed.set(true);
+                    let result = session_scoped_bootstrap_request(
+                        "controlled refresh",
+                        &session,
+                        epoch,
+                        async move {
+                            response
+                                .await
+                                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                            Ok(())
+                        },
+                    )
+                    .await;
+                    if matches!(result, Some(Ok(()))) {
+                        completed.revise(|value| *value = true);
+                    }
+                })
+                .unwrap();
                 Ok(())
             })
         })

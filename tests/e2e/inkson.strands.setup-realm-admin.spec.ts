@@ -495,7 +495,7 @@ test("visual smoke renders core client pages on desktop and mobile", async ({
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/kanban", { waitUntil: "domcontentloaded" });
-  await expect(byClass(page, "mobile-shellbar")).toBeVisible();
+  await expect(byClass(page, "navigation-rail")).toBeVisible();
   await expect(byClass(page, "kanban-panel")).toBeVisible();
   await expect(byClass(page, "kanban-board-grid")).toBeVisible();
   const mobileShot = await page.screenshot();

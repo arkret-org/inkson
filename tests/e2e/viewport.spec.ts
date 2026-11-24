@@ -41,95 +41,31 @@ async function expectNoHorizontalOverflow(page: Page) {
 }
 
 test.describe("responsive viewport — desktop", () => {
-  test("mobile navigation remains nested in the hidden drawer", async ({
-    page,
-  }) => {
+  test("the navigation rail sits beside the workspace", async ({ page }) => {
     await bootAuthenticatedShell(page, DESKTOP_VIEWPORT);
-
-    const drawer = page.locator(".mobile-drawer");
-    const mobileNavLinks = [
-      "mobile-dashboard-nav-button",
-      "mobile-directory-nav-button",
-      "mobile-settings-nav-button",
-    ];
-
-    await expect(drawer).toBeHidden();
-    for (const testId of mobileNavLinks) {
-      const href = { "mobile-dashboard-nav-button": "/", "mobile-directory-nav-button": "/directory", "mobile-settings-nav-button": "/settings" }[testId];
-      const link = page.locator(`.mobile-primary-nav a[href="${href}"]`);
-      const ancestry = await link.evaluate((element) => {
-        const result: string[] = [];
-        let current = element.parentElement;
-        while (current && result.length < 4) {
-          result.push(
-            [...current.classList].find(name => name === "mobile-primary-nav" || name === "mobile-drawer") ?? current.className ?? current.tagName,
-          );
-          current = current.parentElement;
-        }
-        return result;
-      });
-      expect(ancestry.slice(0, 2)).toEqual([
-        "mobile-primary-nav",
-        "mobile-drawer",
-      ]);
-      await expect(link).toBeHidden();
-      await expect(
-        page.locator(`.shell.app > [class~="${testId}"]`),
-      ).toHaveCount(0);
-    }
+    const rail = page.getByRole("navigation", { name: "Main navigation", exact: true });
+    await expect(rail.getByRole("link", { name: "Realms", exact: true })).toBeVisible();
+    const railBounds = (await rail.boundingBox())!;
+    const workspace = (await byClass(page, "workspace").boundingBox())!;
+    expect(railBounds.x + railBounds.width).toBeLessThanOrEqual(workspace.x);
   });
 });
 
 test.describe("responsive viewport — mobile", () => {
-  test("dashboard uses the mobile shell without horizontal overflow", async ({
+  test("dashboard uses the mobile navigation rail without horizontal overflow", async ({
     page,
   }) => {
     await bootAuthenticatedShell(page);
 
     await expect(byClass(page, "dashboard-panel")).toBeVisible();
-    await expect(byClass(page, "mobile-shellbar")).toBeVisible();
-    await expect(page.locator(".mobile-shellbar .theme-toggle-button")).toBeVisible();
-    await expect(byClass(page, "sidebar")).toBeHidden();
-    await expect(page.locator(".realm-header")).toBeHidden();
-
-    const layout = await page.evaluate(() => {
-      const shellbar = document
-        .querySelector('[class~="mobile-shellbar"]')
-        ?.getBoundingClientRect();
-      const main = document
-        .querySelector('.main.realm')
-        ?.getBoundingClientRect();
-      return shellbar && main
-        ? {
-            shellbarBottom: shellbar.bottom,
-            mainTop: main.top,
-            mainHeight: main.height,
-            mainBottom: main.bottom,
-            viewportHeight: window.innerHeight,
-          }
-        : null;
-    });
-    expect(layout).not.toBeNull();
-    expect(layout!.mainTop).toBeGreaterThanOrEqual(layout!.shellbarBottom - 1);
-    expect(layout!.mainHeight).toBeGreaterThan(280);
-    expect(layout!.mainBottom).toBeLessThanOrEqual(layout!.viewportHeight + 1);
-    await expectNoHorizontalOverflow(page);
-  });
-
-  test("drawer stays within the phone viewport", async ({ page }) => {
-    await bootAuthenticatedShell(page);
-
-    await byClass(page, "mobile-nav-toggle").click();
-    await expect(page.locator(".mobile-drawer")).toBeVisible();
-    await expect(page.locator('.mobile-primary-nav a[href="/"]')).toBeVisible();
-    await expect(page.locator('.mobile-primary-nav a[href="/directory"]')).toBeVisible();
-
-    const drawer = await page.locator(".mobile-drawer").boundingBox();
-    expect(drawer).not.toBeNull();
-    expect(drawer!.y).toBeGreaterThanOrEqual(MOBILE_VIEWPORT.height * 0.05);
-    expect(drawer!.y + drawer!.height).toBeLessThanOrEqual(
-      MOBILE_VIEWPORT.height + 1,
-    );
+    await expect(page.locator(".topbar").getByRole("button", { name: "More", exact: true })).toBeVisible();
+    const rail = page.getByRole("navigation", { name: "Main navigation", exact: true });
+    await expect(rail).toBeVisible();
+    const railBounds = (await rail.boundingBox())!;
+    const workspace = (await byClass(page, "workspace").boundingBox())!;
+    expect(workspace.height).toBeGreaterThan(280);
+    expect(workspace.y + workspace.height).toBeLessThanOrEqual(railBounds.y);
+    expect(railBounds.y + railBounds.height).toBeLessThanOrEqual(MOBILE_VIEWPORT.height + 1);
     await expectNoHorizontalOverflow(page);
   });
 
@@ -182,7 +118,7 @@ test.describe("responsive viewport — narrow tablet", () => {
     await expect(byClass(page, "kanban-panel")).toBeVisible({
       timeout: 60_000,
     });
-    await expect(byClass(page, "mobile-shellbar")).toBeVisible();
+    await expect(byClass(page, "navigation-rail")).toBeVisible();
 
     const metrics = await page.evaluate(() => {
       const realm = document
@@ -212,19 +148,17 @@ test.describe("responsive viewport — narrow tablet", () => {
 });
 
 test.describe("ARIA — keyboard + screen reader", () => {
-  test("mobile navigation controls expose expanded state", async ({ page }) => {
+  test("mobile navigation links can be activated with the keyboard", async ({ page }) => {
     await bootAuthenticatedShell(page);
 
-    const toggle = byClass(page, "mobile-nav-toggle");
-    await expect(toggle).toHaveAttribute("aria-label", "Open menu");
-    await expect(toggle).toHaveAttribute("aria-expanded", "false");
-    await expect(toggle).toHaveAttribute(
-      "aria-controls",
-      "mobile-navigation-drawer",
-    );
-    await byClass(page, "mobile-nav-toggle").click();
-    await expect(toggle).toHaveAttribute("aria-label", "Close menu");
-    await expect(toggle).toHaveAttribute("aria-expanded", "true");
-    await expect(page.locator(".mobile-drawer")).toBeVisible();
+    const rail = page.getByRole("navigation", { name: "Main navigation", exact: true });
+    const realms = rail.getByRole("link", { name: "Realms", exact: true });
+    await expect(realms).toBeVisible();
+    await realms.focus();
+    await expect(realms).toBeFocused();
+    await realms.press("Enter");
+    await expect(page).toHaveURL(/\/realms\/manage$/);
+    await expect(realms).toHaveAttribute("aria-current", "page");
+    await expect(byClass(page, "workspace-list")).toBeVisible();
   });
 });

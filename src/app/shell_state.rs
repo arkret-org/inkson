@@ -5,8 +5,6 @@ use std::rc::Rc;
 use glory::prelude::*;
 
 pub(super) struct ShellState {
-    pub mobile_open: Cage<bool>,
-    pub mobile_query: Cage<String>,
     pub notifications_open: Cage<bool>,
     pub shortcut_open: Cage<bool>,
     pub search_open: Cage<bool>,
@@ -31,8 +29,6 @@ pub(super) struct ShellState {
 impl ShellState {
     pub fn new(scope: &Scope, _context: &crate::presentation::InksonContext) -> Rc<Self> {
         Rc::new(Self {
-            mobile_open: scope.cage(false),
-            mobile_query: scope.cage(String::new()),
             notifications_open: scope.cage(false),
             shortcut_open: scope.cage(false),
             search_open: scope.cage(false),

@@ -36,7 +36,6 @@ mod command_palette;
 mod connect;
 use connect::*;
 mod connection_effects;
-mod connection_handlers;
 mod context_bar;
 pub(crate) mod direct_open;
 mod feature_gate;

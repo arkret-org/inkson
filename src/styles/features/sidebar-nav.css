@@ -145,8 +145,7 @@
   background: transparent;
 }
 
-.sidebar-header .brand::before,
-.mobile-shellbar .brand::before {
+.sidebar-header .brand::before {
   content: none !important;
   display: none !important;
 }
@@ -841,8 +840,7 @@
 }
 
 .sidebar .card-meta,
-.sidebar .muted,
-.mobile-status .muted{
+.sidebar .muted {
   color: var(--nav-muted);
 }
 
@@ -1022,7 +1020,6 @@
 .contact-list-avatar { display: grid; place-items: center; flex: 0 0 28px; height: 28px; margin: 0; border-radius: 50%; background: var(--surface-2); }
 .contact-list-name { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; }
 .workspace-shell .contacts-detail-pane > .contact-row { max-width: 960px; }
-.workspace-shell .mobile-shellbar, .workspace-shell .mobile-drawer { display: none; }
 @media (max-width: 860px) {
   .shell.app.workspace-shell, .shell.app.workspace-shell.sidebar-collapsed {
     --sidebar-w: 0px;

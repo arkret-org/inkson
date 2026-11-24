@@ -51,7 +51,6 @@ struct LoginState {
     callback_started: Cage<bool>,
     callback_retry_url: Cage<Option<String>>,
     connection_change: Cage<Option<crate::station_connection::ConnectionTrustChange>>,
-    presets_open: Cage<bool>,
 }
 
 async fn complete_callback(context: Rc<InksonContext>, state: LoginState) {
@@ -385,7 +384,6 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
         callback_started: scope.cage(false),
         callback_retry_url: scope.cage(None),
         connection_change: scope.cage(None),
-        presets_open: scope.cage(false),
     };
     let active_base = context.base_url;
     scope.effect(move || {
@@ -421,85 +419,70 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
                 }
             })
     };
+    let open = scope.cage(false);
     let presets_context = context.clone();
-    let preset_menu = reactive(state.presets_open, move |scope, open| {
-        if !open {
-            return empty();
-        }
-        let context = presets_context.clone();
-        let options = station_options_for(
-            &context.base_url.get_untracked(),
-            &context.config_store.with(LocalConfigStore::load).stations,
-        );
-        let mut children = Vec::new();
-        for option in options {
-            let click_context = context.clone();
-            let selected = same_server_url(&option, &context.base_url.get_untracked());
-            children.push(Box::new(
-                sapid::button()
-                    .unstyled()
-                    .class(if selected {
-                        "auth-combobox-option active"
-                    } else {
-                        "auth-combobox-option"
-                    })
-                    .name(option.clone())
-                    .fill(
-                        glory::ui::group().fill((
-                            glory::ui::text()
-                                .class("auth-combobox-option-url mono")
-                                .content(option.clone()),
-                            glory::ui::text()
-                                .class("auth-combobox-option-check")
-                                .content(if selected { "✓" } else { "" }),
-                        )),
-                    )
-                    .on_press(move || {
-                        retain_station(&click_context, state, &option);
-                        click_context.token.revise(String::clear);
-                        state.presets_open.revise(|value| *value = false);
-                    }),
-            ) as View);
-        }
-        Box::new(
-            view()
-                .class("auth-combobox-menu")
-                .name(context.translated(scope, "login.preset_servers"))
-                .fill(children),
-        )
-    });
-    let preset_label = context.translated(scope, "login.show_preset_servers");
-    let preset_toggle = glory::ui::button()
-        .class("auth-combobox-toggle")
+    let presets = sapid::popover(format!("login-station-presets-{}", scope.id().slot()))
+        .unstyled()
+        .class("auth-combobox-menu")
+        .label(context.translated(scope, "login.show_preset_servers"))
+        .name(context.translated(scope, "login.preset_servers"))
         .enabled(ready)
-        .name(preset_label)
-        .semantics(scope.bond(move || {
-            Some(Box::new(glory::render::Semantics {
-                expanded: Some(state.presets_open.get()),
-                ..Default::default()
-            }))
-        }))
-        .fill(
-            glory::ui::when(state.presets_open, || {
-                crate::components::ui_icon("chevron-up")
-            })
-            .otherwise(|| crate::components::ui_icon("chevron-down")),
-        )
-        .on(glory::render::EventKind::Activate, move |_| {
-            state.presets_open.revise(|open| *open = !*open)
+        .open(open)
+        .on_open_change(move |next| open.revise(|value| *value = next))
+        .show_close(false)
+        .placement(sapid::AnchorPlacement::new(sapid::AnchorSide::Bottom, sapid::AnchorAlign::End))
+        .offset(12.0)
+        .trigger_content(move || {
+            glory::ui::when(open, || crate::components::ui_icon("chevron-up"))
+                .otherwise(|| crate::components::ui_icon("chevron-down"))
+        })
+        .content(move || {
+            let context = presets_context.clone();
+            let options = station_options_for(
+                &context.base_url.get_untracked(),
+                &context.config_store.with(LocalConfigStore::load).stations,
+            );
+            let mut children = Vec::new();
+            for option in options {
+                let click_context = context.clone();
+                let selected = same_server_url(&option, &context.base_url.get_untracked());
+                children.push(Box::new(
+                    sapid::button()
+                        .unstyled()
+                        .class(if selected {
+                            "auth-combobox-option active"
+                        } else {
+                            "auth-combobox-option"
+                        })
+                        .name(option.clone())
+                        .fill(
+                            glory::ui::group().fill((
+                                glory::ui::text()
+                                    .class("auth-combobox-option-url mono")
+                                    .content(option.clone()),
+                                glory::ui::text()
+                                    .class("auth-combobox-option-check")
+                                    .content(if selected { "✓" } else { "" }),
+                            )),
+                        )
+                        .on_press(move || {
+                            retain_station(&click_context, state, &option);
+                            click_context.token.revise(String::clear);
+                            open.revise(|value| *value = false);
+                        }),
+                ) as View);
+            }
+            view().class("auth-combobox-options").fill(children)
         });
-    let mut preset_menu = Some(preset_menu);
-    let mut preset_toggle = Some(Box::new(preset_toggle) as View);
+    let mut presets = Some(Box::new(presets) as View);
     let station = sapid::field("login-station")
         .unstyled()
         .class("auth-station-field")
         .label(context.translated(scope, "login.station"))
         .control(move |field| {
-            view().class("auth-combobox").fill((
-                station_control(field),
-                preset_toggle.take().unwrap_or_else(empty),
-                preset_menu.take().unwrap_or_else(empty),
-            ))
+            view()
+                .class("auth-combobox")
+                .fill((station_control(field), presets.take().unwrap_or_else(empty)))
         });
     let button_context = context.clone();
     let owner = scope.downgrade();

@@ -52,7 +52,7 @@ fn production_login_mounts_and_preset_toggle_retains_the_station_input() {
     let inputs = nodes(&app, None, true);
     assert_eq!(inputs.len(), 1);
     let input = inputs[0];
-    let initial_toggles = nodes(&app, Some("auth-combobox-toggle"), false);
+    let initial_toggles = nodes(&app, Some("sapid-popover-trigger"), false);
     assert_eq!(initial_toggles.len(), 1);
     let toggle = initial_toggles[0];
     {
@@ -91,12 +91,12 @@ fn production_login_mounts_and_preset_toggle_retains_the_station_input() {
         .unwrap()
     );
     for open in [true, false, true, false] {
-        let toggles = nodes(&app, Some("auth-combobox-toggle"), false);
+        let toggles = nodes(&app, Some("sapid-popover-trigger"), false);
         assert_eq!(toggles, vec![toggle]);
         assert!(app.dispatch(toggles[0], Event::Activate).unwrap());
         app.flush().unwrap();
         assert_eq!(
-            nodes(&app, Some("auth-combobox-menu"), false).len(),
+            nodes(&app, Some("auth-combobox-options"), false).len(),
             usize::from(open)
         );
         assert_eq!(nodes(&app, None, true), vec![input]);

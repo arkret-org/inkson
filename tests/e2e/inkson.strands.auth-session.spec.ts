@@ -332,7 +332,7 @@ test("login page delegates account lifecycle to coauth OIDC", async ({
     "https://local.host/",
   );
   // Neutral client: the station field is a free-text URL input with a
-  // custom-styled preset dropdown (no native <datalist>, no browser autofill).
+  // preset popover that does not participate in browser URL autocomplete.
   await expect(page.getByRole("textbox", { name: "Account server URL", exact: true })).not.toHaveAttribute(
     "list",
     /.*/,
@@ -342,14 +342,15 @@ test("login page delegates account lifecycle to coauth OIDC", async ({
   ).toHaveCount(0);
   // The preset list is collapsed until the toggle is clicked, then offers the
   // configured presets as one-click choices.
-  await expect(byClass(page, "auth-combobox-menu")).toHaveCount(0);
-  await byClass(page, "auth-combobox-toggle").click();
+  await expect(byClass(page, "auth-combobox-menu")).toBeHidden();
+  const presetToggle = loginPanel(page).getByRole("button", { name: "Show preset servers", exact: true });
+  await presetToggle.click();
   await expect(byClass(page, "auth-combobox-menu")).toBeVisible();
   await expect(byClass(page, "auth-combobox-option").first()).toContainText(
     "https://local.host",
   );
-  await byClass(page, "auth-combobox-toggle").click();
-  await expect(byClass(page, "auth-combobox-menu")).toHaveCount(0);
+  await presetToggle.click();
+  await expect(byClass(page, "auth-combobox-menu")).toBeHidden();
   // Account lifecycle is delegated to coauth OIDC: a single Continue action,
   // no in-app account selection.
   await expect(byClass(page, "login-account-hint")).toHaveCount(0);

@@ -595,8 +595,6 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("command_palette.close", "关闭 (Esc)");
 
-    dict.set("mobile.filter_realms", "筛选 Realm...");
-    dict.set("mobile.no_match", "未找到匹配的 Realm。");
 
     // Kanban / Board view
     dict.set("kanban.board_header", "看板");
@@ -4025,8 +4023,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.recovery.configure", "去设置恢复");
     dict.set("app.recovery.history_status", "加密历史状态");
     dict.set("app.recovery.history_status_body", "恢复加密历史需要一份账户 MLS 密钥材料；如果这是全新账户，等你第一次写入加密内容、生成可备份的材料之后，应用会再次提示。");
-    dict.set("app.nav.close_menu", "关闭菜单");
-    dict.set("app.nav.open_menu", "打开菜单");
     dict.set("app.nav.main_navigation", "主导航");
     dict.set("app.nav.resize_menu", "拖动调整菜单宽度");
     dict.set("app.nav.scope_toggle", "协作与联系人");

@@ -384,7 +384,7 @@ fn shell(
     all_messages: Bond<Vec<ChatMessage>>,
     available: Cage<bool>,
 ) -> View {
-    use super::native::{block, button, icon_button};
+    use super::native::{block, icon_button};
     use crate::presentation::widgets::{empty, line, paragraph, plain, reactive_distinct};
     let shell_props = props.clone();
     let class = scope.bond(move || {
@@ -487,6 +487,15 @@ fn shell(
                 )
             },
         );
+        let filter = sapid::segmented_control(format!("discussion-filter-{}", scope.id().slot()))
+            .theme(left_context.theme_tokens())
+            .size(sapid::Size::Small)
+            .name(left_context.translated(scope, "chat.discussions_header"))
+            .full_width(true)
+            .value(controller.track_filter)
+            .on_value_change(move |next| controller.track_filter.revise(|value| *value = next))
+            .segment(sapid::segment("discussion_only").label("Default + discussion"))
+            .segment(sapid::segment("with_discussion_track").label("All Strand tracks"));
         block(
             "discussion-panel discussion-sidebar-panel discussion-list-panel",
             vec![
@@ -533,31 +542,7 @@ fn shell(
                         ),
                     ],
                 ),
-                line(
-                    "discussion-filter segmented-control",
-                    vec![
-                        button(
-                            "Default + discussion",
-                            "secondary segment discussion-filter-only",
-                            true,
-                            move || {
-                                controller
-                                    .track_filter
-                                    .revise(|value| *value = "discussion_only".into())
-                            },
-                        ),
-                        button(
-                            "All Strand tracks",
-                            "secondary segment discussion-filter-track",
-                            true,
-                            move || {
-                                controller
-                                    .track_filter
-                                    .revise(|value| *value = "with_discussion_track".into())
-                            },
-                        ),
-                    ],
-                ),
+                line("discussion-filter", vec![Box::new(filter)]),
                 rows,
             ],
         )

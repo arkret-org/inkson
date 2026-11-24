@@ -160,8 +160,12 @@ test("watch target replacement cannot publish an old read or release the new tar
   try {
     await page.locator('[class~="channel-item"].active').click();
     await awaitEntered(oldRead.entered);
-    // The existing all-tracks filter exposes the actual secondary Strand.
-    await byClass(page, "discussion-filter-track").click();
+    const filters = byClass(page, "discussion-filter");
+    const discussions = filters.getByRole("radio", { name: "Default + discussion" });
+    const allTracks = filters.getByRole("radio", { name: "All Strand tracks" });
+    await expect(discussions).toBeChecked();
+    await discussions.press("ArrowRight");
+    await expect(allTracks).toBeChecked();
     const secondary = byClass(page, "channel-item").filter({ hasText: "Secondary" });
     await secondary.click();
     await expect(byClass(page, "watch-level-toggle")).toBeDisabled();

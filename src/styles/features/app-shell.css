@@ -1,5 +1,5 @@
 /* The app shell frame: `.shell`, `.app`, `.realm`, `.main`, `.panel`,
- * `.realm-body`, and the mobile shellbar/drawer containers.
+ * and `.realm-body`.
  */
 .shell { min-height: 100vh; display: grid; grid-template-columns: 288px minmax(0, 1fr) 340px; }
 .shell.rtl { direction: rtl; grid-template-columns: 340px minmax(0, 1fr) 288px; }
@@ -11,10 +11,6 @@
 .shell.rtl .realm-tree-node-button, .shell.rtl input, .shell.rtl textarea { text-align: right; }
 .main { padding: 24px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 16px; min-width: 0; }
 .panel { border-left: 1px solid var(--border); background: var(--surface-2); padding: 22px; display: grid; gap: 16px; align-content: start; overflow: auto; min-width: 0; }
-.mobile-shellbar, .mobile-drawer { display: none; }
-.mobile-primary-nav { display: contents; }
-.mobile-status { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-2); }
-.mobile-status .muted { color: var(--text-3); }
 /* App theme layer: calm security-oriented palette shared by all views.
  * The --ak-* tokens below are legacy aliases kept for existing
  * consumers (workflow/board/card views); they now re-point at the
@@ -118,9 +114,7 @@
   grid-column: 1;
 }
 .shell.app.rtl .sidebar,
-.shell.app.rtl .realm,
-.shell.app.rtl .mobile-shellbar,
-.shell.app.rtl .mobile-drawer {
+.shell.app.rtl .realm {
   direction: rtl;
 }
 
@@ -135,11 +129,6 @@
 .shell.app.sidebar-resizing {
   cursor: col-resize;
   user-select: none;
-}
-
-.mobile-shellbar,
-.mobile-drawer {
-  display: none;
 }
 
 .main.realm {

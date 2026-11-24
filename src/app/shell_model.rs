@@ -109,8 +109,6 @@ pub(super) struct RealmNavigationModel {
     pub collaboration_nodes: Vec<RealmTreeNode>,
     pub selected_preview: Option<RealmTreeNode>,
     pub active_projection_realm_id: String,
-    /// Unfiltered navigation rows; the mobile surface renders these.
-    pub realm_tree: Vec<RealmTreeItem>,
     pub filtered_realm_tree: Vec<RealmTreeItem>,
     pub manage_realm_rows: Vec<RealmManageRow>,
     pub active_realm_security_encrypted: Option<bool>,
@@ -163,7 +161,7 @@ pub(super) fn build_realm_navigation(input: RealmNavigationInput<'_>) -> RealmNa
     let realm_tree =
         realm_tree_items_with_pinned_realms(&collaboration_nodes, input.pinned_realm_ids);
     let filtered_realm_tree: Vec<RealmTreeItem> = realm_tree
-        .iter()
+        .into_iter()
         .filter(|item| {
             let display_name = remark_display_name(input.realm_remarks, &item.node);
             let kind_label = match item.node.kind {
@@ -175,7 +173,6 @@ pub(super) fn build_realm_navigation(input: RealmNavigationInput<'_>) -> RealmNa
                 &[&item.node.id, &item.node.title, &display_name, kind_label],
             )
         })
-        .cloned()
         .collect();
     let manage_realm_rows: Vec<RealmManageRow> = collaboration_nodes
         .iter()
@@ -223,7 +220,6 @@ pub(super) fn build_realm_navigation(input: RealmNavigationInput<'_>) -> RealmNa
         collaboration_nodes,
         selected_preview,
         active_projection_realm_id,
-        realm_tree,
         filtered_realm_tree,
         manage_realm_rows,
         active_realm_security_encrypted,

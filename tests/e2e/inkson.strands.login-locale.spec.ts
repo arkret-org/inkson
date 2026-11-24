@@ -29,8 +29,7 @@ for (const language of ["en", "zh"] as const) {
     const originalUrl = await input.inputValue();
     expect(originalUrl).not.toBe("");
     await expect(input).toHaveAccessibleName(zh ? "账号服务器地址" : "Account server URL");
-    const toggle = byClass(login, "auth-combobox-toggle");
-    await expect(toggle).toHaveAttribute("aria-label", zh ? "显示预设服务器" : "Show preset servers");
+    const toggle = login.getByRole("button", { name: zh ? "显示预设服务器" : "Show preset servers", exact: true });
     await toggle.click();
     await expect(byClass(login, "auth-combobox-menu")).toHaveAccessibleName(zh ? "预设服务器" : "Preset servers");
     const selected = login.locator("button.auth-combobox-option.active");
@@ -40,7 +39,9 @@ for (const language of ["en", "zh"] as const) {
     // Presets normalize a root URL's trailing slash; the input remains literal.
     expect(new URL(selectedUrl).href).toBe(new URL(originalUrl).href);
     await expect(input).toHaveValue(originalUrl);
-    await toggle.click();
+    await page.keyboard.press("Escape");
+    await expect(byClass(page, "auth-combobox-menu")).toBeHidden();
+    await expect(toggle).toBeFocused();
     await expect(input).toHaveValue(originalUrl);
     await expect(byClass(page, "auth-connection-review")).toHaveCount(0);
   });

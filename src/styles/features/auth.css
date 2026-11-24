@@ -169,9 +169,7 @@
   transform: translateY(0);
 }
 
-/* Station combobox: an editable URL field with a custom-styled
-   preset dropdown (a themed replacement for the unstyleable native
-   <datalist> popup). */
+/* Keep the preset trigger at the end of the editable Station URL field. */
 .auth-combobox {
   position: relative;
   display: block;
@@ -185,7 +183,7 @@
   padding-inline-end: 40px;
 }
 
-.auth-combobox-toggle {
+.auth-combobox .sapid-popover-trigger {
   position: absolute;
   inset-inline-end: 6px;
   top: 50%;
@@ -203,23 +201,19 @@
   transition: background-color 120ms ease, color 120ms ease;
 }
 
-.auth-combobox-toggle:hover:not(:disabled) {
+.auth-combobox .sapid-popover-trigger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--text);
 }
 
-.auth-combobox-toggle:disabled {
+.auth-combobox .sapid-popover-trigger:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
 .auth-combobox-menu {
-  position: absolute;
-  inset-inline: 0;
-  top: calc(100% + 6px);
-  z-index: 30;
-  display: grid;
-  gap: 4px;
+  width: 360px;
+  max-width: calc(100vw - 32px);
   max-height: 240px;
   overflow-y: auto;
   padding: 6px;
@@ -227,6 +221,11 @@
   border-radius: 12px;
   background: var(--surface);
   box-shadow: var(--shadow-md);
+}
+
+.auth-combobox-options {
+  display: grid;
+  gap: 4px;
 }
 
 .auth-combobox-option {

@@ -114,5 +114,5 @@ Message action resolves the human or agent recipient with the existing account
 and generation fences. Narrow layouts keep the icon rail and stack each list
 above its independently scrolling detail.
 
-Glory 0.7.0 and Sapid 0.7.1 resolve from crates.io. Build provenance and Sapid CSS
+Glory 0.9.1 and Sapid 0.9.1 resolve from crates.io. Build provenance and Sapid CSS
 come from the locked Cargo graph; no local sibling checkout supplies UI assets.

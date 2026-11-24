@@ -1,5 +1,5 @@
 /* Buttons and other pressable controls: `.btn` and its variants, the bare
- * `.primary`/`.secondary` pair, `.icon-button`, `.tabs`, `.segmented-control`,
+ * `.primary`/`.secondary` pair, `.icon-button`, `.tabs`,
  * `.steps`, `.help-tip`, `.ui-icon`.
  */
 .primary, .secondary { border: 0; border-radius: 6px; padding: 10px 12px; cursor: pointer; display: inline-block; text-decoration: none; text-align: center; }
@@ -280,38 +280,6 @@ button[data-style="link"]:disabled:hover {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   outline: none;
-}
-
-.segmented-control {
-  display: inline-flex;
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface-2);
-}
-
-.segment {
-  appearance: none;
-  border: 0;
-  border-right: 1px solid var(--border);
-  padding: 5px 9px;
-  min-width: 48px;
-  background: transparent;
-  color: var(--text-2);
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-}
-
-.segment:last-child {
-  border-right: 0;
-}
-
-.segment.active {
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .tab.active {

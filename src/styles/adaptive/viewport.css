@@ -42,11 +42,6 @@
 /* Responsive: mobile */
 @media (max-width: 768px) {
   .panel { display: none; }
-  .mobile-shellbar { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--surface-solid); color: var(--text); }
-  .mobile-drawer.open { display: grid; gap: 8px; padding: 12px; background: var(--surface-solid); max-height: calc(100vh - 60px); overflow-y: auto; }
-  .mobile-realm-tree-filter { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); }
-  .mobile-realm-tree-filter::placeholder { color: var(--text-3); }
-  .mobile-realm-tree-list { display: grid; gap: 6px; max-height: 50vh; overflow-y: auto; padding-right: 4px; }
   .main { min-height: 100vh; padding: 16px; }
   .title { font-size: 22px; }
   .actions { flex-direction: column; }
@@ -108,59 +103,6 @@
     min-height: 100dvh;
     height: 100dvh;
     overflow: hidden;
-  }
-
-  .mobile-shellbar {
-    height: var(--topbar-h);
-    grid-column: 1;
-    grid-row: 1;
-    position: relative;
-    z-index: var(--layer-chrome);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 0 12px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface-solid, var(--surface));
-    box-shadow: var(--shadow-xs);
-    min-width: 0;
-  }
-
-  .mobile-shellbar > * {
-    flex: 0 0 auto;
-  }
-
-  .mobile-shellbar .brand {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-align: center;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--text);
-  }
-
-  .mobile-drawer {
-    position: fixed;
-    inset: var(--topbar-h) 0 auto 0;
-    z-index: var(--layer-global-popover);
-    display: none;
-    flex-direction: column;
-    gap: 8px;
-    padding: 12px;
-    max-height: calc(100dvh - var(--topbar-h));
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface-solid, var(--surface));
-    box-shadow: var(--shadow-md);
-  }
-
-  .mobile-drawer.open {
-    display: flex;
   }
 
   .notifications-drawer-layer {
@@ -341,15 +283,6 @@
   .settings .actions > button:not(.icon),
   .event .actions > button:not(.icon) {
     width: 100%;
-  }
-
-  .segmented-control {
-    width: 100%;
-    overflow-x: auto;
-  }
-
-  .segmented-control .segment {
-    flex: 1 0 auto;
   }
 
   .sapid-command-dialog {

@@ -11,7 +11,7 @@ registerStrandsBeforeEach();
 
 async function openHome(page: Page) {
   await dismissBlockingRecoveryModal(page);
-  await page.locator('[class~="sidebar"] a.sidebar-nav-item[href="/"]').click();
+  await page.locator('.navigation-rail a[href="/"]').click();
   await expect(byClass(page, "dashboard-panel")).toBeVisible();
 }
 
@@ -50,7 +50,21 @@ test("invite preview dashboard notification defaults follow the active language"
   // Recover the actual holder-private delivery through the drawer's normal
   // authenticated GET before inspecting the same durable projection on Home.
   await page.locator(".topbar .topbar-notifications-link").click();
-  await expect(byClass(page, "notifications-drawer-layer")).toBeVisible();
+  const drawer = byClass(page, "notifications-drawer-layer");
+  await expect(drawer).toBeVisible();
+  const group = drawer.getByRole("radiogroup", { name: "Notification grouping" });
+  const latest = group.getByRole("radio", { name: "Latest" });
+  const byRealm = group.getByRole("radio", { name: "Realm" });
+  const byType = group.getByRole("radio", { name: "Type" });
+  await expect(latest).toBeChecked();
+  await latest.focus();
+  await latest.press("ArrowRight");
+  await expect(byRealm).toBeChecked();
+  await expect(byRealm).toBeFocused();
+  await byRealm.press("ArrowRight");
+  await expect(byType).toBeChecked();
+  await byType.press("ArrowRight");
+  await expect(latest).toBeChecked();
   const recoveredInvite = byClass(page, "notification-item").filter({
     has: byClass(page, "invite-preview"),
   });

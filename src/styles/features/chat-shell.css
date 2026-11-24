@@ -271,11 +271,6 @@
   width: calc(100% - 24px);
 }
 
-.discussion-filter .segment {
-  flex: 1 1 0;
-  text-align: center;
-}
-
 .discussion-list {
   flex: 1;
   min-height: 0;

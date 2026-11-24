@@ -431,13 +431,9 @@
   justify-content: flex-start;
 }
 
-.notifications-drawer-panel .segmented-control {
+.notifications-drawer-panel .notification-grouping {
   flex: 1 1 220px;
   width: auto;
-}
-
-.notifications-drawer-panel .segmented-control .segment {
-  flex: 1 1 48px;
 }
 
 .topbar-command-search {

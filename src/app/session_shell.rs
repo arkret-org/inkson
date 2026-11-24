@@ -276,7 +276,6 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
                     keyboard_ui
                         .notifications_open
                         .revise(|value| *value = false);
-                    keyboard_ui.mobile_open.revise(|value| *value = false);
                 }
                 _ => {}
             }
@@ -298,8 +297,6 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
             crate::components::agent_runtime_approval_prompt(scope, context.clone()),
             crate::components::recovery_key_setup_prompt(scope, context.clone()),
             health_prompt(scope, context.clone()),
-            mobile_bar(scope, context.clone(), ui.clone(), unread),
-            mobile_drawer(scope, context.clone(), ui.clone()),
             super::sidebar::sidebar(scope, context.clone()),
             Box::new(
                 view()
@@ -491,211 +488,6 @@ fn theme_toggle_button(scope: &Scope, context: Rc<InksonContext>) -> View {
             }),
     )
 }
-fn mobile_bar(
-    scope: &Scope,
-    context: Rc<InksonContext>,
-    ui: Rc<ShellState>,
-    unread: Bond<bool>,
-) -> View {
-    let theme = theme_toggle_button(scope, context.clone());
-    let drawer_id = match glory::render::SemanticId::new("mobile-navigation-drawer") {
-        Ok(id) => id,
-        Err(error) => {
-            scope.report_error(error);
-            return empty();
-        }
-    };
-    let open = ui.mobile_open;
-    let menu_context = context.clone();
-    let name = scope.bond(move || {
-        menu_context.tr(if open.get() {
-            "app.nav.close_menu"
-        } else {
-            "app.nav.open_menu"
-        })
-    });
-    let semantics = scope.bond(move || {
-        Some(Box::new(glory::render::Semantics {
-            expanded: Some(open.get()),
-            controls: Some(drawer_id.clone()),
-            ..Default::default()
-        }))
-    });
-    let menu = Box::new(
-        button()
-            .class("btn icon mobile-nav-toggle")
-            .name(name)
-            .semantics(semantics)
-            .fill(
-                glory::ui::when(open, || crate::components::ui_icon("x"))
-                    .otherwise(|| crate::components::ui_icon("menu")),
-            )
-            .on(EventKind::Activate, move |_| {
-                open.revise(|value| *value = !*value)
-            }),
-    ) as View;
-    block(
-        "mobile-shellbar",
-        vec![
-            menu,
-            block("brand", vec![plain("Arkret")]),
-            theme,
-            icon_action(
-                "btn icon",
-                context.translated(scope, "shortcuts.title"),
-                "keyboard",
-                {
-                    let ui = ui.clone();
-                    move || {
-                        ui.mobile_open.revise(|value| *value = false);
-                        ui.shortcut_open.revise(|value| *value = true);
-                    }
-                },
-            ),
-            notifications_button(scope, &context, unread, move || {
-                ui.mobile_open.revise(|value| *value = false);
-                ui.search_open.revise(|value| *value = false);
-                ui.search_query.revise(String::clear);
-                ui.notifications_open.revise(|value| *value = !*value);
-            }),
-        ],
-    )
-}
-
-fn mobile_drawer(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
-    let drawer_id = match glory::render::SemanticId::new("mobile-navigation-drawer") {
-        Ok(id) => id,
-        Err(error) => {
-            scope.report_error(error);
-            return empty();
-        }
-    };
-    let class = scope.bond({
-        let ui = ui.clone();
-        move || {
-            if ui.mobile_open.get() {
-                "mobile-drawer mobile-nav-drawer open"
-            } else {
-                "mobile-drawer mobile-nav-drawer"
-            }
-            .to_owned()
-        }
-    });
-    let source = scope.bond({
-        let context = context.clone();
-        let ui = ui.clone();
-        move || {
-            (
-                context.realm_tree_nodes.get(),
-                ui.mobile_query.get(),
-                context.locale.get(),
-                context.state_revision.get(),
-            )
-        }
-    });
-    let context_tree = context.clone();
-    let ui_tree = ui.clone();
-    let tree = reactive(source, move |scope, (nodes, query, ..)| {
-        let _ = nodes;
-        let rows = super::sidebar::navigation_model(
-            &context_tree,
-            &context_tree.route.get_untracked(),
-            "",
-        )
-        .realm_tree;
-        let children = filtered_mobile_realm_items(&rows, &query)
-            .into_iter()
-            .map(|item| {
-                let target = item.node.projection_realm_id().to_owned();
-                let context = context_tree.clone();
-                let ui = ui_tree.clone();
-                action("secondary", item.node.title.clone(), move || {
-                    context
-                        .selected_realm_id
-                        .revise(|value| *value = target.clone());
-                    ui.mobile_open.revise(|value| *value = false);
-                    ui.mobile_query.revise(String::clear);
-                    context.navigate(Route::Realm {
-                        realm_id: target.clone(),
-                    });
-                })
-            })
-            .collect::<Vec<_>>();
-        if children.is_empty() {
-            paragraph("muted", context_tree.translated(scope, "mobile.no_match"))
-        } else {
-            block("mobile-realm-tree-list", children)
-        }
-    });
-    Box::new(
-        view()
-            .class(class)
-            .role(Role::Navigation)
-            .name(context.translated(scope, "app.nav.main_navigation"))
-            .semantics(Some(Box::new(glory::render::Semantics {
-                id: Some(drawer_id),
-                ..Default::default()
-            })))
-            .fill(vec![
-                block(
-                    "mobile-status",
-                    vec![
-                        plain(context.connection_status),
-                        paragraph("muted mono", context.sync_cursor),
-                        action("btn primary", "Refresh", {
-                            let weak = scope.downgrade();
-                            let context = context.clone();
-                            move || {
-                                if let Some(scope) = weak.upgrade() {
-                                    super::connection_handlers::refresh_connection(
-                                        &scope,
-                                        context.clone(),
-                                    );
-                                }
-                            }
-                        }),
-                    ],
-                ),
-                block(
-                    "mobile-primary-nav",
-                    vec![
-                        nav(
-                            context.clone(),
-                            Route::Dashboard,
-                            "secondary mobile-dashboard-nav-button",
-                            context.translated(scope, "nav.dashboard"),
-                            "",
-                        ),
-                        nav(
-                            context.clone(),
-                            Route::Directory,
-                            "secondary mobile-directory-nav-button",
-                            context.translated(scope, "nav.directory"),
-                            "",
-                        ),
-                        nav(
-                            context.clone(),
-                            Route::Settings,
-                            "secondary mobile-settings-nav-button",
-                            context.translated(scope, "nav.settings"),
-                            "",
-                        ),
-                    ],
-                ),
-                input_field(
-                    context.clone(),
-                    "mobile-realms",
-                    context.translated(scope, "mobile.filter_realms"),
-                    ui.mobile_query,
-                    Purpose::Text,
-                ),
-                tree,
-            ]),
-    )
-}
-
-#[cfg(test)]
-mod mobile_drawer_tests;
 fn connection_status_region(scope: &Scope, context: Rc<InksonContext>) -> View {
     let cursor = context.sync_cursor;
     let error = reactive(context.last_error, |_, error| match error {
@@ -1363,21 +1155,6 @@ pub(super) fn account_page(scope: &Scope, context: Rc<InksonContext>, ui: Rc<She
         }
     });
     block("account-page", vec![identity])
-}
-
-fn filtered_mobile_realm_items<'a>(
-    realm_tree: &'a [crate::realm_tree::RealmTreeItem],
-    query: &str,
-) -> Vec<&'a crate::realm_tree::RealmTreeItem> {
-    let query = query.trim().to_lowercase();
-    realm_tree
-        .iter()
-        .filter(|item| {
-            query.is_empty()
-                || item.node.title.to_lowercase().contains(&query)
-                || item.node.id.to_lowercase().contains(&query)
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -2228,49 +2005,5 @@ mod tests {
             depth: 0,
             descendant_count: 0,
         }
-    }
-
-    #[test]
-    fn mobile_realm_filter_empty_query_keeps_all_rows() {
-        let rows = [item("ak:realm:one", "Alpha"), item("ak:realm:two", "Beta")];
-        assert_eq!(filtered_mobile_realm_items(&rows, "").len(), 2);
-    }
-
-    #[test]
-    fn mobile_realm_filter_matches_title_case_insensitively() {
-        let rows = [
-            item("ak:realm:one", "Alpha Team"),
-            item("ak:realm:two", "Beta"),
-        ];
-        let filtered = filtered_mobile_realm_items(&rows, "aLpHa");
-        assert_eq!(
-            filtered
-                .iter()
-                .map(|item| item.node.id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["ak:realm:one"]
-        );
-    }
-
-    #[test]
-    fn mobile_realm_filter_matches_id_case_insensitively() {
-        let rows = [
-            item("ak:realm:Project-X", "Alpha"),
-            item("ak:realm:two", "Beta"),
-        ];
-        let filtered = filtered_mobile_realm_items(&rows, "project-x");
-        assert_eq!(
-            filtered
-                .iter()
-                .map(|item| item.node.id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["ak:realm:Project-X"]
-        );
-    }
-
-    #[test]
-    fn mobile_realm_filter_returns_empty_for_no_match() {
-        let rows = [item("ak:realm:one", "Alpha")];
-        assert!(filtered_mobile_realm_items(&rows, "missing").is_empty());
     }
 }

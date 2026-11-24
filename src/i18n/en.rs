@@ -992,8 +992,6 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("command_palette.close", "Close (Esc)");
 
-    dict.set("mobile.filter_realms", "Filter Realms...");
-    dict.set("mobile.no_match", "No Realms match.");
 
     // Kanban / Board view (header + section labels)
     dict.set("kanban.board_header", "Board");
@@ -4693,8 +4691,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.recovery.configure", "Configure recovery");
     dict.set("app.recovery.history_status", "Encrypted history status");
     dict.set("app.recovery.history_status_body", "Encrypted-history recovery needs an account MLS secret; if this is a brand-new account, the app will prompt again after your first encrypted write creates material that can be backed up.");
-    dict.set("app.nav.close_menu", "Close menu");
-    dict.set("app.nav.open_menu", "Open menu");
     dict.set("app.nav.main_navigation", "Main navigation");
     dict.set("app.nav.resize_menu", "Drag to resize menu");
     dict.set("app.nav.scope_toggle", "Collaboration and contacts");
