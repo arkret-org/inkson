@@ -42,7 +42,7 @@ html[data-theme="dark"] .arkret-startup {
 .arkret-startup .startup-logo { display: block; width: 88px; height: 88px; flex-shrink: 0; }
 .arkret-startup .startup-brand { margin: 0; color: var(--startup-muted); font-size: 12px; font-weight: 600; letter-spacing: .22em; }
 .arkret-startup h1 { margin: 0; color: inherit; font: 600 22px/1.3 system-ui, sans-serif; }
-.arkret-startup p { margin: 0; max-width: 32ch; color: var(--startup-muted); }
+.arkret-startup p { margin: 0; max-width: 100%; color: var(--startup-muted); }
 .arkret-startup .startup-spinner {
   box-sizing: border-box;
   width: 24px;
