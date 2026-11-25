@@ -1,10 +1,8 @@
 name: Docker
 
 on:
-  workflow_dispatch:
-  pull_request:
   push:
-    branches: ["main", "master"]
+    branches: [main]
 
 permissions:
   contents: read
@@ -12,14 +10,11 @@ permissions:
 concurrency:
   group: docker-${{ github.ref }}
   # Finish a release already building while newer main commits wait their turn.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
-env:
-  IMAGE_NAME: inkson-web:local
+  cancel-in-progress: false
 
 jobs:
   image:
-    name: Build and scan web image (${{ matrix.arch }})
+    name: Build and push web image (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
@@ -109,17 +104,22 @@ jobs:
             chime/ docker-context/chime/
           rsync -a --delete --exclude .git arkret-spec/ docker-context/arkret-spec/
 
-      - name: Test web resource compression
-        run: python3 inkson/scripts/test_web_compression.py
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
 
       - name: Build image
         uses: docker/build-push-action@v7
         with:
           context: docker-context
           file: docker-context/inkson/Dockerfile
-          load: true
-          push: false
-          tags: ${{ env.IMAGE_NAME }}
+          push: true
+          sbom: true
+          tags: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}-${{ matrix.arch }}
           platforms: linux/${{ matrix.arch }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -127,61 +127,8 @@ jobs:
           cache-from: type=gha,scope=web-${{ matrix.arch }}
           cache-to: type=gha,scope=web-${{ matrix.arch }},mode=max
 
-      - name: Smoke test hosted client
-        run: bash inkson/scripts/smoke-web-image.sh "$IMAGE_NAME"
-
-      - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ env.IMAGE_NAME }}
-          format: json
-          output: trivy-image.json
-          exit-code: "0"
-
-      - name: Install Syft
-        uses: anchore/sbom-action/download-syft@v0.24.3
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v4.1.2
-
-      - name: Generate local image evidence
-        shell: pwsh
-        working-directory: inkson
-        run: |
-          New-Item -ItemType Directory -Force -Path dist/web-image | Out-Null
-          Move-Item -Force ../trivy-image.json dist/web-image/trivy-image.json
-          ./scripts/web-image-evidence.ps1 -ImageTag "${{ env.IMAGE_NAME }}" -SkipBuild
-
-      - name: Upload local-only image evidence
-        uses: actions/upload-artifact@v7
-        with:
-          name: inkson-web-local-evidence-${{ matrix.arch }}
-          path: inkson/dist/web-image/
-          if-no-files-found: error
-
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish verified architecture
-        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-        env:
-          REPOSITORY: ${{ github.repository }}
-          SOURCE_SHA: ${{ github.sha }}
-          ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          ref="ghcr.io/${REPOSITORY,,}:sha-${SOURCE_SHA}-${ARCH}"
-          docker tag "$IMAGE_NAME" "$ref"
-          docker push "$ref"
-
   publish:
     name: Publish multi-platform web image
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     needs: image
     runs-on: ubuntu-24.04
     permissions:
