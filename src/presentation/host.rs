@@ -168,7 +168,20 @@ pub fn run_native() -> Result<(), Box<dyn std::error::Error>> {
         })
     })?;
     let mut shell = Shell::new()?;
-    shell.add_window(window, WindowAttributes::default().with_title("Inkson"));
+    let attributes = WindowAttributes::default().with_title("Inkson");
+    #[cfg(target_os = "windows")]
+    let attributes = {
+        use wingy_win32::{WinIcon, WindowAttributesWindows};
+        // Resource 1 is the multi-resolution Arkret icon in windows/inkson.rc.
+        let small = WinIcon::from_resource(1, Some((32, 32).into()))?;
+        let large = WinIcon::from_resource(1, Some((48, 48).into()))?;
+        attributes
+            .with_window_icon(Some(small.into()))
+            .with_platform_attributes(Box::new(
+                WindowAttributesWindows::default().with_taskbar_icon(Some(large.into())),
+            ))
+    };
+    shell.add_window(window, attributes);
     shell.run()?;
     if let Ok(stats) = images.stats() {
         tracing::debug!(

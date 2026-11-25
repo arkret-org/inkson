@@ -65,6 +65,19 @@ fn main() {
     );
     build_style_bundle(&manifest_dir);
 
+    #[cfg(feature = "desktop")]
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        println!("cargo:rerun-if-changed=windows/inkson.rc");
+        println!("cargo:rerun-if-changed=windows/arkret.ico");
+        embed_resource::compile_for(
+            "windows/inkson.rc",
+            ["inkson"],
+            embed_resource::ParamsIncludeDirs(["windows"]),
+        )
+        .manifest_required()
+        .expect("embed the Arkret application icon");
+    }
+
     // Emitting any `rerun-if-changed` instruction disables Cargo's default
     // package-wide build-script invalidation. We also track Git metadata below,
     // so explicitly retain the inputs that can change this crate's wasm. Without

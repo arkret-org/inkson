@@ -4,7 +4,6 @@
 .auth-card { width: min(420px, 100%); border: 1px solid var(--border); border-radius: 8px; background: var(--surface-solid); box-shadow: var(--shadow-md); }
 .auth-panel { display: grid; gap: 22px; padding: 28px; }
 .auth-brand { display: flex; align-items: center; gap: 12px; }
-.auth-logo { width: 40px; height: 40px; border-radius: 8px; display: grid; place-items: center; background: var(--accent-strong); color: var(--text-on-accent); font-weight: 800; }
 .auth-brand h1 { margin: 0; font-size: 24px; line-height: 1.15; letter-spacing: 0; }
 .auth-brand p { margin: 3px 0 0; color: var(--text-2); font-size: 13px; }
 .auth-form { display: grid; gap: 10px; }
@@ -79,11 +78,6 @@
 .auth-panel {
   padding: 28px;
   min-width: 0;
-}
-
-.auth-logo {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  box-shadow: 0 14px 28px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .auth-brand h1 {

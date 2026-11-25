@@ -230,12 +230,10 @@ pub fn internal_link() -> glory::ui::Link {
 }
 
 pub(crate) fn arkret_logo(class: &str) -> View {
-    use base64::Engine as _;
-    let source = format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD
-            .encode(include_bytes!("../../assets/arkret-logo-512.png"))
-    );
+    #[cfg(target_arch = "wasm32")]
+    let source = "/arkret-logo.svg";
+    #[cfg(not(target_arch = "wasm32"))]
+    let source = "asset://inkson/arkret-logo-512.png";
     Box::new(image().class(class.to_owned()).source(source).alt("Arkret"))
 }
 

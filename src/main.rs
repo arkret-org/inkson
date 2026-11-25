@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(target_os = "windows", feature = "desktop", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
 #[cfg(all(not(target_arch = "wasm32"), feature = "desktop"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args_os()

@@ -62,6 +62,10 @@ print(String(data: try JSONSerialization.data(withJSONObject: rows), encoding: .
         user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
         user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
         user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        user32.SendMessageTimeoutW.argtypes = [
+            wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+            wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctypes.c_size_t),
+        ]
 
     def own_windows(pid):
         if platform == 'darwin':
@@ -110,6 +114,13 @@ print(String(data: try JSONSerialization.data(withJSONObject: rows), encoding: .
             result.update(own_visible_window=True, native_host="Glory/Blitz", startup_remained_live=True)
             if platform == 'win32':
                 for window in windows:
+                    # WM_GETICON returns the explicitly assigned small and large icons.
+                    for icon_type, label in ((0, 'title_bar_icon'), (1, 'taskbar_icon')):
+                        icon = ctypes.c_size_t()
+                        if not user32.SendMessageTimeoutW(window['id'], 0x007F, icon_type, 0,
+                                                        2, 3000, ctypes.byref(icon)) or not icon.value:
+                            raise RuntimeError(f'Inkson window is missing its {label}')
+                        window[label] = True
                     if not user32.PostMessageW(window['id'], 0x0010, 0, 0):
                         raise RuntimeError('could not request normal native window close')
                 app.wait(timeout=15)

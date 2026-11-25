@@ -715,9 +715,7 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
         view().class("auth-panel").fill((
             error,
             view().class("auth-brand").fill((
-                view()
-                    .class("auth-logo")
-                    .fill(crate::presentation::widgets::arkret_logo("auth-mark")),
+                crate::presentation::widgets::arkret_logo("auth-mark"),
                 view().fill((
                     heading(
                         1,

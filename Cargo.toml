@@ -76,7 +76,7 @@ default = []
 # Library consumers do not choose a UI renderer. Application builds select
 # their actual renderer explicitly, keeping desktop system libraries optional.
 app = []
-desktop = ["app", "glory/apace-shell", "glory/apace-assets", "glory/apace-accesskit", "dep:wry", "dep:tao"]
+desktop = ["app", "glory/apace-shell", "glory/apace-assets", "glory/apace-accesskit", "dep:wry", "dep:tao", "dep:wingy-win32", "dep:embed-resource"]
 web = ["app", "glory/web"]
 # Deferred protocol surfaces are compiled by default for unit coverage but
 # hidden from the local 1.0 UI unless explicitly opted in.
@@ -204,6 +204,9 @@ tracing = { workspace = true }
 url = { workspace = true }
 x25519-dalek = { workspace = true, features = ["static_secrets"] }
 zeroize = { workspace = true, features = ["derive"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wingy-win32 = { version = "0.31.2", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 opener = "0.9.0"
@@ -359,6 +362,7 @@ web-sys = { workspace = true, features = [
 # definitive stale-cached-wasm check. Build deps do not affect the wasm binary.
 [build-dependencies]
 chrono = { workspace = true }
+embed-resource = { version = "3.0.12", optional = true }
 
 [dev-dependencies]
 # Test poll assertions use the explicit macro feature formerly unified by the old UI.
