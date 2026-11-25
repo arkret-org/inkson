@@ -93,6 +93,8 @@ the arkret-work specs for the active cross-project task plan.
 - Release Web bundle: `python scripts/build_web.py --release`.
 - Release desktop binary and local assets: `python scripts/build_desktop.py --release`.
 
+For a portable Windows x64 ZIP, run `python scripts/build_desktop.py --release --target x86_64-pc-windows-msvc` and then `python .ci/package-release.py --target x86_64-pc-windows-msvc --desktop-platform windows`. Extract the ZIP from `release-assets` and open `inkson.exe` with its adjacent `assets` directory. The Windows renderer defaults to DirectX 12. Set `WGPU_BACKEND` to override it.
+
 The developer runner repairs stale SDK registry projections through the SDK’s `tools/sync-spec.ps1`, verifies the canonical registry, and rebuilds after application or local path dependency changes. `python scripts/dev_glory.py --check` is read-only. PowerShell and the SDK generator must be available for automatic repair.
 
 

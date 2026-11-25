@@ -6,6 +6,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         return inkson::rtc_transport::native_host::run();
     }
+    #[cfg(target_os = "windows")]
+    if std::env::var_os("WGPU_BACKEND").is_none() {
+        // Some Windows Vulkan drivers crash while wgpu enumerates adapters.
+        // SAFETY: set_var is safe on Windows. Set the default before the renderer starts.
+        #[allow(
+            unsafe_code,
+            reason = "Windows-only process environment initialization"
+        )]
+        unsafe {
+            std::env::set_var("WGPU_BACKEND", "dx12");
+        }
+    }
     use tracing_subscriber::prelude::*;
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("inkson=info,warn"));
