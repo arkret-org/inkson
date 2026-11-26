@@ -165,11 +165,10 @@ impl PendingE2eePlaintextClear {
             let (reply, wait) = tokio::sync::oneshot::channel();
             wasm_bindgen_futures::spawn_local(complete_cache_clear(committed, fence, reply));
             let _ = secure_store;
-            return wait
-                .await
+            wait.await
                 .context("secure-cache clear writer stopped")?
                 .map_err(anyhow::Error::msg)
-                .context("persist cleared E2EE plaintext cache");
+                .context("persist cleared E2EE plaintext cache")
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -1769,8 +1768,14 @@ impl CachePersistQueue {
     }
 
     fn complete(&mut self, key: &str, result: Result<(), String>) {
-        let lane = self.lanes.get_mut(key).expect("active cache lane");
-        let write = lane.active.take().expect("active cache write");
+        let Some((write, lane)) = self
+            .lanes
+            .get_mut(key)
+            .and_then(|lane| Some((lane.active.take()?, lane)))
+        else {
+            tracing::error!("cache write completion without an active write");
+            return;
+        };
         // A failed write invalidates the byte shortcut. The next publication
         // must retry rather than claiming the previous cache entry is durable.
         lane.committed = if result.is_ok() {
@@ -1854,44 +1859,36 @@ mod cache_persist_driver {
         QUEUE.get_or_init(|| Mutex::new(CachePersistQueue::default()))
     }
 
-    fn enqueue(
+    fn enqueue_captured(
         key: String,
         json: Option<String>,
         reply: Option<super::CachePersistReply>,
         provenance: Option<super::CacheCaptureProvenance>,
-        clear: Option<super::CacheClearRecovery>,
     ) {
         let store = crate::secure_key_store::default_secure_key_store("inkson");
         let durable_matches = store.get_secret(&key).ok().as_ref() == Some(&json);
-        let mut queued = queue()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let start = if let Some(clear) = clear {
-            queued.enqueue_clear(
-                key.clone(),
-                json,
-                clear,
-                reply.expect("clear has durable waiter"),
-            )
-        } else {
-            queued.enqueue_captured(key.clone(), json, reply, durable_matches, provenance)
-        };
-        drop(queued);
-        if start {
-            // Reserve the active slot before spawning so two synchronous
-            // publications cannot launch competing writers for the same key.
-            let next = queue()
+        schedule(key, |queue, key| {
+            queue.enqueue_captured(key, json, reply, durable_matches, provenance)
+        });
+    }
+
+    fn schedule(key: String, enqueue: impl FnOnce(&mut CachePersistQueue, String) -> bool) {
+        let next = {
+            let mut queue = queue()
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .take_next(&key);
-            if let Some(next) = next {
-                wasm_bindgen_futures::spawn_local(drain(key, next));
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !enqueue(&mut queue, key.clone()) {
+                return;
             }
+            queue.take_next(&key)
+        };
+        if let Some(next) = next {
+            wasm_bindgen_futures::spawn_local(drain(key, next));
         }
     }
 
     pub(super) fn enqueue_captured_background(write: super::CapturedE2eeCacheWrite) {
-        enqueue(write.key, write.json, None, Some(write.provenance), None);
+        enqueue_captured(write.key, write.json, None, Some(write.provenance));
     }
 
     pub(super) fn enqueue_clear_exact(
@@ -1900,7 +1897,9 @@ mod cache_persist_driver {
         clear: super::CacheClearRecovery,
     ) -> tokio::sync::oneshot::Receiver<Result<(), String>> {
         let (reply, wait) = tokio::sync::oneshot::channel();
-        enqueue(key, json, Some(reply), None, Some(clear));
+        schedule(key, |queue, key| {
+            queue.enqueue_clear(key, json, clear, reply)
+        });
         wait
     }
 
@@ -1908,13 +1907,7 @@ mod cache_persist_driver {
         write: super::CapturedE2eeCacheWrite,
     ) -> anyhow::Result<()> {
         let (reply, wait) = tokio::sync::oneshot::channel();
-        enqueue(
-            write.key,
-            write.json,
-            Some(reply),
-            Some(write.provenance),
-            None,
-        );
+        enqueue_captured(write.key, write.json, Some(reply), Some(write.provenance));
         wait.await
             .context("E2EE cache durable writer stopped")?
             .map_err(anyhow::Error::msg)
@@ -1926,7 +1919,7 @@ mod cache_persist_driver {
         json: Option<String>,
     ) -> tokio::sync::oneshot::Receiver<Result<(), String>> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        enqueue(key, json, Some(sender), None, None);
+        enqueue_captured(key, json, Some(sender), None);
         receiver
     }
 

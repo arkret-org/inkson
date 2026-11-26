@@ -170,12 +170,13 @@ async fn complete_callback(context: Rc<InksonContext>, state: LoginState) {
                     return;
                 }
             };
-            if let Err(error) = commit.store_grant_durable(
-                &account_store,
-                secure_store.as_ref(),
-                &completed.session_grant,
-            )
-            .await
+            if let Err(error) = commit
+                .store_grant_durable(
+                    &account_store,
+                    secure_store.as_ref(),
+                    &completed.session_grant,
+                )
+                .await
             {
                 auth_status.revise(|current| {
                     *current =
@@ -430,7 +431,10 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
         .open(open)
         .on_open_change(move |next| open.revise(|value| *value = next))
         .show_close(false)
-        .placement(sapid::AnchorPlacement::new(sapid::AnchorSide::Bottom, sapid::AnchorAlign::End))
+        .placement(sapid::AnchorPlacement::new(
+            sapid::AnchorSide::Bottom,
+            sapid::AnchorAlign::End,
+        ))
         .offset(12.0)
         .trigger_content(move || {
             glory::ui::when(open, || crate::components::ui_icon("chevron-up"))
@@ -711,44 +715,42 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
         ) as View,
         None => empty(),
     });
-    Box::new(
-        view().class("auth-panel").fill((
-            error,
-            view().class("auth-brand").fill((
-                crate::presentation::widgets::arkret_logo("auth-mark"),
-                view().fill((
-                    heading(
-                        1,
-                        "",
-                        context.translated(
-                            scope,
-                            if callback {
-                                "login.completing"
-                            } else {
-                                "login.title"
-                            },
-                        ),
+    Box::new(view().class("auth-panel").fill((
+        error,
+        view().class("auth-brand").fill((
+            crate::presentation::widgets::arkret_logo("auth-mark"),
+            view().fill((
+                heading(
+                    1,
+                    "",
+                    context.translated(
+                        scope,
+                        if callback {
+                            "login.completing"
+                        } else {
+                            "login.title"
+                        },
                     ),
-                    paragraph("", "Arkret"),
-                )),
-            )),
-            view().class("auth-form").fill((
-                station,
-                paragraph(
-                    "muted auth-server-help",
-                    context.translated(scope, "login.station_help"),
                 ),
-                sign_in,
-                return_previous,
-                footer,
-                status,
-                review,
-                trust,
-                retry,
-                diagnostics,
+                paragraph("", "Arkret"),
             )),
         )),
-    )
+        view().class("auth-form").fill((
+            station,
+            paragraph(
+                "muted auth-server-help",
+                context.translated(scope, "login.station_help"),
+            ),
+            sign_in,
+            return_previous,
+            footer,
+            status,
+            review,
+            trust,
+            retry,
+            diagnostics,
+        )),
+    )))
 }
 
 fn retain_station(context: &InksonContext, state: LoginState, url: &str) {

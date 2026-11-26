@@ -76,7 +76,7 @@ default = []
 # Library consumers do not choose a UI renderer. Application builds select
 # their actual renderer explicitly, keeping desktop system libraries optional.
 app = []
-desktop = ["app", "glory/apace-shell", "glory/apace-assets", "glory/apace-accesskit", "dep:wry", "dep:tao", "dep:wingy-win32", "dep:embed-resource"]
+desktop = ["app", "glory/apace-shell", "glory/apace-assets", "glory/apace-accesskit", "dep:wry", "dep:tao", "dep:wingy-win32", "dep:embed-resource", "dep:tracing-subscriber"]
 web = ["app", "glory/web"]
 # Deferred protocol surfaces are compiled by default for unit coverage but
 # hidden from the local 1.0 UI unless explicitly opted in.
@@ -252,7 +252,7 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "ti
 # `ak.profile.binding.websocket.v1` native socket. garth owns the protocol;
 # tungstenite only reassembles messages and enforces the byte ceiling.
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+tracing-subscriber = { workspace = true, optional = true, features = ["env-filter", "fmt"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # wasm32 uses the same protocol/MLS surface as native while platform crypto
@@ -392,6 +392,12 @@ web-sys = { version = "0.3", features = ["EventInit", "NodeList"] }
 
 [lints]
 workspace = true
+
+# Keep the large native test binary within Apple's compact-unwind offset limit.
+[profile.test]
+opt-level = 1
+# Optimized wasm test binaries need the same cross-CGU fix as wasm-dev below.
+incremental = false
 
 [profile.wasm-dev]
 inherits = "dev"

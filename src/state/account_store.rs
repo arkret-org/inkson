@@ -617,7 +617,11 @@ pub(super) mod browser {
         {
             return Ok(cached);
         }
-        if let Some(error) = errors().lock().unwrap().get(scope) {
+        if let Some(error) = errors()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(scope)
+        {
             anyhow::bail!("account records unavailable: {error}");
         }
         Ok(cached)
@@ -645,7 +649,7 @@ pub(super) mod browser {
     pub fn cached(scope: &str) -> Option<CachedCheckpoint> {
         cache()
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(scope)
             .map(|value| value.as_ref().clone())
     }
@@ -653,13 +657,16 @@ pub(super) mod browser {
         let backend = Backend::open(CurrentIndexLocation {}).await?;
         let checkpoint = match load_async(&backend, scope).await {
             Ok(checkpoint) => {
-                errors().lock().unwrap().remove(scope);
+                errors()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(scope);
                 checkpoint
             }
             Err(error) => {
                 errors()
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .insert(scope.to_owned(), error.to_string());
                 return Err(error);
             }
@@ -671,7 +678,7 @@ pub(super) mod browser {
         };
         cache()
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(scope.to_owned(), Arc::new(cached));
         // A restart resumes the persisted queue without scanning account data.
         schedule_gc(backend, scope.to_owned());
@@ -796,13 +803,13 @@ pub(super) mod browser {
         let writer = WRITERS
             .get_or_init(Default::default)
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(scope.clone())
             .or_default()
             .clone();
         cache()
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(scope.clone(), Arc::new(cached.clone()));
         let pending = cached.clone();
         wasm_bindgen_futures::spawn_local(async move {
@@ -811,15 +818,30 @@ pub(super) mod browser {
             pending.recovering.store(false, Ordering::Release);
             let result = match outcome {
                 Ok(checkpoint) => {
-                    *pending.last_committed.lock().unwrap() = checkpoint;
-                    errors().lock().unwrap().remove(&scope);
-                    corrupt.lock().unwrap().remove(&scope);
-                    health.lock().unwrap().take();
+                    *pending
+                        .last_committed
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = checkpoint;
+                    errors()
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .remove(&scope);
+                    corrupt
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .remove(&scope);
+                    health
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .take();
                     Ok(())
                 }
                 Err(error) => {
                     pending.failed.store(true, Ordering::Release);
-                    *health.lock().unwrap() = Some(error.to_string());
+                    *health
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                        Some(error.to_string());
                     Err(error.to_string())
                 }
             };
@@ -844,7 +866,11 @@ pub(super) mod browser {
             "account checkpoint conflicted; reload committed state before retry"
         );
         if cached.failed.swap(false, Ordering::AcqRel) {
-            cached.checkpoint = cached.last_committed.lock().unwrap().clone();
+            cached.checkpoint = cached
+                .last_committed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
             cached.pending_result = None;
         }
         let needs_current = state.current_generation > cached.checkpoint.state.current_generation;
@@ -893,7 +919,7 @@ pub(super) mod browser {
         let writer = WRITERS
             .get_or_init(Default::default)
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(scope.clone())
             .or_default()
             .clone();
@@ -906,7 +932,7 @@ pub(super) mod browser {
         let optimistic = cached.clone();
         cache()
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(scope.clone(), Arc::new(optimistic));
         // The job, not its waiter or the mounted UI, owns the commit.
         wasm_bindgen_futures::spawn_local(async move {
@@ -936,7 +962,9 @@ pub(super) mod browser {
                 backend
                     .apply_checked(Some(plan.check), plan.deletes, plan.writes)
                     .await?;
-                *committed.lock().unwrap() = plan.checkpoint;
+                *committed
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = plan.checkpoint;
                 // Maintenance failure cannot turn an already committed cursor
                 // into a false failed acknowledgement. The durable task survives.
                 schedule_gc(backend, scope.clone());
@@ -952,7 +980,10 @@ pub(super) mod browser {
                 failed.store(false, Ordering::Release);
             }
             if super::super::LocalStateStore::default().effective_account_key() == scope {
-                *health.lock().unwrap() = result.as_ref().err().map(|error| error.to_string());
+                *health
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    result.as_ref().err().map(|error| error.to_string());
             }
             sender.send_replace(Some(result.map_err(|error| error.to_string())));
         });

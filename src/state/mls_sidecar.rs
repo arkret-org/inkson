@@ -465,7 +465,10 @@ impl LocalStateStore {
             let Some(cached) = account_store::browser::cached(&namespace) else {
                 return Ok(None);
             };
-            let committed = cached.last_committed.lock().unwrap();
+            let committed = cached
+                .last_committed
+                .lock()
+                .map_err(|_| anyhow::anyhow!("committed MLS checkpoint lock poisoned"))?;
             if let Some(key) = scope_key {
                 if let Some(checkpoint) = committed.state.mls_local_checkpoints.get(key) {
                     state

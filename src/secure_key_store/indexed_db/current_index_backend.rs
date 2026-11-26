@@ -330,11 +330,13 @@ impl Backend {
     }
 }
 
+type TransactionCallback = Closure<dyn FnMut(web_sys::Event)>;
+
 struct TransactionGuard {
     tx: web_sys::IdbTransaction,
-    _done: Closure<dyn FnMut(web_sys::Event)>,
-    _failed: Closure<dyn FnMut(web_sys::Event)>,
-    checked: Option<(web_sys::IdbRequest, Closure<dyn FnMut(web_sys::Event)>)>,
+    _done: TransactionCallback,
+    _failed: TransactionCallback,
+    checked: Option<(web_sys::IdbRequest, TransactionCallback)>,
 }
 impl Drop for TransactionGuard {
     fn drop(&mut self) {

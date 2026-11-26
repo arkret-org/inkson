@@ -314,12 +314,11 @@ fn observe_material_gate(root: &arkret_sdk::Hash, gate: &'static str, passed: bo
     ))]
     {
         use std::collections::BTreeSet;
-        use std::sync::{Mutex, OnceLock};
-        static SEEN: OnceLock<Mutex<BTreeSet<(String, &'static str, bool)>>> = OnceLock::new();
+        use std::sync::Mutex;
+        static SEEN: Mutex<BTreeSet<(String, &'static str, bool)>> = Mutex::new(BTreeSet::new());
         let mut seen = SEEN
-            .get_or_init(Default::default)
             .lock()
-            .unwrap_or_else(|p| p.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !seen.insert((root.to_string(), gate, passed)) {
             return;
         }

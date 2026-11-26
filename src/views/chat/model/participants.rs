@@ -511,14 +511,7 @@ fn presence_live_labels_remain_scoped_to_the_complete_actor() {
 
 pub(crate) fn is_own_message_sender(sender: &str, principal_id: &str) -> bool {
     let sender = sender.trim();
-    if sender.is_empty() {
-        return false;
-    }
-    let principal_id = principal_id.trim();
-    if sender == "inkson" || sender == principal_id {
-        return true;
-    }
-    false
+    !sender.is_empty() && (sender == "inkson" || sender == principal_id.trim())
 }
 
 /// §3.8.2 step 4c rendering of a principal with no resolvable name. One

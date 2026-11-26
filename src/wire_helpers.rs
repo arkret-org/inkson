@@ -52,8 +52,5 @@ pub(crate) fn coland_path_allowed(normalized_path: &str) -> bool {
         .next()
         .unwrap_or(normalized_path);
     // Keep the marker split so this helper does not carry a direct product-path token.
-    if path.starts_with(concat!("_so", "land", "/")) {
-        return false;
-    }
-    true
+    !path.starts_with(concat!("_so", "land", "/"))
 }

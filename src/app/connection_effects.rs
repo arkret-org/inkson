@@ -98,12 +98,13 @@ pub(super) fn install(
                         if let Some(account) = rejected_account {
                             let secure_store =
                                 crate::secure_key_store::default_secure_key_store("inkson");
-                            commit.clear_rejected_session_grant(
-                                &account,
-                                rejected_grant.as_ref(),
-                                secure_store.as_ref(),
-                            )
-                            .await?;
+                            commit
+                                .clear_rejected_session_grant(
+                                    &account,
+                                    rejected_grant.as_ref(),
+                                    secure_store.as_ref(),
+                                )
+                                .await?;
                             if session_generation.get_untracked() != cleanup_generation {
                                 anyhow::bail!("session changed during rejected grant cleanup");
                             }

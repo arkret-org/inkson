@@ -715,26 +715,28 @@ fn account_page_copy(
             }
         });
     };
-    let button = glory::ui::button()
-        .class("btn icon account-page__copy")
-        .name(label.clone())
-        .fill(crate::components::ui_icon("copy"))
-        .on(EventKind::Activate, copy);
+    let button_label = label.clone();
+    let make_button = move || {
+        glory::ui::button()
+            .class("btn icon account-page__copy")
+            .name(button_label.clone())
+            .fill(crate::components::ui_icon("copy"))
+            .on(EventKind::Activate, copy.clone())
+    };
     #[cfg(target_arch = "wasm32")]
     {
         if hint_value.trim().is_empty() {
-            return Box::new(button);
+            return Box::new(make_button());
         }
-        let mut button = Some(button);
         Box::new(
             sapid::tooltip(format!("account-{}", success.replace('.', "-")))
                 .label(label)
                 .text(hint_value)
-                .target(move |target| target.button(button.take().expect("one hint target"))),
+                .target(move |target| target.button(make_button())),
         )
     }
     #[cfg(not(target_arch = "wasm32"))]
-    Box::new(button)
+    Box::new(make_button())
 }
 fn account_page_text(class: impl Into<String>, value: impl Into<Vary<String>>) -> View {
     Box::new(text().class(class.into()).content(value))

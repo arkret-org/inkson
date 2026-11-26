@@ -977,7 +977,7 @@ fn realm_link_security_hint(
             sapid::tooltip(key)
                 .label(description.clone())
                 .text(description)
-                .target(move |target| target.link(link.take().expect("one Realm hint target"))),
+                .target(move |target| link.take().map(|link| target.link(link))),
         )
     }
     #[cfg(not(target_arch = "wasm32"))]

@@ -1109,7 +1109,8 @@ pub(super) fn connect(
                             // Bind the next authenticated read to the current holder.
                             if description.is_some() {
                                 authed = crate::transport::auth::authed_api_ready(
-                                    &base, session_credential.clone(),
+                                    &base,
+                                    session_credential.clone(),
                                 )
                                 .await?;
                             }

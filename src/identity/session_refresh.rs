@@ -594,9 +594,7 @@ async fn own_station_result_client(
     station_url: &str,
     requested_http: Option<&arkret_sdk::http_client::Client>,
 ) -> anyhow::Result<arkret_sdk::http_client::own_station_results::OwnStationStateClient> {
-    use arkret_sdk::http_client::own_station_results::{
-        OwnStationSessionSource, OwnStationStateClient,
-    };
+    use arkret_sdk::http_client::own_station_results::OwnStationStateClient;
     let runtime = session_grant_runtime();
     let runtime_generation = runtime.generation.load(Ordering::SeqCst);
     let identity_epoch = crate::identity::device_directory::session_cache_epoch();
@@ -623,6 +621,13 @@ async fn own_station_result_client(
         .context("own Station result consumption has no formal session provider")?;
     let client = requested_http.cloned().unwrap_or(authenticated.client);
     let provider_client = provider.own_station_result_client(client.clone(), accepted.clone())?;
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            clippy::arc_with_non_send_sync,
+            reason = "The SDK takes Arc on both targets and permits browser-local session sources."
+        )
+    )]
     let source = Arc::new(HostOwnStationSessionSource {
         provider_client,
         authority: scope.authority,
@@ -631,9 +636,6 @@ async fn own_station_result_client(
         identity_epoch,
         device_scope_epoch,
     });
-    // Re-check after all asynchronous trust/provider restoration and before
-    // constructing a carrier. Token-only transports cannot enter this path.
-    source.snapshot()?;
     Ok(OwnStationStateClient::new(client, accepted, source)?)
 }
 

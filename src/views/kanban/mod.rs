@@ -196,7 +196,7 @@ pub fn page(scope: &Scope, app: Rc<InksonContext>, route: Route) -> View {
         Ok(realm) => realm,
         Err(_) => return realm_loading::surface(scope, app, local_realm.trim().is_empty()),
     };
-    let fallback = kanban_seed_fallback_allowed(&app.base_url.get_untracked());
+    let fallback = kanban_seed_fallback_allowed();
     let seed = if fallback { seed_columns() } else { Vec::new() };
     let initial = app.state_store.read(|store| {
         let state = store.load();

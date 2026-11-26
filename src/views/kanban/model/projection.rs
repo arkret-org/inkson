@@ -1,15 +1,12 @@
 use super::*;
 
-pub(crate) fn kanban_seed_fallback_allowed(_base_url: &str) -> bool {
-    if truthy_env_value(option_env!("INKSON_ALLOW_KANBAN_SEED_FALLBACK"))
-        || std::env::var("INKSON_ALLOW_KANBAN_SEED_FALLBACK")
-            .ok()
-            .as_deref()
-            .is_some_and(|value| truthy_env_value(Some(value)))
-    {
-        return true;
-    }
-    false
+pub(crate) fn kanban_seed_fallback_allowed() -> bool {
+    truthy_env_value(option_env!("INKSON_ALLOW_KANBAN_SEED_FALLBACK"))
+        || truthy_env_value(
+            std::env::var("INKSON_ALLOW_KANBAN_SEED_FALLBACK")
+                .ok()
+                .as_deref(),
+        )
 }
 
 pub(crate) fn truthy_env_value(value: Option<&str>) -> bool {
