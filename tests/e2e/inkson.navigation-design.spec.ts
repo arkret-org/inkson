@@ -18,16 +18,28 @@ test('one theme selector follows system appearance and translates in place on na
   await expect(page.getByRole('radiogroup', { name: '主题' }).getByText('深色', { exact: true })).toBeVisible();
   await expect(page.locator('.theme-effective-description')).toContainText('浅色');
   await expect(page.locator('.rail-link:visible .rail-label')).toHaveCount(4);
-  await expect(page.locator('.topbar-shortcuts')).toBeVisible();
+  const shortcuts = page.locator('.topbar-shortcuts');
+  const search = page.locator('.topbar .command-palette-trigger');
+  const notifications = page.locator('.topbar-notifications-link');
+  await expect(shortcuts).toBeHidden();
+  await expect(search).toBeHidden();
+  await expect(notifications).toBeInViewport();
   await expect(page.locator('.topbar .theme-switcher, .theme-toggle-button')).toHaveCount(0);
   await expect(page.locator('.topbar-context-title')).toBeVisible();
   await expect.poll(async () => (await page.locator('.topbar-context-title').boundingBox())?.width ?? 0).toBeGreaterThan(40);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath('theme-navigation-320-zh.png') });
-  await page.locator('.topbar-shortcuts').click();
+  await notifications.press('Control+/');
   await expect(page.locator('.shortcut-help-card')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.locator('.shortcut-help-card')).toBeHidden();
+  await page.setViewportSize({ width: 861, height: 720 });
+  await expect(search).toBeVisible();
+  await expect(shortcuts).toBeVisible();
+  await page.setViewportSize({ width: 860, height: 720 });
+  await expect(search).toBeHidden();
+  await expect(shortcuts).toBeHidden();
+  await expect(notifications).toBeInViewport();
 });
 
 test('agent loading, failure and first-use states expose only the appropriate next action', async ({ page }, info) => {

@@ -411,6 +411,13 @@
   align-items: center;
 }
 
+@media (max-width: 860px) {
+  .realm-header .topbar-command-search,
+  .realm-header .topbar-shortcuts {
+    display: none;
+  }
+}
+
 .realm-header .actions .pill {
   display: inline-flex;
   align-items: center;

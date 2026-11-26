@@ -193,7 +193,12 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       await expect(page).toHaveURL(/\/account$/);
     }
     await expect(byClass(page, "command-palette")).toHaveCount(1);
-    await page.locator(".command-palette-trigger:visible").click();
+    if (mobile) {
+      await expect(page.locator(".topbar .command-palette-trigger")).toBeHidden();
+      await page.keyboard.press("Control+K");
+    } else {
+      await page.locator(".topbar .command-palette-trigger").click();
+    }
     const command = page.getByRole("dialog", { name: "Command palette", exact: true });
     await expect(command).toBeVisible();
     await command.getByRole("combobox").fill("Contacts");
