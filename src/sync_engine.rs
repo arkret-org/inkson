@@ -3694,7 +3694,7 @@ pub(crate) fn apply_account_data_entries(
                 Ok(content) => {
                     let local_theme = store
                         .load_plain_local_data("theme")
-                        .unwrap_or_else(|| "night".to_owned());
+                        .unwrap_or_else(|| "system".to_owned());
                     if let Some(remote_theme) =
                         crate::account_data::merge_client_ui_theme(&local_theme, &content)
                     {

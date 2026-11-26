@@ -14,4 +14,4 @@
 .global-search-form { gap: 8px; }
 .global-search-form .global-search-input { width: 100%; min-width: 0; }
 
-.global-search-form > .global-search-input { flex: 1; min-width: 280px; }
+.global-search-form > .global-search-input { flex: 1; min-width: min(100%, 16rem); }

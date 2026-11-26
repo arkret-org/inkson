@@ -250,43 +250,16 @@ fn home_navigation_reads_each_realms_verified_activation_without_a_selected_view
 
 #[test]
 fn shell_chrome_carries_direction_and_sidebar_state_into_both_class_lists() {
-    let ltr = shell_chrome("night", false, TextDirection::Ltr, false, false);
+    let ltr = shell_chrome(TextDirection::Ltr, false, false);
     assert_eq!(ltr.shell_class, "shell app");
     assert_eq!(ltr.auth_class, "auth-shell");
-    assert_eq!(ltr.theme_toggle_icon, "sun");
 
-    let rtl = shell_chrome("light", false, TextDirection::Rtl, true, true);
+    let rtl = shell_chrome(TextDirection::Rtl, true, true);
     assert_eq!(
         rtl.shell_class,
         "shell app rtl sidebar-collapsed sidebar-resizing"
     );
     assert_eq!(rtl.auth_class, "auth-shell rtl");
-    assert_eq!(rtl.theme_toggle_icon, "moon");
-}
-
-#[test]
-fn system_theme_decides_the_toggle_when_the_mode_is_system() {
-    assert_eq!(
-        shell_chrome("system", true, TextDirection::Ltr, false, false).theme_toggle_icon,
-        "sun"
-    );
-    assert_eq!(
-        shell_chrome("system", false, TextDirection::Ltr, false, false).theme_toggle_icon,
-        "moon"
-    );
-}
-
-#[test]
-fn theme_toggle_title_stays_the_english_default_the_e2e_suite_asserts() {
-    // `inkson.strands.account-settings.spec.ts` reads these exact titles.
-    assert_eq!(
-        shell_chrome("night", false, TextDirection::Ltr, false, false).theme_toggle_title,
-        "Switch to light theme"
-    );
-    assert_eq!(
-        shell_chrome("light", false, TextDirection::Ltr, false, false).theme_toggle_title,
-        "Switch to night theme"
-    );
 }
 
 #[test]

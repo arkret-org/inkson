@@ -259,7 +259,6 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
                     title: context.tr("settings.capabilities.empty_title"),
                     kind: crate::components::EmptyStateKind::Empty,
                     message: Some(context.tr("settings.capabilities.empty_hint")),
-                    badge_override: None,
                     test_id: Some("capabilities-empty".to_owned()),
                 },
             ));

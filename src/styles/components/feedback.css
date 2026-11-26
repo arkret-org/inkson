@@ -1,7 +1,6 @@
 /* Transient and inline feedback: toasts, banners, inline errors, empty states,
  * progress bars.
  */
-.error-banner { border-color: color-mix(in srgb, var(--danger) 30%, transparent); background: var(--danger-soft); }
 /* Progress bar / sync indicator */
 .bar {
   height: 4px;
@@ -23,47 +22,59 @@
 /* ===== 19. ERROR / EMPTY STATES =================================== */
 
 .empty-state {
-  padding: 36px 24px;
+  min-width: 0;
+  padding: 24px 16px;
   text-align: center;
-  background: var(--surface);
-  border: 1px dashed var(--border-strong);
+  overflow-wrap: anywhere;
   border-radius: var(--radius);
   color: var(--text-2);
 }
 .empty-state .ico { font-size: 28px; margin-bottom: 8px; opacity: 0.6; }
-.empty-state .t { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
-.empty-state .s { font-size: 12px; color: var(--text-3); max-width: 360px; margin: 0 auto; }
+.empty-state .t { font-size: var(--text-body); font-weight: var(--weight-semibold); color: var(--text); margin-bottom: 4px; }
+.empty-state .s { font-size: var(--text-caption); color: var(--text-3); max-width: 360px; margin: 0 auto; }
+
+.list-empty-state { overflow-wrap: anywhere; }
+.list-empty-state .sapid-empty-title {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
+}
+.list-empty-state .sapid-empty-description {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-label);
+}
+.list-empty-state.is-error .sapid-empty-description { color: var(--danger-ink); }
 
 .inline-error {
   display: flex; align-items: flex-start; gap: 8px;
   padding: 10px 12px;
   background: var(--danger-soft);
-  border-left: 3px solid var(--danger);
-  border-radius: 6px;
-  font-size: 12px;
+  border-inline-start: 3px solid var(--danger);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-caption);
   color: var(--danger-ink);
 }
 .inline-error .code {
   font-family: var(--font-mono);
-  font-size: 11px;
-  background: rgba(185, 28, 28, 0.10);
+  font-size: var(--text-caption);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
   padding: 1px 5px;
   border-radius: 3px;
   margin-right: 6px;
 }
 .inline-error .ico { font-size: 14px; flex-shrink: 0; }
-.inline-error .body { flex: 1; line-height: 1.5; }
-.inline-error .body .actions { margin-top: 6px; display: flex; gap: 6px; }
-.inline-error .body .actions .btn.xs { background: white; }
-[data-theme="dark"] .inline-error .body .actions .btn.xs { background: var(--surface); }
+.inline-error .body, .inline-warn .body { flex: 1; min-width: 0; line-height: var(--leading-body); overflow-wrap: anywhere; }
+.inline-error .body .actions { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+.inline-error .body .actions .btn.xs { background: var(--surface-solid); }
 
 .inline-warn {
   display: flex; align-items: flex-start; gap: 8px;
   padding: 10px 12px;
   background: var(--warning-soft);
-  border-left: 3px solid var(--warning);
-  border-radius: 6px;
-  font-size: 12px;
+  border-inline-start: 3px solid var(--warning);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-caption);
   color: var(--warning-ink);
 }
 
@@ -75,11 +86,12 @@
   border-radius: 10px;
   box-shadow: var(--shadow-lg);
   display: flex; align-items: center; gap: 10px;
-  max-width: 360px;
-  font-size: 13px;
+  max-width: min(360px, calc(100% - 48px));
+  overflow-wrap: anywhere;
+  font-size: var(--text-label);
   z-index: var(--layer-toast);
 }
-.toast.danger { background: var(--danger); color: white; }
+.toast.danger { background: var(--danger); color: var(--text-on-accent); }
 
 /* Unified feedback (docs/design/unified-feedback-system.md Wave 0):
    stacked toast host (top-right) + severity variants + app banner. */
@@ -113,7 +125,7 @@
   background: var(--surface-solid);
   color: var(--warning-ink);
   text-align: center;
-  font-size: 13px;
+  font-size: var(--text-label);
   line-height: 1.5;
   overflow-wrap: anywhere;
   border-bottom: 1px solid var(--warning);
@@ -151,7 +163,7 @@
 }
 .did-resolution-health-banner strong {
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--text-label);
   overflow-wrap: anywhere;
 }
 .did-resolution-health-banner-label {
@@ -160,19 +172,19 @@
   border-radius: 999px;
   background: var(--warning-soft);
   color: var(--warning-ink);
-  font-size: 11px;
+  font-size: var(--text-caption);
   font-weight: 700;
   text-transform: uppercase;
   white-space: nowrap;
 }
 .did-resolution-health-banner--outage .did-resolution-health-banner-label {
-  background: rgba(185, 28, 28, 0.10);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
   color: var(--danger);
 }
 .did-resolution-health-banner p {
   margin: 6px 0 0;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--text-caption);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -188,7 +200,7 @@
 }
 
 .error-banner {
-  border-color: rgba(185, 28, 28, 0.2);
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--surface-solid));
   background: var(--danger-soft);
   color: var(--danger-ink);
 }

@@ -44,6 +44,16 @@ struct AgentPage {
 }
 impl AgentPage {
     fn begin_creation(&self) {
+        self.context.workspace_navigation.open_detail();
+        if self.controller.create_mode.get_untracked()
+            || self.controller.provision_in_flight.get_untracked()
+        {
+            return;
+        }
+        self.presets
+            .revise(|value| *value = vec![AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent]);
+        self.services
+            .revise(|value| *value = AgentServiceScopePreset::DEFAULTS.to_vec());
         self.slug.revise(String::clear);
         self.controller
             .new_agent_avatar_blob_ref
@@ -53,7 +63,6 @@ impl AgentPage {
             .provision_operation_id
             .revise(|value| *value = None);
         self.controller.create_mode.revise(|value| *value = true);
-        self.context.workspace_navigation.open_detail();
     }
 }
 pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
@@ -152,13 +161,27 @@ pub(crate) fn page_with_header(
                 .refresh_agents(refresh_context.base_url.get(), key.0);
         }
     });
+    let query = scope.cage(String::new());
+    let search = scope.bond(move || query.get().trim().to_lowercase());
     mount_agent_selection(
         scope,
         controller.agents,
         controller.selected_agent_id,
         filter,
+        search,
     );
     let details = controller.clone();
+    let replace_open = state.replace_open;
+    let deactivate_open = controller.deactivate_dialog_open;
+    let deactivate_confirm = controller.deactivate_confirm;
+    let selected_id = controller.selected_agent_id;
+    let creation_mode = controller.create_mode;
+    scope.effect(move || {
+        let _ = (selected_id.get(), creation_mode.get());
+        replace_open.revise(|value| *value = false);
+        deactivate_open.revise(|value| *value = false);
+        deactivate_confirm.revise(String::clear);
+    });
     let detail_context = context.clone();
     scope.effect(move || {
         let _ = detail_context.owned_agents_rev.get();
@@ -188,7 +211,7 @@ pub(crate) fn page_with_header(
     let agents = controller.agents;
     let selected = controller.selected_agent_id;
     let create = controller.create_mode;
-    let query = scope.cage(String::new());
+    let list_phase = controller.list_phase;
     let list_header = {
         let context = context.clone();
         let refresh = state.controller.clone();
@@ -210,9 +233,14 @@ pub(crate) fn page_with_header(
                     scope,
                     context.clone(),
                     "agent-admin-refresh-button",
-                    "Refresh agents",
+                    "agents.refresh",
                     "refresh",
-                    "secondary",
+                    scope.bond(move || {
+                        !matches!(
+                            list_phase.get(),
+                            AgentListPhase::Loading | AgentListPhase::SignInRequired
+                        )
+                    }),
                     move || {
                         refresh.clone().refresh_agents(
                             refresh_context.base_url.get(),
@@ -224,17 +252,49 @@ pub(crate) fn page_with_header(
                     scope,
                     context.clone(),
                     "agent-admin-create-open-button",
-                    "Create agent",
+                    "agents.create",
                     "plus",
-                    "secondary",
+                    scope.bond(move || {
+                        list_phase.get() != AgentListPhase::SignInRequired
+                            && !controller.provision_in_flight.get()
+                    }),
                     move || begin.begin_creation(),
                 ),
             ],
         )
     };
+    let filter_context = context.clone();
+    let filters = Box::new(
+        sapid::segmented_control("agent-list-filter")
+            .theme(context.theme_tokens())
+            .size(sapid::Size::Small)
+            .name(context.translated(scope, "agents.lifecycle"))
+            .class("agent-admin-filter-bar")
+            .with_item_borders(false)
+            .value(scope.bond(move || {
+                let value = filter.get();
+                // The audit route is deliberately absent from the normal filter choices.
+                if value == "deactivated" {
+                    String::new()
+                } else {
+                    value
+                }
+            }))
+            .segments(AGENT_LIST_FILTERS.into_iter().map(|(value, label)| {
+                sapid::segment(value)
+                    .class(format!("agent-admin-filter-{value}"))
+                    .label(context.translated(scope, label))
+            }))
+            .on_value_change(move |value| {
+                if filter.get_untracked() != value {
+                    filter_context.navigate(Route::SettingsSection {
+                        section: "agents".into(),
+                        filter: value,
+                    });
+                }
+            }),
+    ) as View;
     let list_state = state.clone();
-    let list_phase = controller.list_phase;
-    let query_signal = query;
     let list_rows = reactive(
         scope.bond(move || {
             (
@@ -242,53 +302,17 @@ pub(crate) fn page_with_header(
                 selected.get(),
                 create.get(),
                 filter.get(),
-                query.get(),
-                list_phase.get(),
+                search.get(),
             )
         }),
-        move |scope, (rows, selected_id, is_create, current_filter, query, phase)| {
+        move |scope, (rows, selected_id, is_create, current_filter, search)| {
             let state = list_state.clone();
             let context = state.context.clone();
-            let mut children = Vec::new();
-            let mut filters = Vec::new();
-            for (filter, label) in AGENT_LIST_FILTERS {
-                let navigate = context.clone();
-                let filter = filter.to_owned();
-                let active = filter == current_filter;
-                filters.push(action(
-                    scope,
-                    context.clone(),
-                    &format!("agent-admin-filter-{filter}"),
-                    label,
-                    if active {
-                        "agent-admin-filter-button active"
-                    } else {
-                        "agent-admin-filter-button"
-                    },
-                    true,
-                    move || {
-                        navigate.navigate(Route::SettingsSection {
-                            section: "agents".into(),
-                            filter: filter.clone(),
-                        })
-                    },
-                ));
-            }
-            children.push(line("agent-admin-filter-bar", filters));
-            children.push(status(state.controller.list_status));
-            let view = build_agent_admin_view(
-                &rows,
-                &selected_id,
-                &current_filter,
-                &crate::clock::now_timestamp(),
-            );
             let mut agent_rows = Vec::new();
-            let query = query.trim().to_lowercase();
-            for agent in view.visible_agents.iter().filter(|agent| {
-                query.is_empty()
-                    || agent_slug_label(agent).to_lowercase().contains(&query)
-                    || agent_id(agent).to_lowercase().contains(&query)
-            }) {
+            for agent in rows
+                .iter()
+                .filter(|agent| agent_visible(agent, &current_filter, &search))
+            {
                 let id = agent_id(agent);
                 let target = id.clone();
                 let navigation = context.workspace_navigation.clone();
@@ -325,6 +349,7 @@ pub(crate) fn page_with_header(
                         })
                         .name(slug.clone())
                         .pressed(selected)
+                        .enabled(scope.bond(move || !state.controller.provision_in_flight.get()))
                         .fill(
                             glory::ui::group().fill((
                                 avatar,
@@ -333,13 +358,10 @@ pub(crate) fn page_with_header(
                                     .content(slug),
                                 glory::ui::text()
                                     .class(super::model::agent_state_badge_class(lifecycle))
-                                    .content(super::model::agent_state_label(lifecycle)),
+                                    .content(context.translated(scope, agent_state_key(lifecycle))),
                                 glory::ui::text()
                                     .class(super::model::agent_state_badge_class(runtime))
-                                    .content(super::model::agent_state_label(runtime)),
-                                glory::ui::text()
-                                    .class("mono muted agent-admin-row-id")
-                                    .content(short_protocol_id(&id)),
+                                    .content(context.translated(scope, agent_state_key(runtime))),
                                 glory::ui::text()
                                     .class("sr-only agent-actor-identity")
                                     .content(
@@ -356,96 +378,38 @@ pub(crate) fn page_with_header(
                         }),
                 ) as View);
             }
-            let empty = agent_rows.is_empty();
-            children.push(stack("agent-admin-list-rows", agent_rows));
-            if empty {
-                let mut empty_actions = vec![];
-                let message = match phase {
-                    AgentListPhase::Loading => "agents.empty.loading",
-                    AgentListPhase::Failed => "agents.empty.failed",
-                    AgentListPhase::SignInRequired => "agents.empty.sign_in",
-                    AgentListPhase::Ready if view.has_any_agents || !query.is_empty() => {
-                        "agents.empty.filtered"
-                    }
-                    AgentListPhase::Ready => "agents.empty.none",
-                };
-                match phase {
-                    AgentListPhase::Ready if !view.has_any_agents && query.is_empty() => {
-                        let begin = state.clone();
-                        empty_actions.push(action(
-                            scope,
-                            context.clone(),
-                            "agent-empty-create",
-                            "Create agent",
-                            "primary",
-                            true,
-                            move || begin.begin_creation(),
-                        ));
-                    }
-                    AgentListPhase::Ready => {
-                        let reset = context.clone();
-                        empty_actions.push(action(
-                            scope,
-                            context.clone(),
-                            "agent-empty-clear",
-                            "agents.clear_filters",
-                            "secondary",
-                            true,
-                            move || {
-                                query_signal.revise(String::clear);
-                                reset.navigate(Route::SettingsSection {
-                                    section: "agents".into(),
-                                    filter: "all".into(),
-                                });
-                            },
-                        ));
-                    }
-                    AgentListPhase::Failed => {
-                        let refresh = state.controller.clone();
-                        let retry_context = context.clone();
-                        empty_actions.push(action(
-                            scope,
-                            context.clone(),
-                            "agent-empty-retry",
-                            "Retry",
-                            "secondary",
-                            true,
-                            move || {
-                                refresh.clone().refresh_agents(
-                                    retry_context.base_url.get(),
-                                    retry_context.token.get(),
-                                )
-                            },
-                        ));
-                    }
-                    AgentListPhase::SignInRequired => {
-                        let login = context.clone();
-                        empty_actions.push(action(
-                            scope,
-                            context.clone(),
-                            "agent-empty-signin",
-                            "Sign in",
-                            "secondary",
-                            true,
-                            move || login.navigate(Route::Login),
-                        ));
-                    }
-                    AgentListPhase::Loading => {}
-                }
-                children.insert(
-                    1,
-                    stack(
-                        "agent-list-state members-empty compact",
-                        vec![
-                            paragraph("", context.translated(scope, message)),
-                            line("actions", empty_actions),
-                        ],
-                    ),
-                );
-            }
-            stack("agent-admin-list-content", children)
+            stack("agent-admin-list-rows", agent_rows)
         },
     );
+    let navigation = context.workspace_navigation.clone();
+    let placeholder = scope.bond(move || {
+        let in_detail = navigation.pane_visible(true);
+        if in_detail && create.get() {
+            return None;
+        }
+        let rows = agents.get();
+        agent_empty_state(&rows, &filter.get(), &search.get(), list_phase.get())
+            .map(|state| (in_detail, state))
+    });
+    let empty_pane = |in_detail| {
+        let state = state.clone();
+        crate::presentation::widgets::reactive_distinct(placeholder, move |scope, placement| {
+            match placement {
+                Some((target, kind)) if target == in_detail => {
+                    agent_placeholder(scope, &state, kind, query)
+                }
+                _ => empty(),
+            }
+        })
+    };
+    let list_status = controller.list_status;
+    let feedback = scope.bond(move || {
+        if list_phase.get() == AgentListPhase::Failed && agents.get().is_empty() {
+            String::new()
+        } else {
+            list_status.get()
+        }
+    });
     let detail_state = state.clone();
     let detail = reactive(
         agent_detail_source(scope, agents, selected, create, filter),
@@ -455,15 +419,7 @@ pub(crate) fn page_with_header(
                 return creation(scope, &state);
             }
             if id.is_empty() {
-                return card(
-                    scope,
-                    state.context.clone(),
-                    "Select an agent",
-                    vec![paragraph(
-                        "muted",
-                        "Choose an agent on the left, or create one first.",
-                    )],
-                );
+                return empty();
             }
             let now = crate::clock::now_timestamp();
             let view = build_agent_admin_view(&rows, &id, &current_filter, &now);
@@ -481,7 +437,14 @@ pub(crate) fn page_with_header(
                     false,
                     stack(
                         "agent-admin-list-pane agent-admin-list",
-                        vec![list_header, list_rows],
+                        vec![
+                            list_header,
+                            filters,
+                            stack(
+                                "agent-admin-list-content",
+                                vec![status(feedback), empty_pane(false), list_rows],
+                            ),
+                        ],
                     ),
                 ),
                 crate::presentation::widgets::workspace_detail(
@@ -491,13 +454,108 @@ pub(crate) fn page_with_header(
                     "agent-admin-detail-content",
                     stack(
                         "agent-admin-detail-stack",
-                        vec![status(controller.last_op_status), detail],
+                        vec![status(controller.last_op_status), empty_pane(true), detail],
                     ),
                 ),
             ],
         )],
     )
 }
+fn agent_placeholder(
+    scope: &Scope,
+    state: &AgentPage,
+    kind: AgentEmptyState,
+    query: Cage<String>,
+) -> View {
+    let context = state.context.clone();
+    let (message, icon) = match kind {
+        AgentEmptyState::Loading => ("agents.empty.loading", "refresh"),
+        AgentEmptyState::Failed => ("agents.empty.failed", "alert"),
+        AgentEmptyState::SignIn => ("agents.empty.sign_in", "user"),
+        AgentEmptyState::Filtered => ("agents.empty.filtered", "search"),
+        AgentEmptyState::FirstUse => ("agents.empty.none", "bot"),
+    };
+    let placeholder = sapid::empty_state()
+        .unstyled()
+        .class("agent-placeholder")
+        .heading_level(3)
+        .title(context.translated(scope, message))
+        .illustration(crate::components::icons::ui_icon_with_class(
+            icon,
+            "agent-placeholder-icon",
+        ));
+    let state = state.clone();
+    let placeholder = match kind {
+        AgentEmptyState::FirstUse => placeholder.actions(action(
+            scope,
+            context.clone(),
+            "agent-empty-create",
+            "agents.create",
+            "primary",
+            true,
+            move || state.begin_creation(),
+        )),
+        AgentEmptyState::Filtered => placeholder.actions(action(
+            scope,
+            context.clone(),
+            "agent-empty-clear",
+            "agents.clear_filters",
+            "secondary",
+            true,
+            move || {
+                query.revise(String::clear);
+                context.navigate(Route::SettingsSection {
+                    section: "agents".into(),
+                    filter: "all".into(),
+                });
+            },
+        )),
+        AgentEmptyState::Failed => placeholder.actions(action(
+            scope,
+            context.clone(),
+            "agent-empty-retry",
+            "common.retry",
+            "secondary",
+            true,
+            move || {
+                state
+                    .controller
+                    .clone()
+                    .refresh_agents(context.base_url.get(), context.token.get())
+            },
+        )),
+        AgentEmptyState::SignIn => placeholder.actions(action(
+            scope,
+            context.clone(),
+            "agent-empty-signin",
+            "login.title",
+            "secondary",
+            true,
+            move || context.navigate(Route::Login),
+        )),
+        AgentEmptyState::Loading => placeholder,
+    };
+    Box::new(
+        glory::ui::view()
+            .role(glory::render::Role::Status)
+            .class("agent-list-state")
+            .fill(placeholder),
+    )
+}
+
+fn agent_state_key(state: &str) -> &str {
+    match state {
+        "pending" | "pending_runtime_key" => "realm_admin.roster.agent_awaiting",
+        "ready" => "realm_admin.roster.agent_ready",
+        "replacing" => "realm_admin.roster.agent_replacing",
+        "active" => "realm_admin.roster.agent_active",
+        "pairing_expired" => "realm_admin.roster.agent_expired",
+        "paused" => "realm_admin.roster.agent_paused",
+        "deactivated" => "realm_admin.roster.agent_deactivated",
+        other => other,
+    }
+}
+
 fn agent_detail_source(
     scope: &Scope,
     agents: Cage<Vec<AgentView>>,
@@ -520,6 +578,8 @@ fn creation(scope: &Scope, state: &AgentPage) -> View {
     let presets = state.presets;
     let services = state.services;
     let slug = state.slug;
+    let valid_slug =
+        scope.bond(move || arkret_models_identity::validate_agent_slug(&slug.get()).is_ok());
     let avatar = state.controller.new_agent_avatar_blob_ref;
     let preview_seed = scope.bond(move || {
         let slug = slug.get();
@@ -584,6 +644,7 @@ fn creation(scope: &Scope, state: &AgentPage) -> View {
             })),
         ));
     }
+    let principal = context.principal_id;
     let provision = state.clone();
     let cancel = state.controller.clone();
     stack(
@@ -591,23 +652,64 @@ fn creation(scope: &Scope, state: &AgentPage) -> View {
         vec![
             line(
                 "event-head",
-                vec![plain(context.translated(scope, "Create agent"))],
+                vec![heading(
+                    2,
+                    "entity-title",
+                    context.translated(scope, "agents.create"),
+                )],
             ),
             field(
                 scope,
                 context.clone(),
                 "agent-admin-provision-agent-slug",
-                "Slug",
+                "agents.slug",
                 slug,
                 enabled,
                 false,
                 move |next| slug.revise(|value| *value = normalize_agent_slug(&next)),
             ),
+            reactive(
+                scope.bond(move || !slug.get().is_empty() && !valid_slug.get()),
+                {
+                    let context = context.clone();
+                    move |scope, invalid| {
+                        if invalid {
+                            paragraph(
+                                "agent-admin-field-hint",
+                                context.translated(scope, "agents.slug_help"),
+                            )
+                        } else {
+                            empty()
+                        }
+                    }
+                },
+            ),
             avatar_picker,
-            heading(3, "agent-admin-section-head", "Content capabilities"),
+            heading(
+                3,
+                "agent-admin-section-head",
+                context.translated(scope, "agents.content_capabilities"),
+            ),
             stack("agent-admin-preset-list", content),
-            heading(3, "agent-admin-section-head", "Runtime service surface"),
+            heading(
+                3,
+                "agent-admin-section-head",
+                context.translated(scope, "agents.runtime_services"),
+            ),
             stack("agent-admin-preset-list", service),
+            reactive(services, {
+                let context = context.clone();
+                move |scope, selected| {
+                    if selected.is_empty() {
+                        paragraph(
+                            "agent-admin-field-hint",
+                            context.translated(scope, "agents.services_required"),
+                        )
+                    } else {
+                        empty()
+                    }
+                }
+            }),
             line(
                 "actions",
                 vec![
@@ -615,9 +717,14 @@ fn creation(scope: &Scope, state: &AgentPage) -> View {
                         scope,
                         context.clone(),
                         "agent-admin-provision-button",
-                        "Create",
+                        "agents.create",
                         "primary",
-                        scope.bond(move || !busy.get() && !slug.get().trim().is_empty()),
+                        scope.bond(move || {
+                            !busy.get()
+                                && principal.get().is_some()
+                                && valid_slug.get()
+                                && !services.get().is_empty()
+                        }),
                         move || {
                             let Some(principal) = provision.context.principal_id.get() else {
                                 return;
@@ -639,7 +746,7 @@ fn creation(scope: &Scope, state: &AgentPage) -> View {
                         scope,
                         context.clone(),
                         "agent-admin-create-cancel-button",
-                        "Cancel",
+                        "common.cancel",
                         "secondary",
                         enabled,
                         move || {
@@ -680,7 +787,7 @@ fn details_view(scope: &Scope, state: &AgentPage, view: AgentAdminView, id: Stri
                 stack(
                     "agent-admin-detail-meta-item",
                     vec![
-                        paragraph("muted", "Created"),
+                        paragraph("muted", context.translated(scope, "agents.created")),
                         plain(if view.selected_created_at.is_empty() {
                             "-".into()
                         } else {
@@ -691,7 +798,10 @@ fn details_view(scope: &Scope, state: &AgentPage, view: AgentAdminView, id: Stri
                 stack(
                     "agent-admin-detail-meta-item",
                     vec![
-                        paragraph("muted", "Updated"),
+                        paragraph(
+                            "muted",
+                            context.translated(scope, "dashboard.strand_updated"),
+                        ),
                         plain(if view.selected_updated_at.is_empty() {
                             "-".into()
                         } else {
@@ -706,7 +816,10 @@ fn details_view(scope: &Scope, state: &AgentPage, view: AgentAdminView, id: Stri
     if view.selected_should_show_pairing_card {
         let mut pairing = Vec::new();
         if view.selected_pairing_is_expired {
-            pairing.push(paragraph("agent-admin-status error","This pairing request expired. The expired code and link can never be used again; pair again to issue a fresh code and QR for this agent."));
+            pairing.push(paragraph(
+                "agent-admin-status error",
+                context.translated(scope, "agents.pairing_expired_help"),
+            ));
         }
         if view.selected_has_pcr_binding && !view.selected_pairing_is_expired {
             let token = build_agent_pairing_handoff_token(
@@ -768,11 +881,11 @@ fn details_view(scope: &Scope, state: &AgentPage, view: AgentAdminView, id: Stri
             "badge amber"
         };
         let pairing_label = if !view.selected_has_pcr_binding {
-            "Setup incomplete"
+            "agents.setup_incomplete"
         } else if view.selected_pairing_is_expired {
-            "Expired"
+            "agents.expired"
         } else {
-            super::model::agent_state_label(&view.selected_runtime_state)
+            agent_state_key(&view.selected_runtime_state)
         };
         pairing.insert(
             0,
@@ -789,7 +902,7 @@ fn details_view(scope: &Scope, state: &AgentPage, view: AgentAdminView, id: Stri
                     ),
                     paragraph(
                         format!("{pairing_class} agent-runtime-state"),
-                        pairing_label.to_owned(),
+                        context.translated(scope, pairing_label),
                     ),
                 ],
             ),
@@ -824,14 +937,10 @@ fn details_view(scope: &Scope, state: &AgentPage, view: AgentAdminView, id: Stri
     let mut capability_section = vec![
         line(
             "agent-admin-section-head",
-            vec![
-                paragraph("agent-admin-section-title", "Content capabilities"),
-                paragraph("muted", "Configured when this agent was created"),
-            ],
-        ),
-        paragraph(
-            "muted",
-            "Actual access is the intersection of this ceiling with Realm membership, participation, and effective grants.",
+            vec![paragraph(
+                "agent-admin-section-title",
+                context.translated(scope, "agents.content_capabilities"),
+            )],
         ),
         stack(
             "agent-admin-preset-list agent-admin-content-capability-list",
@@ -839,10 +948,10 @@ fn details_view(scope: &Scope, state: &AgentPage, view: AgentAdminView, id: Stri
         ),
         line(
             "agent-admin-section-head",
-            vec![
-                paragraph("agent-admin-section-title", "Runtime service surface"),
-                paragraph("muted", "Selected when this agent was created"),
-            ],
+            vec![paragraph(
+                "agent-admin-section-title",
+                context.translated(scope, "agents.runtime_services"),
+            )],
         ),
         stack(
             "agent-admin-preset-list agent-admin-service-capability-list",
@@ -874,29 +983,19 @@ fn details_view(scope: &Scope, state: &AgentPage, view: AgentAdminView, id: Stri
     let target = id.clone();
     let mut lifecycle = vec![line(
         "agent-admin-section-head",
-        vec![
-            paragraph("agent-admin-section-title", "Lifecycle"),
-            paragraph("muted", "Loaded from selected agent"),
-        ],
+        vec![paragraph(
+            "agent-admin-section-title",
+            context.translated(scope, "agents.lifecycle"),
+        )],
     )];
     if !terminal {
         if matches!(view.selected_status.as_str(), "active" | "paused") {
             lifecycle.push(line(
                 "agent-admin-lifecycle-toggle-row",
                 vec![
-                    stack(
-                        "agent-admin-lifecycle-copy",
-                        vec![
-                            paragraph("agent-admin-section-title", "Agent enabled"),
-                            paragraph(
-                                "muted",
-                                if view.selected_status == "active" {
-                                    "Active — turn off to pause"
-                                } else {
-                                    "Paused — turn on to resume"
-                                },
-                            ),
-                        ],
+                    paragraph(
+                        "agent-admin-section-title",
+                        context.translated(scope, "agents.enabled"),
                     ),
                     line(
                         "agent-admin-lifecycle-toggle-control",
@@ -907,11 +1006,7 @@ fn details_view(scope: &Scope, state: &AgentPage, view: AgentAdminView, id: Stri
                                 } else {
                                     "badge amber"
                                 },
-                                if view.selected_status == "active" {
-                                    "Active"
-                                } else {
-                                    "Paused"
-                                },
+                                context.translated(scope, agent_state_key(&view.selected_status)),
                             ),
                             paragraph(
                                 format!(
@@ -920,14 +1015,16 @@ fn details_view(scope: &Scope, state: &AgentPage, view: AgentAdminView, id: Stri
                                         &view.selected_runtime_state
                                     )
                                 ),
-                                super::model::agent_state_label(&view.selected_runtime_state)
-                                    .to_owned(),
+                                context.translated(
+                                    scope,
+                                    agent_state_key(&view.selected_runtime_state),
+                                ),
                             ),
                             Box::new(
                                 sapid::switch()
                                     .unstyled()
                                     .class("agent-admin-enabled-switch")
-                                    .name("Agent enabled")
+                                    .name(context.translated(scope, "agents.enabled"))
                                     .checked(view.selected_status == "active")
                                     .enabled(view.selected_has_pcr_binding)
                                     .on_checked_change(move |next| {
@@ -1015,21 +1112,21 @@ fn mount_agent_selection(
     agents: Cage<Vec<AgentView>>,
     selected: Cage<String>,
     filter: Cage<String>,
+    search: glory::Bond<String>,
 ) {
     scope.effect(move || {
         let rows = agents.get();
         let filter = filter.get();
+        let search = search.get();
         let current = selected.get_untracked();
-        let next = if rows.iter().any(|row| {
-            agent_id(row) == current
-                && agent_matches_filter(agent_lifecycle_wire(row.agent.lifecycle), &filter)
-        }) {
+        let next = if rows
+            .iter()
+            .any(|row| agent_id(row) == current && agent_visible(row, &filter, &search))
+        {
             current.clone()
         } else {
             rows.iter()
-                .find(|row| {
-                    agent_matches_filter(agent_lifecycle_wire(row.agent.lifecycle), &filter)
-                })
+                .find(|row| agent_visible(row, &filter, &search))
                 .map(agent_id)
                 .unwrap_or_default()
         };
@@ -1045,14 +1142,15 @@ fn agent_icon_action(
     key: &str,
     label: &str,
     icon: &str,
-    variant: &str,
+    enabled: impl Into<glory::Vary<bool>>,
     handler: impl FnMut() + 'static,
 ) -> View {
     Box::new(
         sapid::button()
             .unstyled()
-            .class(format!("btn icon {variant} {key}"))
+            .class(format!("btn icon secondary {key}"))
             .name(context.translated(scope, label))
+            .enabled(enabled)
             .fill(crate::components::ui_icon(icon))
             .on_press(handler),
     )
@@ -1116,8 +1214,8 @@ fn permission_overview(scope: &Scope, context: Rc<InksonContext>, view: &AgentAd
             "agent-permission-state",
             format!(
                 "{} · {}",
-                super::model::agent_state_label(&view.selected_runtime_state),
-                view.selected_status
+                crate::i18n::tr(agent_state_key(&view.selected_runtime_state)),
+                crate::i18n::tr(agent_state_key(&view.selected_status))
             ),
         ),
         paragraph(

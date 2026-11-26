@@ -136,9 +136,17 @@ fn bootstrap_with_context(scope: &Scope, configure: impl FnOnce(&Rc<InksonContex
             )
         }
     });
-    Box::new(view().class(appearance).fill(reactive_distinct(
-        boundary,
-        move |scope, (_, retired)| {
+    let system_theme = context.system_theme_is_night;
+    let root =
+        view()
+            .class(appearance)
+            .on(glory::render::EventKind::ColorSchemeChanged, move |event| {
+                if let glory::render::Event::ColorSchemeChanged { dark } = event {
+                    system_theme.revise(|current| *current = dark);
+                }
+            });
+    Box::new(
+        root.fill(reactive_distinct(boundary, move |scope, (_, retired)| {
             if retired {
                 return stack(
                     "auth-shell",
@@ -149,8 +157,8 @@ fn bootstrap_with_context(scope: &Scope, configure: impl FnOnce(&Rc<InksonContex
                 );
             }
             account_owner(scope, context.clone())
-        },
-    )))
+        })),
+    )
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
@@ -364,14 +372,7 @@ fn account_owner(scope: &Scope, context: Rc<InksonContext>) -> View {
 
 fn auth_card(scope: &Scope, context: Rc<InksonContext>, content: View) -> View {
     let class = scope.bond(move || {
-        super::shell_model::shell_chrome(
-            &context.theme.get(),
-            context.system_theme_is_night.get(),
-            context.locale.get().direction(),
-            false,
-            false,
-        )
-        .auth_class
+        super::shell_model::shell_chrome(context.locale.get().direction(), false, false).auth_class
     });
     Box::new(
         view()
@@ -472,32 +473,5 @@ fn install_browser_navigation(scope: &Scope, context: &Rc<InksonContext>) {
             }
         }
         Err(error) => tracing::error!(?error, "could not observe browser history"),
-    }
-    if let Ok(Some(media)) = window.match_media("(prefers-color-scheme: dark)") {
-        let read = media.clone();
-        let weak = Rc::downgrade(context);
-        let callback = Closure::new(move |_: web_sys::Event| {
-            if let Some(context) = weak
-                .upgrade()
-                .filter(|context| context.system_theme_is_night.is_alive())
-            {
-                context
-                    .system_theme_is_night
-                    .revise(|night| *night = read.matches());
-            }
-        });
-        let target: web_sys::EventTarget = media.into();
-        match target.add_event_listener_with_callback("change", callback.as_ref().unchecked_ref()) {
-            Ok(()) => {
-                if let Err(error) = scope.retain(Listener {
-                    event: "change",
-                    target,
-                    callback,
-                }) {
-                    scope.report_error(error);
-                }
-            }
-            Err(error) => tracing::warn!(?error, "could not observe system theme"),
-        }
     }
 }

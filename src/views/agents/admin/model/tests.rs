@@ -18,7 +18,14 @@ fn newly_created_agent_selection_survives_directory_refresh_and_follows_filter_c
     let agents = scope.cage(vec![agent("old", AgentLifecycleState::Active)]);
     let selected = scope.cage(agent_id(&agent("old", AgentLifecycleState::Active)));
     let filter = scope.cage("all".to_owned());
-    mount_agent_selection(scope, agents, selected, filter);
+    let query = scope.cage(String::new());
+    mount_agent_selection(
+        scope,
+        agents,
+        selected,
+        filter,
+        scope.bond(move || query.get()),
+    );
     app.flush().unwrap();
     let new = agent("new", AgentLifecycleState::Active);
     let new_id = agent_id(&new);
@@ -73,12 +80,20 @@ fn newly_created_agent_selection_survives_directory_refresh_and_follows_filter_c
         new_id,
         "returning to all selects the remaining Agent"
     );
+    query.revise(|value| *value = "other".into());
+    app.flush().unwrap();
+    assert!(selected.get_untracked().is_empty());
+    query.revise(|value| *value = "new".into());
+    app.flush().unwrap();
+    assert_eq!(selected.get_untracked(), new_id);
 }
 
 #[test]
 fn agent_slug_input_is_trimmed_and_lowercased() {
     assert_eq!(normalize_agent_slug(" AA "), "aa");
     assert_eq!(normalize_agent_slug("Summary_V2"), "summary_v2");
+    assert_eq!(normalize_agent_slug("Équipe"), "équipe");
+    assert_eq!(normalize_agent_slug("a/b"), "a/b");
 }
 
 #[test]
@@ -735,26 +750,33 @@ fn now_before_expiry() -> String {
 
 #[test]
 fn panel_view_picks_the_empty_state_copy_from_the_same_filter_the_list_uses() {
-    // `has_any_agents` is what chooses between "No agents yet." and "No agents
-    // match this filter.", so it is computed through `agent_matches_filter` with
-    // the same `"all"` the list uses. "all" is not "every row": it excludes
-    // deactivated Agents, which no default filter shows.
-    let mut deactivated = test_pairing_view(
+    let deactivated = test_pairing_view(
         AgentLifecycleState::Deactivated,
         AgentRuntimeState::PairingExpired,
     );
-    deactivated.agent.slug = "retired".to_owned();
-    let view = build_agent_admin_view(&[deactivated], "", "all", &now_before_expiry());
-    assert!(view.visible_agents.is_empty());
-    assert!(!view.has_any_agents);
-    assert_eq!(view.selected_title, "No agent selected");
+    assert_eq!(
+        agent_empty_state(&[deactivated], "all", "", AgentListPhase::Ready),
+        Some(AgentEmptyState::FirstUse)
+    );
 
-    // A row the account still holds but the active filter hides is the other
-    // branch: the list is empty, yet the copy must not claim there are none.
     let paused = test_pairing_view(AgentLifecycleState::Paused, AgentRuntimeState::Ready);
-    let view = build_agent_admin_view(&[paused], "", "active", &now_before_expiry());
-    assert!(view.visible_agents.is_empty());
-    assert!(view.has_any_agents);
+    let rows = [paused];
+    assert_eq!(
+        agent_empty_state(&rows, "active", "", AgentListPhase::Ready),
+        Some(AgentEmptyState::Filtered)
+    );
+    assert_eq!(
+        agent_empty_state(&rows, "all", "does-not-exist", AgentListPhase::Ready),
+        Some(AgentEmptyState::Filtered)
+    );
+    assert_eq!(
+        agent_empty_state(&rows, "paused", "", AgentListPhase::Ready),
+        None
+    );
+    assert_eq!(
+        agent_empty_state(&[], "all", "", AgentListPhase::Failed),
+        Some(AgentEmptyState::Failed)
+    );
 }
 
 #[test]

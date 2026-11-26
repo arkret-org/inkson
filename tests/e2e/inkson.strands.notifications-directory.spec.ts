@@ -308,9 +308,14 @@ test("directory search refuses unindexed Realms and exposes only public Realm me
       path === "/_arkret/self/event-batches"
     )) writes.push(path);
   });
-  await page.locator(".topbar-command-search > button").click();
-  await page.locator(".topbar-command-search-field input").fill("demo");
-  await page.locator(".topbar-command-search-field input").press("Enter");
+  await dismissBlockingRecoveryModal(page);
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  const palette = page.getByRole("dialog", { name: "Command palette", exact: true });
+  const query = palette.getByRole("combobox");
+  await query.fill("demo");
+  await expect(palette.getByRole("option", { name: "Search — demo", exact: true, selected: true })).toBeVisible();
+  await query.press("Enter");
+  await expect(palette).toBeHidden();
   await expect(page.locator("[class~=\"directory-panel\"]")).toBeVisible();
 
   await expect(page.locator("[class~=\"directory-address-input\"]")).toHaveValue("");
@@ -350,27 +355,30 @@ test("directory search refuses unindexed Realms and exposes only public Realm me
 test("command palette closes with Escape and outside click", async ({
   page,
 }) => {
-  await page.locator(".topbar-command-search > button").click();
-  await expect(page.locator("[class~=\"command-palette\"]")).toBeVisible();
+  await dismissBlockingRecoveryModal(page);
+  const trigger = page.getByRole("button", { name: "Search", exact: true });
+  const palette = page.getByRole("dialog", { name: "Command palette", exact: true });
+  await trigger.click();
+  await expect(palette).toBeVisible();
 
   await page.keyboard.press("Escape");
-  await expect(page.locator("[class~=\"command-palette\"]")).toBeHidden();
-  await expect(page.locator(".topbar-command-search > button")).toBeVisible();
+  await expect(palette).toBeHidden();
 
-  await page.locator(".topbar-command-search > button").click();
-  await expect(page.locator("[class~=\"command-palette\"]")).toBeVisible();
-  await page.locator(".topbar-context").click();
+  await trigger.click();
+  await expect(palette).toBeVisible();
+  const bounds = (await palette.boundingBox())!;
+  expect(bounds.x).toBeGreaterThan(4);
+  await page.mouse.click(bounds.x - 4, bounds.y + bounds.height / 2);
 
-  await expect(page.locator("[class~=\"command-palette\"]")).toBeHidden();
-  await expect(page.locator(".topbar-command-search > button")).toBeVisible();
+  await expect(palette).toBeHidden();
+  await expect(trigger).toBeVisible();
 });
 
 test("shortcut help opens from the topbar and the ? key", async ({ page }) => {
   await dismissBlockingRecoveryModal(page);
   await page.getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
   await expect(page.locator("[class~=\"shortcut-help-card\"]")).toBeVisible();
-  await expect(page.locator("[class~=\"shortcut-help-card\"]")).toContainText("Ctrl");
-  await expect(page.locator("[class~=\"shortcut-help-card\"]")).toContainText("F");
+  await expect(page.locator(".shortcut-help-card kbd").filter({ hasText: /^Ctrl \+ F$/ })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.locator("[class~=\"shortcut-help-card\"]")).toHaveCount(0);
 
@@ -387,10 +395,12 @@ test("global keyboard shortcuts trigger their target surfaces", async ({
 }) => {
   await dismissBlockingRecoveryModal(page);
 
+  const palette = page.getByRole("dialog", { name: "Command palette", exact: true });
   await page.keyboard.press("Control+K");
-  await expect(page.locator("[class~=\"command-palette\"]")).toBeVisible();
+  await expect(palette).toBeVisible();
+  await expect(palette.getByRole("combobox")).toBeFocused();
   await page.keyboard.press("Escape");
-  await expect(page.locator("[class~=\"command-palette\"]")).toHaveCount(0);
+  await expect(palette).toBeHidden();
 
   await page.keyboard.press("Control+F");
   await expect(page).toHaveURL(/\/search$/);

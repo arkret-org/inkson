@@ -33,6 +33,65 @@ fn nodes(app: &glory::App, class: &str) -> Vec<NodeId> {
     }
     found
 }
+
+#[test]
+fn list_empty_state_uses_a_heading_and_contextual_description() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = glory::App::memory();
+    let context = context(&app, directory.path());
+    for (kind, message, expected) in [
+        (EmptyStateKind::Empty, None, None),
+        (
+            EmptyStateKind::Filtered,
+            Some("Muted by this filter"),
+            Some("Muted by this filter".to_owned()),
+        ),
+        (
+            EmptyStateKind::Error,
+            None,
+            Some(context.tr("error.generic")),
+        ),
+        (
+            EmptyStateKind::SignedOut,
+            None,
+            Some(context.tr("account.not_signed_in")),
+        ),
+    ] {
+        app.mount(empty_state(
+            app.scope(),
+            context.clone(),
+            EmptyStateProps {
+                title: "Activity".into(),
+                kind,
+                message: message.map(String::from),
+                test_id: Some("activity-empty".into()),
+            },
+        ))
+        .unwrap();
+        assert_eq!(
+            nodes(&app, "activity-empty"),
+            nodes(&app, "sapid-empty-state")
+        );
+        let title = nodes(&app, "sapid-empty-title")[0];
+        let tree = app.tree();
+        assert!(
+            matches!(&tree.node(title).unwrap().descriptor.view().props, Props::Text(text)
+            if text.kind == glory::render::TextKind::Heading(2) && text.content == "Activity")
+        );
+        let descriptions: Vec<_> = nodes(&app, "sapid-empty-description")
+            .into_iter()
+            .map(|id| match &tree.node(id).unwrap().descriptor.view().props {
+                Props::Text(text) => text.content.clone(),
+                _ => panic!("expected a description"),
+            })
+            .collect();
+        assert_eq!(descriptions, expected.into_iter().collect::<Vec<_>>());
+        assert!(nodes(&app, "sapid-badge").is_empty());
+        drop(tree);
+        app.clear().unwrap();
+    }
+}
+
 #[test]
 fn actual_blitz_accepts_help_and_me_badge_and_operates_managed_dialogs() {
     let directory = tempfile::Builder::new()

@@ -164,12 +164,7 @@
   gap: 10px;
   background: var(--bg);
 }
-.shell.app {
-  background:
-    radial-gradient(circle at 12% 0%, var(--page-glow-a), transparent 24%),
-    radial-gradient(circle at 88% 10%, var(--page-glow-b), transparent 24%),
-    linear-gradient(135deg, var(--bg) 0%, var(--bg-elev) 62%, color-mix(in srgb, var(--bg-elev) 92%, var(--accent-2) 8%) 100%);
-}
+
 
 
 .shell.app > .recovery-setup-banner {
@@ -209,15 +204,7 @@ html[data-inkson-app-shell] #app {
   overflow: hidden;
 }
 
-/* Original default secondary controls, scoped to the application navigation. */
-.inkson-theme-dark .sidebar {
-  --shell-control-background: #223129;
-  --shell-control-foreground: #e7efe9;
-}
-.inkson-theme-light .sidebar {
-  --shell-control-background: #ebf0eb;
-  --shell-control-foreground: #19211c;
-}
+/* Shared navigation controls. */
 .sidebar .server-switch-button,
 .sidebar .scope-chip {
   box-sizing: border-box;
@@ -233,8 +220,8 @@ html[data-inkson-app-shell] #app {
 .sidebar .server-switch-button {
   font-size: 14px;
   font-weight: 500;
-  background-color: var(--shell-control-background);
-  color: var(--shell-control-foreground);
+  background-color: var(--surface-2);
+  color: var(--text);
 }
 .sidebar .scope-chip {
   display: flex;
@@ -243,12 +230,12 @@ html[data-inkson-app-shell] #app {
   font-weight: 700;
 }
 .sidebar .scope-chip:not(.active) {
-  background-color: var(--shell-control-background);
-  color: var(--shell-control-foreground);
+  background-color: var(--surface-2);
+  color: var(--text);
 }
 .sidebar .server-switch-button:not(:disabled):hover,
 .sidebar .scope-chip:not(.active):not(:disabled):hover {
-  background-color: color-mix(in oklab, var(--shell-control-background) 80%, transparent);
+  background-color: var(--surface-3);
 }
 
 

@@ -116,7 +116,12 @@ pub fn shortcut_help_overlay(
                 line(
                     "shortcut-help-row",
                     vec![
-                        paragraph("shortcut-help-keys", entry.keys.join(" + ")),
+                        Box::new(
+                            sapid::kbd()
+                                .unstyled()
+                                .class("shortcut-help-keys")
+                                .content(entry.keys.join(" + ")),
+                        ),
                         paragraph(
                             "shortcut-help-description",
                             context.translated(scope, entry.description_key),

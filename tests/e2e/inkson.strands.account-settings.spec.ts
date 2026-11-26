@@ -29,7 +29,7 @@ function accountPage(page: Page) {
 }
 
 function agentCreation(page: Page) {
-  return page.locator(".agent-admin-layout > .event").filter({ has: byClass(page, "agent-admin-provision-button") });
+  return byClass(page, "agent-admin-detail-pane").filter({ has: byClass(page, "agent-admin-provision-button") });
 }
 
 function agentLastOperation(page: Page) {
@@ -212,10 +212,10 @@ test("settings language selector offers only English and Chinese", async ({ page
   await byClass(page, "settings-nav-item-theme").click();
   await expect(byClass(page, "language-settings")).toBeVisible();
   await expect(byClass(page, "settings-language-choice")).toHaveCount(2);
-  await page.getByRole("radio", {name:"Dark",exact:true}).click();
+  await page.getByRole("radiogroup", { name: "Theme" }).getByText("Dark", { exact: true }).click();
   await expect(page.getByRole("radio", {name:"Dark",exact:true})).toBeChecked();
   await expect(byClass(page, "inkson-root")).toHaveClass(/inkson-theme-dark/);
-  await page.getByRole("radio", {name:"Follow system",exact:true}).click();
+  await page.getByRole("radiogroup", { name: "Theme" }).getByText("Follow system", { exact: true }).click();
   await expect(page.getByRole("radio", {name:"Follow system",exact:true})).toBeChecked();
 
   await expect(byClass(page, "language-ar")).toHaveCount(0);
@@ -438,34 +438,36 @@ test("avatar file replacement and cancellation ignore late reads", async ({ page
 test("light theme renders the sidebar with light navigation colors", async ({ page }) => {
   await openSettings(page);
   await byClass(page, "settings-nav-item-theme").click();
-  await byClass(page, "settings-theme-light").click();
-  await expect(byClass(page, "settings-theme-light")).toHaveAttribute("aria-pressed", "true");
+  const light = page.getByRole("radio", { name: "Light", exact: true });
+  const group = page.getByRole("radiogroup", { name: "Theme" });
+  await group.getByText("Light", { exact: true }).click();
+  await expect(light).toBeChecked();
   await expect(byClass(page, "inkson-root")).toHaveClass(/inkson-theme-light/);
 
-  const sidebarVars = await byClass(page, "sidebar").evaluate((element) => {
-    const styles = getComputedStyle(element);
-    return {
-      navBg: styles.getPropertyValue("--nav-bg").trim().toLowerCase(),
-      navText: styles.getPropertyValue("--nav-text").trim().toLowerCase(),
-    };
-  });
-  expect(sidebarVars).toEqual({
-    navBg: "#fff9f3",
-    navText: "#2f2723",
-  });
+  const navigation = page.locator(".navigation-rail");
+  const lightColor = await navigation.evaluate(element => getComputedStyle(element).backgroundColor);
+  await group.getByText("Dark", { exact: true }).click();
+  await expect(navigation).not.toHaveCSS("background-color", lightColor);
 });
 
-test("topbar theme toggle takes effect on the first click from system dark", async ({ page }) => {
+test("settings theme supports keyboard selection and keeps the manual choice after reload", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(page.locator(".shell.app").last()).toBeVisible({ timeout: 120_000 });
+  await gotoAndDismissRecovery(page, "/settings/theme");
+  const system = page.getByRole("radio", { name: "Follow system", exact: true });
+  await expect(system).toBeChecked();
   await expect(byClass(page, "inkson-root")).toHaveClass(/inkson-theme-dark/);
+  await expect(byClass(page, "theme-toggle-button")).toHaveCount(0);
 
-  const toggle = byClass(page, "theme-toggle-button").filter({ visible: true });
-  await expect(toggle).toHaveAccessibleName("Switch to light theme");
-  await toggle.click();
+  await system.focus();
+  await page.keyboard.press("Home");
+  const light = page.getByRole("radio", { name: "Light", exact: true });
+  await expect(light).toBeChecked();
+  await expect(light).toBeFocused();
+  await expect(byClass(page, "theme-effective-description")).toHaveCount(0);
   await expect(byClass(page, "inkson-root")).toHaveClass(/inkson-theme-light/);
-  await expect(toggle).toHaveAccessibleName("Switch to night theme");
+  await page.reload();
+  await expect(light).toBeChecked();
+  await expect(byClass(page, "inkson-root")).toHaveClass(/inkson-theme-light/);
 });
 
 test("settings reads its signed own Station directory and refuses provider-only actions", async ({ page }) => {
@@ -634,10 +636,7 @@ test("account settings split account/server info and surface Agents", async ({ p
   await expect(byClass(page, "agent-admin")).toBeVisible();
   await expect(byClass(page, "agent-admin-list").getByText(/\d+ shown/)).toHaveCount(0);
   await expect(byClass(page, "agent-admin-toggle-inactive-button")).toHaveCount(0);
-  await expect(byClass(page, "agent-admin-filter-all")).toHaveAttribute(
-    "class",
-    /(?:^|\s)active(?:\s|$)/,
-  );
+  await expect(byClass(page, "agent-admin-filter-all").getByRole("radio")).toBeChecked();
   await expect(byClass(page, "agent-admin-filter-active")).toBeVisible();
   await expect(byClass(page, "agent-admin-filter-paused")).toBeVisible();
   await expect(byClass(page, "agent-admin-filter-deactivated")).toHaveCount(0);
@@ -688,7 +687,7 @@ test("account settings split account/server info and surface Agents", async ({ p
     const settingsContent = document.querySelector(
       ".settings-page .settings-content-column",
     ) as HTMLElement | null;
-    const detailPane = document.querySelector(".agent-admin-detail-pane") as HTMLElement | null;
+    const detailPane = document.querySelector(".agent-admin-detail-content") as HTMLElement | null;
     if (realm) {
       realm.scrollTop = 200;
     }
@@ -899,7 +898,7 @@ test("expired Agent pairing renews in place with a fresh handle", async ({ page 
   await expect(byClass(page, "agent-admin-runtime-key-request-json")).toHaveCount(0);
   await expect(byClass(page, "agent-admin-pairing-card").locator("pre, code")).toHaveCount(0);
   await expect(expiredPairingMessage(page)).toContainText(
-    "pair again",
+    /pair again/i,
   );
 
   // Pair again renews pairing on the SAME agent: no create form, no

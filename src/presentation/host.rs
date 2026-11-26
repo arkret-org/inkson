@@ -158,9 +158,10 @@ pub fn run_native() -> Result<(), Box<dyn std::error::Error>> {
         provider: Some(provider),
         ..Default::default()
     });
+    let application_css = include_str!(concat!(env!("OUT_DIR"), "/inkson.css"));
     window
         .renderer()
-        .set_css(include_str!(concat!(env!("OUT_DIR"), "/inkson.css")));
+        .set_css(&format!("{}\n{application_css}", sapid::STRUCTURAL_CSS));
     let root_images = images.clone();
     window.mount_with(|| {
         glory::prelude::widget(move |scope| {

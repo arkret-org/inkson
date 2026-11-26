@@ -1109,8 +1109,8 @@ fn realm_rows(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> 
             content.extend(badges);
             let description = if node.kind == crate::models::RealmTreeNodeKind::Realm {
                 match encrypted {
-                    Some(true) => "Encrypted Realm".to_owned(),
-                    Some(false) => "Unencrypted Realm".to_owned(),
+                    Some(true) => context.tr("realm.security_encrypted_title"),
+                    Some(false) => context.tr("realm.security_plaintext_title"),
                     None => context.tr("realm.security_unknown_title"),
                 }
             } else {
@@ -1126,7 +1126,7 @@ fn realm_rows(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> 
                 hint_key,
                 description,
                 internal_link()
-                    .class(format!("{class} sidebar-row-depth-{}", item.depth.min(32)))
+                    .class(format!("{class} sidebar-row-depth-{}", item.depth.min(6)))
                     .target(
                         Route::Realm {
                             realm_id: target.clone(),

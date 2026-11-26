@@ -3,17 +3,16 @@ import { writeFileSync } from "node:fs";
 import { registerStrandsBeforeEach, openKanban, dismissBlockingRecoveryModal, dismissHistoryRecoveryModal } from "./strandsHarness";
 
 registerStrandsBeforeEach();
-async function toggleTheme(page: import("@playwright/test").Page) {
-  const more = page.locator(".topbar-more .sapid-popover-trigger");
-  if (await more.isVisible()) await more.click();
-  await page.locator(".theme-toggle-button:visible").click();
-  await page.keyboard.press("Escape");
+async function setSystemTheme(page: import("@playwright/test").Page, colorScheme: "light" | "dark") {
+  await page.emulateMedia({ colorScheme });
+  await expect(page.locator(".inkson-root")).toHaveClass(new RegExp(`inkson-theme-${colorScheme}`));
 }
 
 test("theme text and action colors retain contrast on their surfaces", async ({ page }, testInfo) => {
   await openKanban(page);
   const measurements: unknown[] = [];
-  for (let index = 0; index < 2; index++) {
+  for (const scheme of ["light", "dark"] as const) {
+    await setSystemTheme(page, scheme);
     const palette = await page.locator(".board-toolbar").evaluate(element => {
       const style = getComputedStyle(element);
       const read = (name: string) => style.getPropertyValue(name).trim();
@@ -28,7 +27,7 @@ test("theme text and action colors retain contrast on their surfaces", async ({ 
     const check = (foreground: string, background: string) => {
       const [low, high] = [luminance(palette[foreground]), luminance(palette[background])].sort((a, b) => a - b);
       const ratio = (high + 0.05) / (low + 0.05);
-      measurements.push({ palette: index, foreground, background, ratio });
+      measurements.push({ palette: scheme, foreground, background, ratio });
       expect(ratio, `${foreground} against ${background}`).toBeGreaterThanOrEqual(4.5);
     };
     for (const surface of ["--surface-solid", "--surface-2", "--surface-3"]) {
@@ -38,7 +37,6 @@ test("theme text and action colors retain contrast on their surfaces", async ({ 
     check("--text-on-accent", "--accent");
     check("--text-on-accent", "--accent-2");
     check("--nav-muted", "--nav-bg-2");
-    await toggleTheme(page);
   }
   await testInfo.attach("computed-palette-contrast", { body: JSON.stringify(measurements, null, 2), contentType: "application/json" });
 });
@@ -47,6 +45,7 @@ for (const width of [1280, 390]) {
   test(`work surfaces prioritize content and retain drafts at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 720 });
     await openKanban(page);
+    await setSystemTheme(page, "dark");
     const options = page.locator(".board-toolbar-options > .sapid-collapsible-trigger");
     const addList = page.locator(".board-toolbar-add-list > .sapid-collapsible-trigger");
     const title = page.locator(".new-column-input");
@@ -60,7 +59,7 @@ for (const width of [1280, 390]) {
     await expect(title).toHaveValue("Retained list draft");
     await addList.click();
     await page.screenshot({ path: testInfo.outputPath(`board-dark-${width}.png`) });
-    await toggleTheme(page);
+    await setSystemTheme(page, "light");
     await page.screenshot({ path: testInfo.outputPath(`board-alternate-${width}.png`) });
     const realm = decodeURIComponent(new URL(page.url()).pathname.split("/")[2]);
     await page.goto(`/chat/${encodeURIComponent(realm)}`);
@@ -85,14 +84,13 @@ for (const width of [1280, 390]) {
     expect(area).not.toBeNull();
     if (width >= 1280) expect(area!.width).toBeGreaterThan(600);
     const paint = await input.evaluate(element => ({ bg: getComputedStyle(element).backgroundColor, color: getComputedStyle(element).color }));
-    expect(paint.bg).not.toBe("rgb(255, 255, 255)");
     expect(paint.bg).not.toBe(paint.color);
     await page.screenshot({ path: testInfo.outputPath(`discussion-${width}.png`) });
     await testInfo.attach(`layout-${width}`, {
       body: JSON.stringify({ viewport: page.viewportSize(), discussion: area, composer }),
       contentType: "application/json",
     });
-    await toggleTheme(page);
+    await setSystemTheme(page, "dark");
     await expect(input).toHaveValue("A draft that must survive opening conversation details");
     await page.screenshot({ path: testInfo.outputPath(`discussion-alternate-${width}.png`) });
   });

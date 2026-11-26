@@ -98,12 +98,16 @@
   letter-spacing: -0.01em;
 }
 
-.sidebar {
+.sidebar,
+.workspace-list {
   --sidebar-item-size: 44px;
   --sidebar-item-gap: 6px;
   --sidebar-group-gap: 14px;
   --sidebar-icon-track: 20px;
   --sidebar-icon-size: 18px;
+}
+
+.sidebar {
   background: var(--surface);
   color: var(--text);
   border-right: 1px solid var(--border);
@@ -201,10 +205,8 @@
 
 .sidebar-nav-item:hover,
 .sidebar-nav-item.is-active {
-  border-color: color-mix(in srgb, var(--accent) 52%, var(--accent-2));
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--accent-2) 11%, transparent)),
-    var(--nav-soft);
+  border-color: var(--border);
+  background: var(--accent-soft);
 }
 
 .sidebar-nav-item.is-active {
@@ -332,10 +334,9 @@
 
 .sidebar-toolbar-link.add-realm-cta,
 .sidebar-toolbar-link.add-contact-cta {
-  color: var(--cta-amber-ink);
-  background: linear-gradient(135deg, var(--cta-amber-a) 0%, var(--cta-amber-b) 100%);
-  border-color: color-mix(in srgb, var(--cta-amber-b) 64%, transparent);
-  box-shadow: 0 4px 10px color-mix(in srgb, var(--cta-amber-b) 16%, transparent);
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-color: var(--border);
 }
 
 .realm-tree-item {
@@ -434,6 +435,14 @@
   width: 100%;
   min-width: 0;
 }
+/* Leave room for the title and badges even in deeply nested Realms. */
+.sidebar-row-main.sidebar-row-depth-0 { padding-inline-start: 10px; }
+.sidebar-row-main.sidebar-row-depth-1 { padding-inline-start: 22px; }
+.sidebar-row-main.sidebar-row-depth-2 { padding-inline-start: 34px; }
+.sidebar-row-main.sidebar-row-depth-3 { padding-inline-start: 46px; }
+.sidebar-row-main.sidebar-row-depth-4 { padding-inline-start: 58px; }
+.sidebar-row-main.sidebar-row-depth-5 { padding-inline-start: 70px; }
+.sidebar-row-main.sidebar-row-depth-6 { padding-inline-start: 82px; }
 .sidebar-row-menu-host {
   position: absolute;
   top: 50%;
@@ -495,11 +504,9 @@
 .sidebar-row-menu-button:hover,
 .sidebar-row-menu-button:focus-visible,
 .sidebar-row-menu-host.is-open .sidebar-row-menu-button {
-  color: var(--cta-amber-ink);
-  background: var(--cta-amber-a);
-  border-color: var(--cta-amber-a);
-  transform: translateY(-1px);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15), 0 4px 10px color-mix(in srgb, var(--cta-amber-a) 20%, transparent);
+  color: var(--text);
+  background: var(--surface-3);
+  border-color: var(--border-strong);
   outline: none;
 }
 .sidebar-row-menu-host.is-open .sidebar-row-menu-button {
@@ -602,14 +609,10 @@
   color: var(--danger);
 }
 
-.sidebar-collapse-toggle,
-.theme-toggle-button{
+.sidebar-collapse-toggle {
   flex: 0 0 auto;
 }
 
-.theme-toggle-button {
-  min-width: 0;
-}
 
 
 .shell.app.sidebar-collapsed .sidebar {
@@ -859,22 +862,12 @@
 .realm-tree-node-button.active,
 .sidebar-nav-item:hover,
 .sidebar-nav-item.is-active {
-  border-color: color-mix(in srgb, var(--accent) 52%, var(--accent-2));
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--accent-2) 11%, transparent)),
-    var(--nav-soft);
+  border-color: var(--border);
+  background: var(--accent-soft);
 }
 
-.agent-mode-badge.is-public {
-  background: color-mix(in srgb, #16a085 24%, var(--ak-bg-soft));
-  color: var(--text, var(--ak-ink));
-  border: 1px solid color-mix(in srgb, #16a085 55%, transparent);
-}
-.agent-mode-badge.is-private {
-  background: color-mix(in srgb, #9b7bd4 26%, var(--ak-bg-soft));
-  color: var(--text, var(--ak-ink));
-  border: 1px solid color-mix(in srgb, #9b7bd4 55%, transparent);
-}
+.agent-mode-badge.is-public { color: var(--info-ink); background: var(--info-soft); }
+.agent-mode-badge.is-private { color: var(--text-2); background: var(--neutral-soft); }
 
 /* Semantic host layout and control integration. */
 /* A separate real agent disclosure button occupies the original trailing badge position. */
@@ -959,18 +952,19 @@
   min-height: 0;
   padding: 0 12px 12px;
   border-inline-end: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--surface-2);
   overflow: hidden;
 }
-.workspace-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: 0 0 auto; min-height: 52px; margin: 0; }
-.workspace-list-title { margin: 0; font-size: 16px; font-weight: 650; }
+.workspace-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 4px; flex: 0 0 auto; min-height: var(--topbar-h); margin: 0; }
+.workspace-list-title { margin: 0; font-size: var(--text-title); font-weight: var(--weight-semibold); line-height: var(--leading-tight); overflow-wrap: anywhere; }
 .workspace-list-heading .workspace-list-title { flex: 1; min-width: 0; }
-.workspace-list-heading .btn.icon, .workspace-list-heading .sidebar-toolbar-action, .workspace-list-heading .workspace-search-disclosure > .sapid-collapsible-trigger { display: grid; place-items: center; width: 30px; height: 30px; min-height: 30px; padding: 4px; flex: 0 0 30px; border: 0; background: transparent; color: var(--text-2); border-radius: 6px; }
-.workspace-list-heading .btn.icon:hover, .workspace-list-heading .sidebar-toolbar-action:hover, .workspace-list-heading .workspace-search-disclosure > .sapid-collapsible-trigger:hover { background: var(--surface-2); color: var(--text); }
+.workspace-list-heading .btn.icon, .workspace-list-heading .sidebar-toolbar-action, .workspace-list-heading .workspace-search-disclosure > .sapid-collapsible-trigger { display: grid; place-items: center; width: var(--control-md); height: var(--control-md); min-height: var(--control-md); padding: 0; flex: none; border: 0; box-shadow: none; background: transparent; color: var(--text-2); border-radius: 6px; }
+.workspace-list-heading .btn.icon:hover, .workspace-list-heading .sidebar-toolbar-action:hover, .workspace-list-heading .workspace-search-disclosure > .sapid-collapsible-trigger:hover { background: var(--hover-strong); color: var(--text); }
 .workspace-list-heading .ui-icon { width: 18px; height: 18px; }
 .workspace-list-rows { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
-.workspace-list .sidebar-nav-item { color: var(--text-2); }
-.workspace-list .sidebar-nav-item.is-active { color: var(--accent-ink); }
+.workspace-list .sidebar-nav-item { color: var(--text-2); background: transparent; border-color: transparent; }
+.workspace-list .sidebar-nav-item:hover { background: var(--hover); }
+.workspace-list .sidebar-nav-item.is-active { background: var(--accent-soft); color: var(--accent-ink); }
 .workspace-shell .realm-body:has(> .settings-page),
 .workspace-shell .realm-body:has(> .agent-admin-page),
 .workspace-shell .realm-body:has(> .contacts-page) { padding: 0; overflow: hidden; }
@@ -984,7 +978,7 @@
 .workspace-shell .settings-page > .settings-shell { flex: 1 1 0; height: auto; }
 .workspace-shell .settings-page .settings-sidebar-column,
 .workspace-shell .agent-admin-list-pane,
-.workspace-shell .contacts-list-pane { padding: 0 12px 12px; border: 0; border-inline-end: 1px solid var(--border); border-radius: 0; background: var(--bg); overflow-y: auto; min-height: 0; align-content: start; gap: 12px; }
+.workspace-shell .contacts-list-pane { padding: 0 12px 12px; border: 0; border-inline-end: 1px solid var(--border); border-radius: 0; background: var(--surface-2); overflow-y: auto; min-height: 0; align-content: start; gap: 12px; }
 .workspace-shell .contacts-list-pane,
 .workspace-shell .agent-admin-list-pane { display: flex; flex-direction: column; overflow: hidden; }
 .contacts-list-pane > .workspace-list-heading,
@@ -1033,6 +1027,7 @@
     grid-column: 1;
     grid-row: 2;
     flex-direction: row;
+    align-items: stretch;
     justify-content: space-around;
     width: 100%;
     height: auto;
@@ -1085,9 +1080,9 @@
 .workspace-shell.workspace-list-collapsed:not(.workspace-mobile) .settings-page > .settings-shell,
 .workspace-shell.workspace-list-collapsed:not(.workspace-mobile) .agent-admin-layout,
 .workspace-shell.workspace-list-collapsed:not(.workspace-mobile) .contacts-layout { grid-template-columns: minmax(0, 1fr); }
-.workspace-list-heading.workspace-navigation-heading { display: grid; grid-template-columns: minmax(0, 1fr) 30px; grid-template-rows: 52px auto; row-gap: 0; }
-.workspace-list-heading.workspace-navigation-heading-2 { grid-template-columns: minmax(0, 1fr) repeat(2, 30px); }
-.workspace-list-heading.workspace-navigation-heading-3 { grid-template-columns: minmax(0, 1fr) repeat(3, 30px); }
+.workspace-list-heading.workspace-navigation-heading { display: grid; grid-template-columns: minmax(0, 1fr) var(--control-md); grid-template-rows: minmax(var(--topbar-h), auto) auto; row-gap: 0; }
+.workspace-list-heading.workspace-navigation-heading-2 { grid-template-columns: minmax(0, 1fr) repeat(2, var(--control-md)); }
+.workspace-list-heading.workspace-navigation-heading-3 { grid-template-columns: minmax(0, 1fr) repeat(3, var(--control-md)); }
 .workspace-navigation-heading > :first-child,
 .workspace-navigation-heading > .btn,
 .workspace-navigation-heading > .sidebar-toolbar-action,
@@ -1109,37 +1104,41 @@
 }
 
 .rail-label { display: none; }
-@media (max-width: 860px) {
-  .navigation-rail .rail-link { flex: 0 0 68px; flex-direction: column; width: 68px; min-height: 64px; height: 64px; gap: 3px; padding: 4px; }
-  .navigation-rail .rail-label { display: block; font-size: 11px; line-height: 15px; font-weight: 600; }
-  .navigation-rail .rail-account .dot-online { top: 27px; bottom: auto; }
-}
-
-.desktop-chrome-actions { display: flex; align-items: center; gap: 6px; }
-.topbar-more, .theme-toggle-caption { display: none; }
-.topbar-more-panel {
-  display: grid; gap: 8px; padding: 10px;
-  width: min(260px, calc(100vw - 24px));
-  border: 1px solid var(--border); border-radius: 10px;
-  background: var(--surface-solid); color: var(--text); box-shadow: var(--shadow-lg);
-}
-.topbar-more-actions { display: grid; gap: 8px; }
-.topbar-more-panel .theme-toggle-caption { display: block; }
-.realm-header .actions .topbar-more-panel .theme-toggle-button,
-.topbar-more-panel .secondary {
-  display: flex; align-items: center; justify-content: flex-start; gap: 8px;
-  width: 100%; min-height: 44px; height: auto; padding: 8px 10px;
-  border: 1px solid var(--border); border-radius: 7px;
-  background: var(--surface-2); color: var(--text); font: inherit;
-}
-.topbar-more > .sapid-layer-root > .sapid-popover-trigger {
-  min-width: 36px; height: 36px; padding: 4px;
-  border: 1px solid var(--border-strong); border-radius: 7px;
-  background: var(--surface-2); color: var(--text); font: inherit;
+@media (min-width: 861px) {
+  .navigation-rail .rail-link { position: relative; }
+  .navigation-rail .rail-link:is(:hover, :focus-visible) .rail-label {
+    position: absolute;
+    inset-inline-start: calc(100% + 6px);
+    inset-block-start: 50%;
+    transform: translateY(-50%);
+    display: block;
+    width: max-content;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--surface-inv);
+    color: var(--text-inv);
+    font-size: var(--text-caption);
+    line-height: var(--leading-body);
+    pointer-events: none;
+  }
 }
 @media (max-width: 860px) {
-  .desktop-chrome-actions { display: none; }
-  .topbar-more { display: block; }
+  .navigation-rail .rail-link {
+    flex: 1 1 0;
+    flex-direction: column;
+    justify-content: flex-start;
+    width: auto;
+    max-width: 88px;
+    min-width: var(--control-lg);
+    min-height: 54px;
+    height: auto;
+    gap: 3px;
+    padding: 4px;
+  }
+  .navigation-rail .rail-icon { flex: 0 0 28px; height: 28px; }
+  .navigation-rail .rail-account-avatar { width: 28px; height: 28px; }
+  .navigation-rail .rail-label { display: block; max-width: 100%; font-size: var(--text-caption); line-height: var(--leading-tight); font-weight: var(--weight-medium); overflow-wrap: anywhere; text-align: center; }
+  .navigation-rail .rail-account .dot-online { top: 24px; inset-inline-start: calc(50% + 8px); right: auto; bottom: auto; }
   .workspace-shell .topbar { flex-wrap: nowrap; min-height: 56px; gap: 6px; }
   .workspace-shell .topbar > .topbar-left { flex: 1 1 0; min-width: 0; }
   .workspace-shell .topbar > .actions { width: max-content; flex: 0 0 auto; flex-wrap: nowrap; }

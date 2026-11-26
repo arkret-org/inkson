@@ -118,7 +118,6 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
                     title: context.tr("audit.empty_title"),
                     kind: crate::components::EmptyStateKind::Empty,
                     message: Some(context.tr("audit.empty_message")),
-                    badge_override: None,
                     test_id: Some("audit-empty".to_owned()),
                 },
             ));

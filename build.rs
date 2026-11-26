@@ -8,6 +8,8 @@
 //! current loose ref explicitly so a commit-only change cannot leave a fresh
 //! bundle stamped with the previous source identity.
 
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -48,6 +50,91 @@ fn build_style_bundle(manifest_dir: &Path) {
     fs::write(output.join("inkson.css"), combined).expect("write native stylesheet bundle");
 }
 
+// Sapid's typed paints cannot refer to CSS variables. Generate their values
+// from the same theme declarations that style the HTML and native documents.
+fn build_sapid_palettes(manifest_dir: &Path) {
+    let path = manifest_dir.join("src/styles/base/tokens.css");
+    println!("cargo:rerun-if-changed={}", path.display());
+    let source = fs::read_to_string(path).expect("read semantic color tokens");
+    let mut generated = String::new();
+    for (class, scheme) in [
+        (".inkson-theme-light", "Light"),
+        (".inkson-theme-dark", "Dark"),
+    ] {
+        let declarations = source
+            .split('}')
+            .filter_map(|rule| rule.split_once('{'))
+            .find(|(selectors, _)| {
+                selectors
+                    .split(',')
+                    .any(|selector| selector.trim() == class)
+            })
+            .unwrap_or_else(|| panic!("missing palette {class}"))
+            .1;
+        let colors: BTreeMap<_, _> = declarations
+            .split(';')
+            .filter_map(|declaration| declaration.split_once(':'))
+            .map(|(name, value)| (name.trim(), value.trim()))
+            .collect();
+        writeln!(
+            generated,
+            "pub const {}: sapid::Palette = sapid::Palette {{",
+            scheme.to_uppercase()
+        )
+        .unwrap();
+        for (field, token) in [
+            ("canvas", "--bg"),
+            ("surface", "--surface-solid"),
+            ("input", "--surface-solid"),
+            ("foreground", "--text"),
+            ("muted", "--text-2"),
+            ("border", "--border"),
+            ("accent", "--accent"),
+            ("accent_hover", "--accent-strong"),
+            ("accent_soft", "--accent-soft"),
+            ("accent_text", "--accent-ink"),
+            ("on_accent", "--text-on-accent"),
+            ("focus_ring", "--focus"),
+            ("input_focus", "--focus"),
+            ("success", "--success"),
+            ("success_soft", "--success-soft"),
+            ("danger", "--danger"),
+            ("danger_fill", "--danger"),
+            ("on_danger", "--text-on-accent"),
+            ("danger_soft", "--danger-soft"),
+            ("warning", "--warning"),
+            ("warning_soft", "--warning-soft"),
+            ("disabled", "--surface-3"),
+            ("disabled_text", "--text-3"),
+        ] {
+            let hex = colors
+                .get(token)
+                .and_then(|value| value.strip_prefix('#'))
+                .filter(|value| value.len() == 6)
+                .and_then(|value| u32::from_str_radix(value, 16).ok())
+                .unwrap_or_else(|| {
+                    panic!("{class} {token} must be a six-digit hex color for Sapid")
+                });
+            writeln!(
+                generated,
+                "    {field}: glory::style::Color({}, {}, {}, 255),",
+                hex >> 16,
+                hex >> 8 & 0xff,
+                hex & 0xff
+            )
+            .unwrap();
+        }
+        writeln!(
+            generated,
+            "    ..sapid::BLUE.resolve(sapid::ColorScheme::{scheme}).unwrap()
+}};"
+        )
+        .unwrap();
+    }
+    let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
+    fs::write(output.join("inkson_palettes.rs"), generated).expect("write Sapid palettes");
+}
+
 fn git_output(manifest_dir: &Path, args: &[&str]) -> Option<String> {
     Command::new("git")
         .args(args)
@@ -64,6 +151,7 @@ fn main() {
         std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
     );
     build_style_bundle(&manifest_dir);
+    build_sapid_palettes(&manifest_dir);
 
     #[cfg(feature = "desktop")]
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {

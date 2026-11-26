@@ -1,35 +1,40 @@
-/* ===================================================================
- * THEME TOKEN SOURCE OF TRUTH
- * -------------------------------------------------------------------
- * This file is the SINGLE source of truth for all theme tokens
- * (surfaces, lines, text, brand, semantic colors, radius, shadows,
- * fonts, layout widths, layers). It is loaded last of all stylesheets
- * (see src/app/mod.rs), so its declarations always win.
- * `design/tokens-reset-i18n.css` keeps ONLY the reset/base rules and
- * the i18n [data-lang] visibility rules — do not add tokens there.
- * ================================================================ */
+/* Shared type, control geometry and semantic colors for the web and desktop hosts.
+ * Use text for content, text-2 for supporting copy and text-3 for metadata.
+ * Use the accent for actions and selection. Status colors describe outcomes.
+ * A solid status fill takes text-on-accent; a soft fill takes its matching ink.
+ * Body is for reading, label for controls, caption for secondary metadata.
+ * Title identifies a pane or section, heading identifies a page or dialog.
+ * Use small controls in dense lists, medium in toolbars and forms, large for touch.
+ */
 
 :root {
-  /* Layout */
   --sidebar-w: 320px;
   --sidebar-collapsed-w: 72px;
   --right-pane-w: 340px;
   --topbar-h: 52px;
 
-  /* Radius */
-  --radius-sm: 6px;
-  --radius:    10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
-
-  /* Fonts */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI",
-               Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei",
-               sans-serif;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas,
                "Liberation Mono", monospace;
+  --text-caption: 0.75rem;
+  --text-label: 0.8125rem;
+  --text-body: 0.875rem;
+  --text-title: 1rem;
+  --text-heading: 1.25rem;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --leading-tight: 1.3;
+  --leading-body: 1.5;
 
-  /* Layering */
+  --control-sm: 28px;
+  --control-md: 36px;
+  --control-lg: 44px;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
   --layer-sticky: 10;
   --layer-local-scrim: 30;
   --layer-local-popover: 40;
@@ -39,164 +44,152 @@
   --layer-modal: 300;
   --layer-toast: 400;
   --layer-drag-shield: 900;
+  --scrim: rgba(16, 21, 25, 0.54);
 
-  /* Full-screen scrim behind modals/overlays (theme-static by design) */
-  --scrim: rgba(8, 13, 20, 0.64);
-
-  /* Amber CTA (deliberately theme-static: dark ink on amber reads in
-     both light and dark themes) */
-  --cta-amber-a: #ffb547;
-  --cta-amber-b: #ff8a3d;
-  --cta-amber-ink: #1a1a1a;
 }
 
 :root,
 [data-theme="light"],
 .inkson-theme-light {
-  --bg: #f6eee7;
-  --bg-elev: #ece2d9;
-  --surface: rgba(255, 250, 245, 0.94);
-  --surface-solid: #fffaf5;
-  --surface-2: #f6efe8;
-  --surface-3: #efe5dc;
-  --surface-inv: #18212f;
-  --hover: rgba(47, 39, 35, 0.04);
-  --hover-strong: rgba(47, 39, 35, 0.07);
-
-  --border: #e6d9cf;
-  --border-strong: #d8c7bb;
-  --border-faint: #f1e8df;
-
-  --text: #2f2723;
-  --text-2: #6f625a;
-  --text-3: #70645b;
-  --text-on-accent: #fffaf6;
-  --text-inv: #f8f2ee;
-
-  --accent: #9c4408;
-  --accent-strong: #843506;
-  --accent-soft: #fff4e6;
-  --accent-2: #a33a50;
-  --accent-ink: #7f3f02;
-  --primary: var(--accent);
-  --primary-strong: var(--accent-strong);
-  --primary-2: var(--accent-2);
-  --primary-foreground: var(--text-on-accent);
-  --focused-border-color: var(--accent);
-
-  --success: #246a58;
-  --success-soft: #e5f3ee;
-  --success-ink: #1f5d4f;
-  --warning: #855516;
-  --warning-soft: #fff4e1;
-  --warning-ink: #7a4f15;
-  --danger: #b43f23;
-  --danger-soft: #fce7e2;
-  --danger-ink: #8c331b;
-  --info: #4156ad;
-  --info-soft: #edf0ff;
-  --info-ink: #33479d;
-  --neutral-soft: #f1e9e2;
-
-  --proto-bg: #18141a;
-  --proto-fg: #efe8e1;
-  --proto-meta: #b6a49a;
-  --proto-accent: #f1c37d;
-
-  --shadow-xs: 0 1px 1px rgba(58, 41, 30, 0.05);
-  --shadow-sm: 0 1px 2px rgba(58, 41, 30, 0.06), 0 1px 1px rgba(58, 41, 30, 0.04);
-  --shadow-md: 0 8px 22px rgba(79, 57, 40, 0.10), 0 1px 2px rgba(58, 41, 30, 0.05);
-  --shadow-lg: 0 24px 56px rgba(79, 57, 40, 0.14);
-  --ring: 0 0 0 3px rgba(217, 119, 6, 0.18);
-
-  --page-glow-a: rgba(245, 158, 11, 0.10);
-  --page-glow-b: rgba(198, 91, 114, 0.08);
-  --page-glow-c: rgba(88, 111, 203, 0.07);
-
-  --nav-bg: #fff9f3;
-  --nav-bg-2: #f2e8df;
-  --nav-soft: rgba(255, 255, 255, 0.68);
-  --nav-border: #dfcec1;
-  --nav-text: #2f2723;
-  --nav-muted: #70645b;
-  --nav-label: #70645b;
-  --nav-input-bg: rgba(255, 250, 245, 0.86);
-  --nav-input-border: #d8c7bb;
-
   color-scheme: light;
+  --bg: #f6f7f7;
+  --bg-elev: #ebeef0;
+  --surface: #fefefd;
+  --surface-solid: #fefefd;
+  --surface-2: #f3f5f5;
+  --surface-3: #eaedee;
+  --surface-inv: #282e32;
+  --hover: rgba(35, 43, 48, 0.05);
+  --hover-strong: rgba(35, 43, 48, 0.09);
+
+  --border: #dce1e2;
+  --border-strong: #c3cacc;
+  --border-faint: #e8ebec;
+  --field-border: #7c878e;
+
+  --text: #24292c;
+  --text-2: #4e575c;
+  --text-3: #5f676e;
+  --text-on-accent: #ffffff;
+  --text-inv: #f5f7f8;
+
+  --accent: #a04a20;
+  --accent-strong: #823a18;
+  --accent-soft: #faeade;
+  --accent-ink: #823a18;
+  --accent-2: #884760;
+  --focus: #30689b;
+
+  --success: #186851;
+  --success-soft: #e2f1e9;
+  --success-ink: #205741;
+  --warning: #805411;
+  --warning-soft: #faf0d9;
+  --warning-ink: #6d4914;
+  --danger: #aa3d35;
+  --danger-soft: #fae9e6;
+  --danger-ink: #93372f;
+  --info: #365f95;
+  --info-soft: #e8f0f8;
+  --info-ink: #305480;
+
+  --proto-bg: #202529;
+  --proto-fg: #edf0f1;
+  --proto-meta: #b9c2c6;
+  --proto-accent: #efb68c;
+
+  --shadow-xs: 0 1px 1px rgba(26, 34, 39, 0.04);
+  --shadow-sm: 0 1px 3px rgba(26, 34, 39, 0.08);
+  --shadow-md: 0 4px 14px rgba(26, 34, 39, 0.10);
+  --shadow-lg: 0 12px 36px rgba(26, 34, 39, 0.16);
+  --page-glow-a: rgba(160, 74, 32, 0.03);
+  --page-glow-b: rgba(86, 100, 110, 0.03);
+  --page-glow-c: rgba(86, 100, 110, 0.02);
+
+  --nav-bg: #fefefd;
+  --nav-bg-2: #f1f3f3;
+  --nav-soft: #f4f6f6;
 }
 
 [data-theme="dark"],
 .inkson-theme-dark {
-  --bg: #101722;
-  --bg-elev: #223041;
-  --surface: rgba(27, 36, 48, 0.94);
-  --surface-solid: #1b2430;
-  --surface-2: #202b39;
-  --surface-3: #283546;
-  --surface-inv: #fffaf6;
-  --hover: rgba(255, 255, 255, 0.04);
-  --hover-strong: rgba(255, 255, 255, 0.08);
+  color-scheme: dark;
+  --bg: #171b1e;
+  --bg-elev: #292f33;
+  --surface: #202529;
+  --surface-solid: #202529;
+  --surface-2: #252c30;
+  --surface-3: #30373c;
+  --surface-inv: #e9edee;
+  --hover: rgba(233, 238, 241, 0.06);
+  --hover-strong: rgba(233, 238, 241, 0.10);
 
-  --border: #3a4454;
-  --border-strong: #4b586b;
-  --border-faint: #202938;
+  --border: #384146;
+  --border-strong: #4b565c;
+  --border-faint: #2e363b;
+  --field-border: #7e8a92;
 
-  --text: #f8f2ee;
-  --text-2: #cbbab1;
-  --text-3: #b5a096;
-  --text-on-accent: #2c170b;
-  --text-inv: #1c1e25;
+  --text: #eff1f1;
+  --text-2: #c7ced2;
+  --text-3: #a6b0b6;
+  --text-on-accent: #241c17;
+  --text-inv: #202529;
 
-  --accent: #f59e0b;
-  --accent-strong: #f7ae3a;
-  --accent-soft: rgba(245, 158, 11, 0.12);
-  --accent-2: #fb7185;
-  --accent-ink: #fde7ba;
+  --accent: #e7a67b;
+  --accent-strong: #f1bb96;
+  --accent-soft: #3f3028;
+  --accent-ink: #f2c5a9;
+  --accent-2: #d59aaf;
+  --focus: #8ebee4;
+
+  --success: #7cc5a4;
+  --success-soft: #253a32;
+  --success-ink: #abd6bd;
+  --warning: #dbb86e;
+  --warning-soft: #393326;
+  --warning-ink: #ebcf94;
+  --danger: #ee9a8e;
+  --danger-soft: #412d2c;
+  --danger-ink: #f3b8af;
+  --info: #95bce3;
+  --info-soft: #283644;
+  --info-ink: #b3d2ef;
+
+  --proto-bg: #161a1e;
+  --proto-fg: #eef0f1;
+  --proto-meta: #b2bdc3;
+  --proto-accent: #efb68c;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.18);
+  --shadow-sm: 0 2px 5px rgba(0, 0, 0, 0.20);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.34);
+  --page-glow-a: rgba(223, 162, 123, 0.03);
+  --page-glow-b: rgba(146, 167, 180, 0.03);
+  --page-glow-c: rgba(146, 167, 180, 0.02);
+
+  --nav-bg: #202529;
+  --nav-bg-2: #1c2124;
+  --nav-soft: #282f33;
+}
+
+/* Resolve aliases at each theme boundary, including nested native shells. */
+:root,
+[data-theme],
+.inkson-theme-light,
+.inkson-theme-dark {
   --primary: var(--accent);
   --primary-strong: var(--accent-strong);
   --primary-2: var(--accent-2);
   --primary-foreground: var(--text-on-accent);
-  --focused-border-color: var(--accent);
-
-  --success: #7bc9b5;
-  --success-soft: rgba(123, 201, 181, 0.16);
-  --success-ink: #d7f5ec;
-  --warning: #f0be78;
-  --warning-soft: rgba(240, 190, 120, 0.16);
-  --warning-ink: #fae7c2;
-  --danger: #ff7a59;
-  --danger-soft: rgba(255, 122, 89, 0.16);
-  --danger-ink: #ffd6cd;
-  --info: #a7b7ff;
-  --info-soft: rgba(167, 183, 255, 0.16);
-  --info-ink: #dce4ff;
-  --neutral-soft: #1f2a38;
-
-  --proto-bg: #0f1218;
-  --proto-fg: #f1e8e2;
-  --proto-meta: #b7a49c;
-  --proto-accent: #f2c98b;
-
-  --shadow-xs: 0 1px 1px rgba(4, 8, 14, 0.38);
-  --shadow-sm: 0 1px 2px rgba(4, 8, 14, 0.42);
-  --shadow-md: 0 10px 24px rgba(4, 8, 14, 0.32), 0 1px 2px rgba(4, 8, 14, 0.40);
-  --shadow-lg: 0 28px 64px rgba(4, 8, 14, 0.42);
-  --ring: 0 0 0 3px rgba(245, 158, 11, 0.26);
-
-  --page-glow-a: rgba(245, 158, 11, 0.14);
-  --page-glow-b: rgba(251, 113, 133, 0.12);
-  --page-glow-c: rgba(123, 201, 181, 0.08);
-
-  --nav-bg: #111827;
-  --nav-bg-2: #1a2230;
-  --nav-soft: rgba(255, 255, 255, 0.04);
-  --nav-border: rgba(245, 158, 11, 0.18);
-  --nav-text: #f8f2ee;
-  --nav-muted: #cbbab1;
-  --nav-label: #a89389;
-  --nav-input-bg: rgba(8, 12, 20, 0.56);
-  --nav-input-border: rgba(168, 147, 137, 0.18);
-
-  color-scheme: dark;
+  --focused-border-color: var(--focus);
+  --focus-ring: var(--focus);
+  --ring: 0 0 0 2px var(--focus);
+  --neutral-soft: var(--surface-3);
+  --nav-border: var(--border);
+  --nav-text: var(--text);
+  --nav-muted: var(--text-2);
+  --nav-label: var(--text-3);
+  --nav-input-bg: var(--surface-solid);
+  --nav-input-border: var(--border-strong);
 }

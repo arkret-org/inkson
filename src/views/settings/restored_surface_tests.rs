@@ -104,7 +104,17 @@ fn theme_has_one_localized_radio_group_and_reports_the_effective_system_theme() 
     app.flush().unwrap();
     class(&app, "theme-settings");
     class(&app, "language-settings");
-    class(&app, "theme-switcher");
+    let group = class(&app, "theme-switcher");
+    assert!(
+        app.tree()
+            .node(group)
+            .unwrap()
+            .descriptor
+            .view()
+            .classes
+            .iter()
+            .any(|class| class == "sapid-segmented-control")
+    );
     let radios = nodes(&app)
         .into_iter()
         .filter(|id| {
@@ -136,6 +146,13 @@ fn theme_has_one_localized_radio_group_and_reports_the_effective_system_theme() 
     app.dispatch(dark, Event::CheckedChanged(true)).unwrap();
     app.flush().unwrap();
     assert_eq!(context.theme.get_untracked(), "night");
+    assert_eq!(
+        context
+            .state_store
+            .read(|store| store.load_plain_local_data("theme"))
+            .as_deref(),
+        Some("night")
+    );
     assert!(
         matches!(app.tree().node(dark).unwrap().descriptor.view().props, Props::Check(value) if value.checked)
     );

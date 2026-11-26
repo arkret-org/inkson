@@ -1,10 +1,10 @@
 /* Shared presentation for the static entry and application loading stages. */
 .arkret-startup {
-  --startup-canvas: #fbf8f4;
-  --startup-ink: #2b1f33;
-  --startup-muted: #746878;
-  --startup-track: #e8ded7;
-  --startup-accent: #b45309;
+  --startup-canvas: #f6f7f7;
+  --startup-ink: #24292c;
+  --startup-muted: #5f676e;
+  --startup-track: #dce1e2;
+  --startup-accent: #a04a20;
   position: fixed;
   inset: 0;
   z-index: 2147483647;
@@ -23,20 +23,20 @@
 }
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]) .arkret-startup {
-    --startup-canvas: #171d1a;
-    --startup-ink: #edf1eb;
-    --startup-muted: #b0bbb3;
-    --startup-track: #354139;
-    --startup-accent: #e5a34d;
+    --startup-canvas: #171b1e;
+    --startup-ink: #eff1f1;
+    --startup-muted: #a6b0b6;
+    --startup-track: #384146;
+    --startup-accent: #e7a67b;
     color-scheme: dark;
   }
 }
 html[data-theme="dark"] .arkret-startup {
-  --startup-canvas: #171d1a;
-  --startup-ink: #edf1eb;
-  --startup-muted: #b0bbb3;
-  --startup-track: #354139;
-  --startup-accent: #e5a34d;
+  --startup-canvas: #171b1e;
+  --startup-ink: #eff1f1;
+  --startup-muted: #a6b0b6;
+  --startup-track: #384146;
+  --startup-accent: #e7a67b;
   color-scheme: dark;
 }
 .arkret-startup .startup-logo { display: block; width: 88px; height: 88px; flex-shrink: 0; }
@@ -74,19 +74,12 @@ html[data-theme="dark"] .arkret-startup {
   .arkret-startup .startup-spinner, .arkret-startup .startup-message { display: none; }
 }
 
-.inkson-root.inkson-theme-dark .arkret-startup {
-  --startup-canvas: #171d1a;
-  --startup-ink: #edf1eb;
-  --startup-muted: #b0bbb3;
-  --startup-track: #354139;
-  --startup-accent: #e5a34d;
-  color-scheme: dark;
+.inkson-root .arkret-startup {
+  --startup-canvas: var(--bg);
+  --startup-ink: var(--text);
+  --startup-muted: var(--text-3);
+  --startup-track: var(--border);
+  --startup-accent: var(--accent);
+  font-family: var(--font-sans);
 }
-.inkson-root.inkson-theme-light .arkret-startup {
-  --startup-canvas: #fbf8f4;
-  --startup-ink: #2b1f33;
-  --startup-muted: #746878;
-  --startup-track: #e8ded7;
-  --startup-accent: #b45309;
-  color-scheme: light;
-}
+.inkson-root .arkret-startup h1 { font-family: inherit; }

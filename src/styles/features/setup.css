@@ -188,11 +188,11 @@
 }
 /* These originally used the shared Secondary Button palette without a border. */
 .setup-step-list > button.setup-step.secondary:not(:disabled) {
-  border: 0; background: var(--inkson-original-control-surface);
-  color: var(--inkson-original-control-text); box-shadow: none;
+  border: 0; background: var(--surface-2);
+  color: var(--text); box-shadow: none;
 }
 .setup-step-list > button.setup-step.secondary:not(:disabled):hover {
-  background: color-mix(in oklab, var(--inkson-original-control-surface) 80%, transparent);
+  background: var(--surface-3);
 }
 .setup-step > .setup-step-index { grid-row: 1 / span 2; grid-column: 1; }
 .setup-step > .setup-step-title, .setup-step > .setup-step-subtitle {

@@ -75,18 +75,19 @@
   gap: 6px;
 }
 .settings-nav-group-label {
-  margin: 0 0 2px 4px;
-  color: var(--text-3, var(--ak-muted));
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  margin: 0 8px 2px;
+  color: var(--text-3);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
 }
 .settings-content-title {
   margin: 0;
-  color: var(--text, var(--ak-ink));
-  line-height: 1.08;
-  font-size: 26px;
+  color: var(--text);
+  font-size: var(--text-heading);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
 }
 .settings-content-title-row {
   display: flex;
@@ -104,33 +105,33 @@
 }
 .settings-nav-item {
   display: grid;
-  gap: 4px;
-  padding: 10px 4px;
-  border: 0;
-  border-radius: 0;
-  border-left: 2px solid transparent;
-  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
-  border-width: 0 0 0 2px;
+  min-width: 0;
+  min-height: var(--control-md);
+  align-content: center;
+  justify-items: start;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-inline-start-width: 2px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: inherit;
+  color: var(--text-2);
+  text-align: start;
   text-decoration: none;
-  box-shadow: none;
-  transition: border-color 140ms ease, background-color 140ms ease, padding-left 140ms ease;
 }
-.settings-nav-item strong {
-  color: var(--text, var(--ak-ink));
-  font-size: 13px;
-}
-.settings-nav-item:hover {
-  border-left-color: color-mix(in srgb, var(--accent) 48%, var(--border));
-  background: color-mix(in srgb, var(--accent-soft) 18%, transparent);
-  padding-left: 8px;
-}
+.settings-nav-item:hover { background: var(--hover); color: var(--text); }
 .settings-nav-item.active {
-  border-left-color: color-mix(in srgb, var(--accent) 82%, var(--border));
-  background: color-mix(in srgb, var(--accent-soft) 26%, transparent);
-  padding-left: 10px;
+  border-inline-start-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
 }
+.settings-nav-item:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.settings-nav-item-title {
+  font-size: var(--text-label);
+  line-height: var(--leading-tight);
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+}
+.settings-nav-item.active .settings-nav-item-title { font-weight: var(--weight-semibold); }
 .event.settings-content-hero {
   display: flex;
   align-items: center;
@@ -141,10 +142,6 @@
   border: 0;
   background: transparent;
   box-shadow: none;
-}
-.settings-content-hero .settings-content-title {
-  font-size: 18px;
-  line-height: 1.2;
 }
 .settings-card-grid {
   display: grid;
@@ -412,9 +409,9 @@ label.avatar-upload-button .ui-icon {
   max-height: calc(100vh - 48px);
   overflow: auto;
   padding: 18px;
-  border: 1px solid var(--border, #333);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg, 12px);
-  background: var(--surface-solid, var(--surface, #1a1d22));
+  background: var(--surface-solid);
   box-shadow: 0 0 0 9999px rgba(20, 22, 30, 0.55), var(--shadow-lg, 0 24px 56px rgba(0, 0, 0, 0.22));
 }
 .settings-avatar-crop-stage {
@@ -424,8 +421,8 @@ label.avatar-upload-button .ui-icon {
   justify-self: center;
   border-radius: 50%;
   overflow: hidden;
-  border: 1px solid var(--border-default, #333);
-  background: var(--bg-elevated, #1a1d22);
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
 }
 .settings-avatar-crop-controls {
   display: grid;
@@ -442,8 +439,6 @@ label.avatar-upload-button .ui-icon {
 /* Preserve the original Settings/Agent layouts with inline semantic controls.
    Logical Groups have no physical span wrapper, so their children carry the
    corresponding row/label classes directly. */
-.settings-nav-item { text-align: left; justify-items: start; }
-.settings-nav-item-title { color: var(--text, var(--ak-ink)); font-size: 13px; font-weight: 700; }
 .settings-avatar-card .settings-avatar-preview { width: 128px; height: 128px; font-size: 42px; }
 .settings-avatar-card .settings-avatar-preview .content-block-image,
 .settings-avatar-card .settings-avatar-preview .content-block-image img {
@@ -456,7 +451,6 @@ label.avatar-upload-button .ui-icon {
 .agent-admin-row-title { grid-column: 2 / -1; grid-row: 1; min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-admin-list-row > :nth-child(3) { grid-column: 2; grid-row: 2; justify-self: start; }
 .agent-admin-list-row > :nth-child(4) { grid-column: 3; grid-row: 2; justify-self: start; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-.agent-admin-row-id { grid-column: 1 / -1; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-admin-preset-copy { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 .agent-admin-preset-title, .agent-admin-section-title { font-weight: 700; }
 .agent-admin-preset-copy > .muted { white-space: normal; }
@@ -513,21 +507,11 @@ label.avatar-upload-button .ui-icon {
 /* A semantic text leaf replaces the original metric strong element. */
 .settings-server-metric-label { display: block; font-size: 12px; font-weight: 700; color: var(--text-2); margin-bottom: 4px; }
 
-/* Original control CSSOM: the default primary Button, avatar label, and
-   small secondary invitation Button each had a distinct size/variant. */
-.settings .settings-profile-save {
-  display: inline-flex; box-sizing: border-box; flex-shrink: 0; align-items: center; justify-content: center; gap: 8px;
-  height: 36px; min-height: 36px; padding: 8px 16px; border: 0; border-radius: 8px;
-  font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap;
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%); color: var(--primary-foreground);
-  box-shadow: 0 14px 28px color-mix(in srgb, var(--primary) 24%, transparent);
-}
-.settings .settings-profile-save:not(:disabled):hover { background: linear-gradient(135deg, var(--primary-strong) 0%, color-mix(in srgb, var(--primary-2) 92%, white) 100%); }
 .settings .settings-avatar-input.avatar-upload-button {
   display: inline-flex; box-sizing: border-box; align-items: center; justify-content: center; gap: 7px;
   min-height: 36px; width: fit-content; max-width: 100%; padding: 0 12px;
   border: 1px solid color-mix(in srgb, var(--border-strong) 92%, transparent); border-radius: 8px;
-  background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text);
+  background: var(--surface-2); color: var(--text);
   font-size: 13px; font-weight: 700; line-height: 1.2; text-decoration: none; cursor: pointer;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, white 4%, transparent);
   transition: background-color 120ms, border-color 120ms, color 120ms;
@@ -536,27 +520,21 @@ label.avatar-upload-button .ui-icon {
   display: inline-flex; box-sizing: border-box; flex-shrink: 0; align-items: center; justify-content: center; gap: 6px;
   height: 32px; min-height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border-strong);
   font-family: inherit; font-size: 13px; font-weight: 500; line-height: 20px; white-space: nowrap;
-  background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text); box-shadow: none;
+  background: var(--surface-2); color: var(--text); box-shadow: none;
 }
-.settings .settings-invite-locator-refresh:not(:disabled):hover { background-color: color-mix(in oklab, var(--inkson-original-control-surface) 80%, transparent); }
+.settings .settings-invite-locator-refresh:not(:disabled):hover { background-color: var(--surface-3); }
 
 /* Original Contact-row Buttons all used the default 36px size.
    Variant colors below follow their original primary/secondary metadata. */
-.contact-row :is(.contact-scope-save,.contact-petname-save,.contact-message,.contact-call-voice,.contact-call-video,.contact-block) {
+.contact-row :is(.contact-scope-save,.contact-petname-save,.contact-call-voice,.contact-call-video,.contact-block) {
   display: inline-flex; box-sizing: border-box; flex-shrink: 0; align-items: center; justify-content: center; gap: 8px;
   height: 36px; min-height: 36px; padding: 8px 16px; border: 0; border-radius: 8px;
   font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap;
 }
 .contact-row :is(.contact-scope-save,.contact-petname-save,.contact-call-voice,.contact-call-video) {
-  background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text); box-shadow: none;
+  background: var(--surface-2); color: var(--text); box-shadow: none;
 }
-.contact-row :is(.contact-scope-save,.contact-petname-save,.contact-call-voice,.contact-call-video):not(:disabled):hover { background-color: color-mix(in oklab, var(--inkson-original-control-surface) 80%, transparent); }
-.contact-row .contact-message {
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%); color: var(--primary-foreground);
-  box-shadow: 0 14px 28px color-mix(in srgb, var(--primary) 24%, transparent);
-}
-.contact-row .contact-message:not(:disabled):hover { background: linear-gradient(135deg, var(--primary-strong) 0%, color-mix(in srgb, var(--primary-2) 92%, white) 100%); }
-
+.contact-row :is(.contact-scope-save,.contact-petname-save,.contact-call-voice,.contact-call-video):not(:disabled):hover { background-color: var(--surface-3); }
 /* HelpTip used an inline span; its real semantic button must not add UA paint. */
 .help-tip:where([data-gly-kind=button]) { appearance: none; background: transparent; padding: 0; }
 
@@ -580,10 +558,6 @@ label.avatar-upload-button .ui-icon {
 /* The original status editor named these controls without additional visible field labels. */
 .privacy-settings :is(.presence-manual-state-select, .presence-status-expiry-select, .presence-status-message-input) > .sapid-field-label { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 
-/* Original Label and secondary Button palette, measured in both live baseline themes. */
-.inkson-theme-light { --inkson-original-control-surface: #ebf0eb; --inkson-original-control-text: #19211c; }
-.inkson-theme-dark { --inkson-original-control-surface: #223129; --inkson-original-control-text: #e7efe9; }
-
 /* Original Directory text used paragraph margins and named placeholder-only inputs. */
 .directory-panel > .directory-title { margin-block: .83em; }
 .directory-panel > .directory-description { margin-block: 1em; }
@@ -603,9 +577,9 @@ label.avatar-upload-button .ui-icon {
  display: inline-flex; box-sizing: border-box; align-items: center; justify-content: center; gap: 8px;
  height: 36px; min-height: 36px; padding: 8px 16px; border: 0; border-radius: 8px;
  font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap;
- background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text);
+ background: var(--surface-2); color: var(--text);
 }
-.consent-settings-panel :is(.consent-retry-button,.consent-read-complete-button,.consent-recover-original-button,.consent-request-submit-button):not(:disabled):hover { background-color: color-mix(in oklab, var(--inkson-original-control-surface) 80%, transparent); }
+.consent-settings-panel :is(.consent-retry-button,.consent-read-complete-button,.consent-recover-original-button,.consent-request-submit-button):not(:disabled):hover { background-color: var(--surface-3); }
 
 .consent-request-scope-input { width: fit-content; max-width: 100%; }
 .consent-request-scope-input > .sapid-field-label { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
@@ -621,12 +595,12 @@ label.avatar-upload-button .ui-icon {
  display: inline-flex; box-sizing: border-box; align-items: center; justify-content: center; gap: 8px;
  height: 36px; min-height: 36px; padding: 8px 16px; border: 0; border-radius: 8px;
  font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap;
- background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text);
+ background: var(--surface-2); color: var(--text);
 }
 
 /* The original MIMI facade groups its four probes and preserves literal preformatted results. */
 .mimi-interop-panel .mimi-result-text { display: block; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono, monospace); margin-block: 1em; }
-.mimi-interop-panel > .actions > button { box-sizing: border-box; height: 36px; min-height: 36px; padding: 8px 16px; border: 0; border-radius: 8px; font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap; background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text); }
+.mimi-interop-panel > .actions > button { box-sizing: border-box; height: 36px; min-height: 36px; padding: 8px 16px; border: 0; border-radius: 8px; font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap; background: var(--surface-2); color: var(--text); }
 
 /* Notification metrics retain their separate title and live Enabled/Muted label. */
 .settings-notification-kind-label { display: block; margin: 0 0 4px; font-weight: 700; font-size: 12px; color: var(--text-2); }
@@ -665,46 +639,37 @@ label.avatar-upload-button .ui-icon {
   .privacy-settings .realm-preference-picker > [data-gly-kind=text] { text-align: center; }
 }
 
-/* Semantic host layout and control integration. */
-/* Keep the official radio input and roving focus while matching the original
-   label-button presentation. The group name remains available to readers. */
-.theme-switcher.sapid-radio-group > [data-gly-kind=text] {
-  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
-  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+/* Appearance and language use the same labelled, keyboard-operated choice group. */
+.appearance-settings {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  align-items: start;
 }
-.theme-switcher > .sapid-radio-group-items { gap: 4px !important; }
-.theme-switcher .theme-switcher-option {
-  position: relative; display: inline-flex; box-sizing: border-box;
-  align-items: center; justify-content: center; flex: 0 0 auto;
-  height: 36px; min-height: 36px; padding: 8px 16px;
-  border: 0; border-radius: 8px; white-space: nowrap;
-  font-family: inherit; font-size: .85em; font-weight: 500; line-height: 20px;
-  background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text);
-  box-shadow: none;
+.appearance-settings > .event {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  margin: 0;
 }
-.theme-switcher .theme-switcher-option.primary { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
-.theme-switcher .theme-switcher-option input[type=radio] {
-  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0;
-  opacity: 0; cursor: pointer;
+/* Sapid owns the segment indicator, checked state and keyboard focus. */
+.settings-choice-group.sapid-segmented-control {
+  min-width: 0;
 }
-.theme-switcher .theme-switcher-option:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
-.theme-switcher .theme-switcher-option.secondary:hover { background: color-mix(in oklab, var(--inkson-original-control-surface) 80%, transparent); }
-
-/* Equal grid-card heights must not distribute the extra height into controls. */
-.theme-settings { align-content: start; }
-.language-settings > .actions { align-self: start; }
-.language-settings .settings-language-choice {
-  display: inline-flex; box-sizing: border-box; align-items: center; justify-content: center;
-  flex: 0 0 auto; align-self: start; height: 36px; min-height: 36px;
-  padding: 8px 16px; border: 0; border-radius: 8px;
-  font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap;
+.settings-choice-group > [data-gly-kind=text] {
+  color: var(--text);
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
 }
-.language-settings .settings-language-choice.secondary { background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text); box-shadow: none; }
-.language-settings .settings-language-choice.primary {
-  background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent);
+.settings-choice-group .sapid-segment {
+  min-height: var(--control-md);
 }
-
-
-@media (max-width: 768px) {
-  .theme-switcher .theme-switcher-option, .language-settings .settings-language-choice { min-height: 44px; height: auto; }
+.theme-effective-description {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-label);
+}
+@media (pointer: coarse) {
+  .settings-choice-group .sapid-segment, .settings-nav-item { min-height: var(--control-lg); }
+}
+@media (forced-colors: active) {
+  .settings-nav-item.active { border-color: Highlight; }
 }

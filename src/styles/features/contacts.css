@@ -88,3 +88,21 @@
   gap: 8px;
   flex-wrap: wrap;
 }
+
+.contact-status-hidden { display: none; }
+.contacts-list-pane .contacts-empty-state, .contacts-filtered-state, .contact-status .contacts-empty-state {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 24px 8px;
+  border: 0;
+  background: transparent;
+  text-align: center;
+}
+.contacts-empty-state .members-empty-title { margin: 0; font-size: var(--text-body); font-weight: var(--weight-semibold); }
+.contacts-list-pane .contact-list-item:hover { background: var(--hover-strong); }
+.contacts-list-pane .contact-list-item.is-active { background: var(--accent-soft); font-weight: var(--weight-semibold); }
+.contact-list-item .contact-list-name { white-space: nowrap; }
+.contact-row-status:empty { display: none; }

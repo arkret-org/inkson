@@ -2,37 +2,66 @@ use super::*;
 
 pub(super) fn palette_destinations() -> Vec<(&'static str, &'static str, Route)> {
     vec![
-        ("Home", "overview, recent activity", Route::Dashboard),
         (
-            "Notifications",
-            "inbox, mentions, approvals",
+            "route.dashboard",
+            "home overview recent activity",
+            Route::Dashboard,
+        ),
+        ("route.contacts", "contacts people", Route::Contacts),
+        (
+            "settings.section.agents",
+            "agents bots",
+            Route::SettingsSection {
+                section: "agents".into(),
+                filter: String::new(),
+            },
+        ),
+        (
+            "route.notifications",
+            "notifications inbox mentions approvals",
             Route::Notifications,
         ),
-        ("Search", "messages across realms", Route::Search),
-        ("Directory", "search realms, orgs, actors", Route::Directory),
         (
-            "Onboarding",
-            "DID, handle, device, recovery",
+            "search.title",
+            "search messages across realms",
+            Route::Search,
+        ),
+        (
+            "nav.directory",
+            "directory search realms orgs actors",
+            Route::Directory,
+        ),
+        (
+            "route.onboarding",
+            "onboarding DID handle device recovery",
             Route::Onboarding,
         ),
         (
-            "Settings",
-            "account, encryption, push, server",
+            "route.settings",
+            "settings account encryption push server",
             Route::Settings,
         ),
         (
-            "Recovery",
-            "Recovery Key (24 words)",
+            "route.settings.theme",
+            "appearance theme light dark system locale language",
+            Route::SettingsSection {
+                section: "theme".into(),
+                filter: String::new(),
+            },
+        ),
+        (
+            "route.recovery",
+            "recovery key 24 words",
             Route::SettingsRecovery,
         ),
         (
-            "Quarantine",
-            "review held invites (admin)",
+            "route.quarantine",
+            "quarantine review held invites admin",
             Route::Quarantine,
         ),
         (
-            "New Realm",
-            "create security boundary",
+            "route.setup_realms",
+            "new realm create security boundary",
             Route::SetupSection {
                 section: "realms".into(),
             },
@@ -55,14 +84,15 @@ pub(super) fn close_palette(ui: &super::shell_state::ShellState) {
 }
 
 pub(super) fn search_trigger(
-    _scope: &glory::Scope,
+    scope: &glory::Scope,
+    context: &crate::presentation::InksonContext,
     ui: std::rc::Rc<super::shell_state::ShellState>,
 ) -> crate::presentation::View {
     Box::new(
         sapid::button()
             .unstyled()
             .class("btn icon command-palette-trigger")
-            .name("Search")
+            .name(context.translated(scope, "sidebar.search"))
             .fill(crate::components::ui_icon("search"))
             .on_press(move || {
                 if ui.search_open.get_untracked() {
@@ -119,17 +149,13 @@ pub(super) fn command_palette(
                     },
                 );
             }
-            for (index, (label, hint, route)) in palette_destinations()
-                .into_iter()
-                .enumerate()
-                .filter(|(_, (label, hint, _))| palette_filter(&query, &format!("{label} {hint}")))
-            {
+            for (index, (key, keywords, route)) in palette_destinations().into_iter().enumerate() {
+                let label = context.tr(key);
+                if !palette_filter(&query, &format!("{label} {keywords}")) {
+                    continue;
+                }
                 let key = format!("destination-{index}");
-                actions.push(
-                    sapid::command_action(key.clone(), label)
-                        .description(hint)
-                        .group("destinations"),
-                );
+                actions.push(sapid::command_action(key.clone(), label).group("destinations"));
                 targets.insert(key, route);
             }
             let results = sapid::CommandResults {
@@ -150,7 +176,7 @@ pub(super) fn command_palette(
         sapid::command("global-command-palette")
             .unstyled()
             .class("command-palette")
-            .label("Command palette")
+            .label(context.translated(scope, "command_palette.title"))
             .open(ui.search_open)
             .search(ui.search_query)
             .results(results)

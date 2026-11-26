@@ -758,7 +758,6 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, pair_mode: bool) -
                     title: context.tr("settings.devices.empty_title"),
                     kind: crate::components::EmptyStateKind::Empty,
                     message: Some(context.tr("settings.devices.empty_message")),
-                    badge_override: None,
                     test_id: Some("device-list-empty".into()),
                 },
             );

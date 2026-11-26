@@ -52,6 +52,7 @@ pub(super) fn install(
         let state_store_for_secure_upgrade = state_store;
         let secure_store_ready_for_upgrade = secure_store_bootstrap_ready;
         let token_for_secure_upgrade = token;
+        let theme = context.theme;
         if let Err(error) = scope.spawn(async move {
             crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
             trace_secure_store_bootstrap_stage("start backend initialization");
@@ -74,6 +75,10 @@ pub(super) fn install(
                     // state) and before `secure_store_bootstrap_ready` is published
                     // so the account state is authoritative before session/connect.
                     state_store_for_secure_upgrade.write(|store| store.hydrate_active_account_state_from_secure_store(secure_store.as_ref()));
+                    let restored_theme = state_store_for_secure_upgrade.read(stored_theme_preference);
+                    if theme.get_untracked() != restored_theme {
+                        theme.revise(|current| *current = restored_theme);
+                    }
                     trace_secure_store_bootstrap_stage("active account state hydrated");
                     let hydrated = state_store_for_secure_upgrade.write(|store| store.hydrate_e2ee_plaintext_cache_with_secure_store(secure_store.as_ref()));
                     if let Err(error) = hydrated {

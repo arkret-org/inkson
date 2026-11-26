@@ -293,6 +293,18 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.ui.no_board_selected", "No board selected");
     dict.set("kanban.ui.no_description", "No description");
     dict.set("kanban.ui.no_lists_yet", "No lists yet");
+    dict.set(
+        "kanban.ui.choose_realm_hint",
+        "Choose a Realm to open its boards.",
+    );
+    dict.set(
+        "kanban.ui.choose_board_hint",
+        "Select or create a board above.",
+    );
+    dict.set(
+        "kanban.ui.add_list_hint",
+        "Add a list to start adding cards.",
+    );
     dict.set("kanban.ui.no_members_match", "No members match");
     dict.set(
         "kanban.ui.no_occurrences_in_the_next_90_days",
@@ -418,7 +430,7 @@ pub fn english_translations() -> TranslationDict {
         "settings.section.capabilities",
         "Review granted permissions",
     );
-    dict.set("settings.section.theme", "Appearance & locale");
+    dict.set("settings.section.theme", "Appearance & language");
     dict.set("settings.section.release", "Release status");
     dict.set("settings.section.audit", "Audit log");
     dict.set("settings.section.developer", "Developer tools");
@@ -863,7 +875,6 @@ pub fn english_translations() -> TranslationDict {
         "settings.handle.issuer_link_unavailable",
         "Issuer link unavailable",
     );
-    dict.set("settings.theme.badge", "appearance");
     dict.set("settings.theme.light", "Light");
     dict.set("settings.theme.night", "Dark");
     dict.set("settings.theme.system", "Follow system");
@@ -984,6 +995,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("notifications.load_more", "Load more");
     dict.set("directory.load_more_realms", "Load More Realms");
 
+    dict.set("command_palette.title", "Command palette");
     dict.set("command_palette.realms", "Realms");
     dict.set("command_palette.jump_to", "Jump to");
     dict.set(
@@ -991,7 +1003,6 @@ pub fn english_translations() -> TranslationDict {
         "No matching Realms or views. Press Esc to close.",
     );
     dict.set("command_palette.close", "Close (Esc)");
-
 
     // Kanban / Board view (header + section labels)
     dict.set("kanban.board_header", "Board");
@@ -1803,6 +1814,8 @@ pub fn english_translations() -> TranslationDict {
     dict.set("contact.unpinned", "Unpinned Contact");
     dict.set("realm.add_member", "Add Member");
     dict.set("realm.settings", "Settings");
+    dict.set("realm.security_encrypted_title", "Encrypted Realm");
+    dict.set("realm.security_plaintext_title", "Unencrypted Realm");
     dict.set("realm.security_unknown", "Encryption status unknown");
     dict.set(
         "realm.security_unknown_title",
@@ -2987,20 +3000,34 @@ pub fn english_translations() -> TranslationDict {
 
     dict.set("login.station_help", "This Station directs you to its account sign-in service. You can enter a self-hosted Station address.");
     dict.set("settings.theme.effective", "Currently using: {theme}");
-    dict.set("app.nav.more", "More");
-    dict.set("theme.switch_to_light", "Switch to light theme");
-    dict.set("theme.switch_to_dark", "Switch to dark theme");
-    dict.set("agents.empty.loading", "Loading your agents…");
+    dict.set("agents.empty.loading", "Loading agents…");
+    dict.set("agents.empty.failed", "Couldn’t load agents");
+    dict.set("agents.empty.sign_in", "Sign in to view your agents");
+    dict.set("agents.empty.filtered", "No matching agents");
+    dict.set("agents.empty.none", "No agents yet");
+    dict.set("agents.filter.all", "All");
+    dict.set("agents.create", "Create agent");
+    dict.set("agents.refresh", "Refresh agents");
+    dict.set("agents.lifecycle", "Lifecycle");
+    dict.set("agents.content_capabilities", "Content capabilities");
+    dict.set("agents.runtime_services", "Runtime services");
+    dict.set("agents.enabled", "Agent enabled");
+    dict.set("agents.setup_incomplete", "Setup incomplete");
+    dict.set("agents.expired", "Expired");
     dict.set(
-        "agents.empty.failed",
-        "Agents could not be loaded. Try again without changing your current setup.",
+        "agents.pairing_expired_help",
+        "Pair again to get a new code and QR link.",
     );
-    dict.set("agents.empty.sign_in", "Sign in to view your agents.");
-    dict.set("agents.empty.filtered", "No agents match these filters.");
     dict.set(
-        "agents.empty.none",
-        "No agents yet. Create an Agent, then pair its runtime.",
+        "agents.services_required",
+        "Choose at least one runtime service.",
     );
+    dict.set("agents.slug", "Agent name (slug)");
+    dict.set(
+        "agents.slug_help",
+        "Use up to 64 characters. A name like research-team works.",
+    );
+    dict.set("agents.created", "Created");
     dict.set("agents.clear_filters", "Clear filters");
     dict.set("onboarding.stage.identity", "Prepare identity");
     dict.set("onboarding.stage.material", "Save recovery material");
@@ -3179,10 +3206,6 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.retry", "Retry");
     dict.set("contacts.loading", "Loading contacts…");
     dict.set("contacts.empty_title", "No contacts yet");
-    dict.set(
-        "contacts.empty_hint",
-        "Add a contact to send a friend request — they'll show up here once it's accepted.",
-    );
     dict.set("contacts.empty_add", "Add a contact");
 
     dict.set("settings.section.contacts", "Contact permissions");
@@ -4422,7 +4445,7 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.settings.invite_policy", "Who can invite me");
     dict.set("route.settings.blocklist", "Blocked actors");
     dict.set("route.settings.capabilities", "Capabilities");
-    dict.set("route.settings.theme", "Appearance & locale");
+    dict.set("route.settings.theme", "Appearance & language");
     dict.set("route.settings.release", "Diagnostics");
 }
 
@@ -4739,8 +4762,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "app.account.switch_failed",
         "Account switching failed. Your saved accounts have been retained. Please retry.",
     );
-    dict.set("theme.switch_to_light", "Switch to light theme");
-    dict.set("theme.switch_to_night", "Switch to night theme");
     dict.set("account.not_signed_in", "Not signed in");
     dict.set("visibility.pill_title", "Who can find and see this");
     dict.set("moderation.workbench_aria_label", "Moderation decisions");

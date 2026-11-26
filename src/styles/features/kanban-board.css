@@ -139,30 +139,17 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border: 1px solid color-mix(in srgb, var(--accent, var(--ak-brand)) 42%, var(--border-strong, var(--ak-line-strong)));
-  border-radius: 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   padding: 0 10px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent, var(--ak-brand)) 16%, var(--surface, var(--ak-surface))), var(--surface, var(--ak-surface)));
-  color: var(--text, var(--ak-ink));
-  font-size: 13px;
-  font-weight: 750;
+  background: var(--surface-solid);
+  color: var(--text);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
   cursor: pointer;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 7%, transparent);
 }
-
-.board-select-menu-host .sapid-popover-trigger:hover {
-  border-color: color-mix(in srgb, var(--accent, var(--ak-brand)) 70%, var(--border-strong, var(--ak-line-strong)));
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent, var(--ak-brand)) 22%, var(--surface, var(--ak-surface))), var(--surface, var(--ak-surface)));
-}
-
-.board-select-menu-host .sapid-popover-trigger:focus-visible,
-.board-select-menu-host .sapid-popover-trigger[aria-expanded=true] {
-  outline: none;
-  border-color: var(--accent, var(--ak-brand));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, var(--ak-brand)) 18%, transparent);
-}
+.board-select-menu-host .sapid-popover-trigger:hover { background: var(--surface-2); }
+.board-select-menu-host .sapid-popover-trigger[aria-expanded=true] { border-color: var(--focus); }
 
 .board-select-menu-host .sapid-popover-trigger .ui-icon:first-child {
   flex: 0 0 auto;

@@ -79,7 +79,6 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
                     title: context.tr("developer.section.events"),
                     kind: crate::components::EmptyStateKind::Empty,
                     message: Some("No raw operations recorded yet.".to_owned()),
-                    badge_override: None,
                     test_id: Some("developer-raw-events-empty".to_owned()),
                 },
             ));

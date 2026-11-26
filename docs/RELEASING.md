@@ -14,9 +14,9 @@ This checklist continues to describe local desktop and evidence operations.
 
 - A clean inkson worktree except for deliberate release changes.
 - Sibling `../arkret-rust-sdk`, `../garth`, and `../chime` checkouts matching
-  the local release plan. Glory and Sapid are public Git dependencies from
-  `glory-rs/glory` and `sapid-ui/sapid`, both on `main`; `Cargo.lock` pins
-  the exact commits. Local sibling UI overrides are rejected by the build helper.
+  the local release plan. `Cargo.toml` and `Cargo.lock` pin the published
+  crates.io versions of Glory and Sapid. `scripts/ui_dependencies.py` verifies
+  their resolved versions, registry source and the bundled Sapid stylesheet.
 - Python 3 and the `wasm-bindgen-cli` version resolved by `Cargo.lock`.
 - Docker for web image evidence.
 - Optional local signing tools:

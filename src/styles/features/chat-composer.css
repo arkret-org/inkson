@@ -363,9 +363,9 @@
  * The native disabled attribute continues to refuse authoring meanwhile. */
 .discussion-composer [class~="send-chat-button"][class~="send-readiness-checking"]:disabled,
 .discussion-composer [class~="send-chat-button"][class~="send-readiness-checking"]:disabled:hover {
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%) !important;
+  background: var(--primary) !important;
   color: var(--primary-foreground) !important;
-  box-shadow: 0 14px 28px color-mix(in srgb, var(--primary) 24%, transparent) !important;
+  box-shadow: none !important;
   cursor: progress !important;
 }
 

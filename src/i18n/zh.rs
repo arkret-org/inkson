@@ -400,6 +400,12 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.ui.no_board_selected", "尚未选择看板");
     dict.set("kanban.ui.no_description", "暂无描述");
     dict.set("kanban.ui.no_lists_yet", "暂无列表");
+    dict.set(
+        "kanban.ui.choose_realm_hint",
+        "选择一个 Realm，查看其中的看板。",
+    );
+    dict.set("kanban.ui.choose_board_hint", "在上方选择或创建看板。");
+    dict.set("kanban.ui.add_list_hint", "添加列表后即可创建卡片。");
     dict.set("kanban.ui.no_members_match", "没有匹配的成员");
     dict.set(
         "kanban.ui.no_occurrences_in_the_next_90_days",
@@ -587,6 +593,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("notifications.load_more", "加载更多");
     dict.set("directory.load_more_realms", "加载更多 Realm");
 
+    dict.set("command_palette.title", "命令面板");
     dict.set("command_palette.realms", "Realm");
     dict.set("command_palette.jump_to", "跳转到");
     dict.set(
@@ -594,7 +601,6 @@ pub fn chinese_translations() -> TranslationDict {
         "未找到匹配的 Realm 或视图。按 Esc 关闭。",
     );
     dict.set("command_palette.close", "关闭 (Esc)");
-
 
     // Kanban / Board view
     dict.set("kanban.board_header", "看板");
@@ -1052,7 +1058,6 @@ pub fn chinese_translations() -> TranslationDict {
         "settings.handle.issuer_link_unavailable",
         "签发方链接不可用",
     );
-    dict.set("settings.theme.badge", "外观");
     dict.set("settings.theme.light", "浅色");
     dict.set("settings.theme.night", "深色");
     dict.set("settings.theme.system", "跟随系统");
@@ -1721,6 +1726,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm.unpinned", "已取消置顶 Realm");
     dict.set("realm.add_member", "添加成员");
     dict.set("realm.settings", "设置");
+    dict.set("realm.security_encrypted_title", "已加密的 Realm");
+    dict.set("realm.security_plaintext_title", "未加密的 Realm");
     dict.set("realm.security_unknown", "加密状态未知");
     dict.set(
         "realm.security_unknown_title",
@@ -2731,20 +2738,31 @@ pub fn chinese_translations() -> TranslationDict {
         "账号服务器（Station）会引导你前往账号登录服务，也可填写自托管地址。",
     );
     dict.set("settings.theme.effective", "当前生效：{theme}");
-    dict.set("app.nav.more", "更多");
-    dict.set("theme.switch_to_light", "切换到浅色主题");
-    dict.set("theme.switch_to_dark", "切换到深色主题");
-    dict.set("agents.empty.loading", "正在加载你的 Agent…");
+    dict.set("agents.empty.loading", "正在加载 Agent…");
+    dict.set("agents.empty.failed", "无法加载 Agent");
+    dict.set("agents.empty.sign_in", "登录后即可查看 Agent");
+    dict.set("agents.empty.filtered", "没有匹配的 Agent");
+    dict.set("agents.empty.none", "还没有 Agent");
+    dict.set("agents.filter.all", "全部");
+    dict.set("agents.create", "创建 Agent");
+    dict.set("agents.refresh", "刷新 Agent 列表");
+    dict.set("agents.lifecycle", "生命周期");
+    dict.set("agents.content_capabilities", "内容权限");
+    dict.set("agents.runtime_services", "运行端服务");
+    dict.set("agents.enabled", "启用 Agent");
+    dict.set("agents.setup_incomplete", "设置未完成");
+    dict.set("agents.expired", "已过期");
     dict.set(
-        "agents.empty.failed",
-        "未能加载 Agent，可以重试；现有设置没有改变。",
+        "agents.pairing_expired_help",
+        "重新配对以获取新的配对码和二维码。",
     );
-    dict.set("agents.empty.sign_in", "登录后可查看你的 Agent。");
-    dict.set("agents.empty.filtered", "没有符合这些条件的 Agent。");
+    dict.set("agents.services_required", "请至少选择一项运行端服务。");
+    dict.set("agents.slug", "Agent 名称（标识）");
     dict.set(
-        "agents.empty.none",
-        "还没有 Agent。先创建，再配对其运行端。",
+        "agents.slug_help",
+        "请使用最多 64 个字符，例如 research-team。",
     );
+    dict.set("agents.created", "创建时间");
     dict.set("agents.clear_filters", "清除筛选");
     dict.set("onboarding.stage.identity", "准备身份");
     dict.set("onboarding.stage.material", "保存恢复材料");
@@ -2901,10 +2919,6 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.retry", "重试");
     dict.set("contacts.loading", "正在加载联系人…");
     dict.set("contacts.empty_title", "还没有联系人");
-    dict.set(
-        "contacts.empty_hint",
-        "点击“添加联系人”发送一个好友请求,对方接受后就会出现在这里。",
-    );
     dict.set("contacts.empty_add", "添加联系人");
 
     dict.set("settings.section.contacts", "联系人权限");
@@ -4065,8 +4079,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "app.account.switch_failed",
         "账号切换失败，已保存的账号已保留，请重试。",
     );
-    dict.set("theme.switch_to_light", "切换到浅色主题");
-    dict.set("theme.switch_to_night", "切换到深色主题");
     dict.set("account.not_signed_in", "尚未登录");
     dict.set("visibility.pill_title", "谁可以找到并看到它");
     dict.set("moderation.workbench_aria_label", "内容处置");

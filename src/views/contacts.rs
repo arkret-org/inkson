@@ -1465,6 +1465,7 @@ fn contact_list_rows(
                     "contact-list-item"
                 })
                 .name(name)
+                .pressed(current == id)
                 .fill(vec![
                     contact_list_text(
                         "contact-list-avatar",
@@ -1492,7 +1493,10 @@ fn contact_list_rows(
         ) as View);
     }
     for agent in list_agents {
-        if !query.is_empty() && !agent.label.to_lowercase().contains(&query) {
+        if !query.is_empty()
+            && !agent.label.to_lowercase().contains(&query)
+            && !agent.identity.to_lowercase().contains(&query)
+        {
             continue;
         }
         let id = agent.key.clone();
@@ -1505,6 +1509,7 @@ fn contact_list_rows(
                     "contact-list-item contact-agent-list-item"
                 })
                 .name(agent.label.clone())
+                .pressed(current == id)
                 .fill(vec![
                     crate::components::ui_icon("bot"),
                     contact_list_text("contact-list-name", agent.label.clone()),
@@ -1582,6 +1587,33 @@ fn live_contact_view(
             render(scope, result.clone(), rows)
         })
     })
+}
+
+// Keep the list action reachable when the detail pane is the only visible pane.
+fn contact_status(scope: &Scope, context: &InksonContext, in_detail: bool, content: View) -> View {
+    if !in_detail {
+        return content;
+    }
+    let navigation = context.workspace_navigation.clone();
+    let hidden = scope.bond(move || navigation.pane_visible(false));
+    Box::new(
+        glory::ui::view()
+            .class(scope.bond(move || {
+                if hidden.get() {
+                    "contact-status-hidden"
+                } else {
+                    "contact-status"
+                }
+                .to_owned()
+            }))
+            .semantics(scope.bond(move || {
+                Some(Box::new(glory::render::Semantics {
+                    hidden: hidden.get(),
+                    ..Default::default()
+                }))
+            }))
+            .fill(content),
+    )
 }
 
 fn contacts_panel_with_header(
@@ -1687,7 +1719,7 @@ fn contacts_panel_with_header(
                         "muted contacts-loading",
                         ctx.translated(scope, "contacts.loading"),
                     );
-                    return loading;
+                    return contact_status(scope, &ctx, !advanced && detail_side, loading);
                 }
                 Some(Err(error)) => {
                     let error = stack(
@@ -1705,7 +1737,7 @@ fn contacts_panel_with_header(
                             ),
                         ],
                     );
-                    return error;
+                    return contact_status(scope, &ctx, !advanced && detail_side, error);
                 }
                 Some(Ok(agents)) => agents,
             };
@@ -1768,17 +1800,6 @@ fn contacts_panel_with_header(
                             "members-empty-title",
                             ctx.translated(scope, "contacts.empty_title"),
                         ),
-                        paragraph(
-                            "muted members-empty-hint",
-                            ctx.translated(
-                                scope,
-                                if advanced {
-                                    "contacts.settings.empty"
-                                } else {
-                                    "contacts.empty_hint"
-                                },
-                            ),
-                        ),
                         if !advanced {
                             action(
                                 scope,
@@ -1790,15 +1811,14 @@ fn contacts_panel_with_header(
                                 move || modal.revise(|v| *v = true),
                             )
                         } else {
-                            empty()
+                            paragraph(
+                                "muted members-empty-hint",
+                                ctx.translated(scope, "contacts.settings.empty"),
+                            )
                         },
                     ],
                 );
-                return if advanced || !detail_side {
-                    empty_state
-                } else {
-                    empty()
-                };
+                return contact_status(scope, &ctx, !advanced && detail_side, empty_state);
             }
             if advanced {
                 return stack(

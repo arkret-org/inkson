@@ -3,7 +3,7 @@
 /* Modal overlay */
 .modal-backdrop {
   position: fixed; inset: 0;
-  background: rgba(8, 13, 20, 0.72);
+  background: var(--scrim);
   display: grid; place-items: center;
   z-index: var(--layer-modal);
   backdrop-filter: blur(2px);
@@ -23,11 +23,11 @@
   border-bottom: 1px solid var(--border);
   display: flex; align-items: center; gap: 10px;
 }
-.modal .modal-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.modal .modal-head h3 { margin: 0; font-size: var(--text-title); font-weight: var(--weight-semibold); }
 .modal .modal-head .close { margin-left: auto; }
 .modal .modal-body { padding: 18px; }
 .modal .modal-foot {
   padding: 12px 18px;
   border-top: 1px solid var(--border);
-  display: flex; justify-content: flex-end; gap: 8px;
+  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px;
 }

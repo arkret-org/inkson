@@ -747,7 +747,7 @@
 
 .participant-badge.self {
   background: var(--accent);
-  color: var(--cta-amber-ink);
+  color: var(--text-on-accent);
 }
 
 .participant-badge.admin {

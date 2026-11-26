@@ -831,69 +831,58 @@ fn theme_page(scope: &Scope, context: Rc<InksonContext>) -> View {
     });
     let theme = context.theme;
     let locale_state = context.locale;
-    let mut languages = Vec::new();
-    for locale in [UiLocale::En, UiLocale::Zh] {
-        let change = context.clone();
-        let class = scope.bond(move || {
-            format!(
-                "button settings-language-choice {}",
-                if locale_state.get() == locale {
-                    "primary"
-                } else {
-                    "secondary"
-                }
+    let system_theme = context.system_theme_is_night;
+    let system_mode = scope.bond(move || {
+        crate::components::ThemeMode::from_persisted_str(&theme.get())
+            == crate::components::ThemeMode::System
+    });
+    let effective_theme = reactive_distinct(system_mode, {
+        let context = context.clone();
+        move |scope, follows_system| {
+            if !follows_system {
+                return empty();
+            }
+            let label_context = context.clone();
+            paragraph(
+                "muted theme-effective-description",
+                context.translated_args(scope, "settings.theme.effective", move || {
+                    vec![(
+                        "theme",
+                        label_context.tr(if system_theme.get() {
+                            "settings.theme.night"
+                        } else {
+                            "settings.theme.light"
+                        }),
+                    )]
+                }),
             )
+        }
+    });
+    let change = context.clone();
+    let languages = sapid::segmented_control("settings-language")
+        .theme(context.theme_tokens())
+        .with_item_borders(false)
+        .class("settings-choice-group")
+        .label(context.translated(scope, "settings.language.title"))
+        .value(scope.bond(move || locale_state.get().code().to_owned()))
+        .segments([UiLocale::En, UiLocale::Zh].map(|locale| {
+            let label = locale_display_name(locale);
+            sapid::segment(locale.code())
+                .class("settings-language-choice")
+                .name(label)
+                .label(label)
+        }))
+        .on_value_change(move |next| {
+            if let Some(locale) = UiLocale::from_tag(&next) {
+                select_locale(change.clone(), locale);
+            }
         });
-        languages.push(Box::new(
-            sapid::button()
-                .unstyled()
-                .class(class)
-                .label(locale_display_name(locale))
-                .on_press(move || select_locale(change.clone(), locale)),
-        ) as View);
-    }
     stack(
-        "settings-card-grid",
+        "settings-card-grid appearance-settings",
         vec![
             stack(
                 "event theme-settings",
                 vec![
-                    line(
-                        "event-head",
-                        vec![
-                            plain(context.translated(scope, "theme.switcher_aria_label")),
-                            plain(context.translated(scope, "settings.theme.badge")),
-                        ],
-                    ),
-                    paragraph(
-                        "muted theme-effective-description",
-                        scope.bond({
-                            let context = context.clone();
-                            move || {
-                                let _ = context.locale.get();
-                                let dark = match crate::components::ThemeMode::from_persisted_str(
-                                    &theme.get(),
-                                ) {
-                                    crate::components::ThemeMode::Dark => true,
-                                    crate::components::ThemeMode::Light => false,
-                                    crate::components::ThemeMode::System => {
-                                        context.system_theme_is_night.get()
-                                    }
-                                };
-                                crate::i18n::tr_args(
-                                    "settings.theme.effective",
-                                    &[(
-                                        "theme",
-                                        context.tr(if dark {
-                                            "settings.theme.night"
-                                        } else {
-                                            "settings.theme.light"
-                                        }),
-                                    )],
-                                )
-                            }
-                        }),
-                    ),
                     crate::components::theme_switcher(
                         scope,
                         context.clone(),
@@ -902,18 +891,10 @@ fn theme_page(scope: &Scope, context: Rc<InksonContext>) -> View {
                             on_persist: persist,
                         },
                     ),
+                    effective_theme,
                 ],
             ),
-            stack(
-                "event language-settings",
-                vec![
-                    line(
-                        "event-head",
-                        vec![plain(context.translated(scope, "settings.language.title"))],
-                    ),
-                    line("actions", languages),
-                ],
-            ),
+            stack("event language-settings", vec![Box::new(languages)]),
         ],
     )
 }

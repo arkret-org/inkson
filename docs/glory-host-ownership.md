@@ -38,11 +38,18 @@ selectors, flex/grid layout and sibling order. Hidden retained editors still
 use a real hidden/inert View so their input and file-controller identity survives
 a temporary missing Current view.
 
-`web/styles.list` defines the ordered original CSS layers for both hosts. The
-native host consumes the same generated sheet as the browser. Theme classes
-extend the original light and dark token selectors. Sapid's unstyled controls
-keep the original application CSS authoritative, so switching themes does not
-rebuild an editor or capture a fixed palette on its controls.
+Both hosts load Sapid's structural CSS before the Inkson sheets in
+`web/styles.list`. `src/styles/base/tokens.css` defines the typography, control
+sizes and semantic light/dark colors. The build derives the Sapid palettes from
+these same colors. The root tracks the effective theme and retains mounted editors.
+
+Appearance, language, Agent filters, discussion filters and notification grouping
+use Sapid segmented controls. Sapid owns keyboard navigation, focus and checked
+state. Inkson supplies the labels, route or preference value, and shared paints.
+List placeholders use Sapid EmptyState, settings sections use Card, and shortcut
+help uses Kbd. Agent lifecycle, retry eligibility, filtered results and contact
+identity still come from the owning view models.
+
 The web host moves Glory's unchanged inline baseline before the two existing
 application stylesheet links. It preserves the already-loaded CSSStyleSheets;
 moving the link elements themselves can trigger another stylesheet request.
@@ -62,7 +69,7 @@ Temporary missing Current data hides and makes the retained composer inert.
 Official file reads wait for availability between bounded 64 KiB chunks and
 fail closed when the owner or target retires.
 
-The pinned Git host API does not expose a media widget or a file-drop wrapper
+The Glory 0.9.1 host API does not expose a media widget or a file-drop wrapper
 around interactive children. Browser audio/video uses an owner-scoped media
 leaf; native audio/video attachments provide validated download/external playback. File
 selection uses the official FileController; dropping anywhere in the composer
@@ -101,18 +108,18 @@ capable native backend. Headless Memory/Blitz checks do not establish physical
 window acceptance, and no further desktop interaction ran after the user
 stopped computer use.
 
-The authenticated shell retains a fixed icon rail across routes. Its Arkret mark
-opens Home; Realms, Contacts and My Agents sit above the bottom Settings and
-account-menu controls. The account menu expands beside the rail. There is no
-server selector or resizable/collapsible primary navigation.
+The desktop shell keeps a fixed navigation rail across routes. The Arkret mark
+opens Home. Realms, Contacts and My Agents appear above Settings and Account.
+The narrow layout moves navigation to the bottom, with Settings available from
+Account. Appearance preferences live in Settings on both layouts.
 
 Realm and direct-conversation routes own a neighboring list column. Settings,
 Contacts and the top-level `/agents` surface own their respective list/detail
 columns inside the content region. My Agents does not render the Settings
 section navigation. Contact selection shows one detail view; its explicit
 Message action resolves the human or agent recipient with the existing account
-and generation fences. Narrow layouts keep the icon rail and stack each list
-above its independently scrolling detail.
+and generation fences. Narrow layouts show either the list or its detail.
+Back returns to the list, and each pane scrolls independently.
 
 Glory 0.9.1 and Sapid 0.9.1 resolve from crates.io. Build provenance and Sapid CSS
 come from the locked Cargo graph; no local sibling checkout supplies UI assets.

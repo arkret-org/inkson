@@ -204,8 +204,7 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
                 }
             })
             .segments(groupings.into_iter().map(|value| {
-                sapid::segment(value.key())
-                    .label(context.translated(scope, value.label_key()))
+                sapid::segment(value.key()).label(context.translated(scope, value.label_key()))
             })),
     ) as View;
     let all = {
@@ -358,7 +357,6 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
                     kind: crate::components::EmptyStateKind::Filtered,
                     message: Some(tr("notifications.filtered_body")),
                     test_id: Some("notifications-muted-empty".into()),
-                    badge_override: None,
                 },
             ));
         }

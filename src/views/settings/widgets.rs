@@ -247,12 +247,14 @@ pub(crate) fn card(
     title_key: &str,
     children: Vec<View>,
 ) -> View {
-    let mut nodes = vec![line(
-        "event-head",
-        vec![plain(context.translated(scope, title_key))],
-    )];
-    nodes.extend(children);
-    stack("event", nodes)
+    Box::new(
+        sapid::card()
+            .unstyled()
+            .class("event content-card")
+            .heading_level(2)
+            .title(context.translated(scope, title_key))
+            .fill(children),
+    )
 }
 pub(crate) fn status(value: impl Into<Vary<String>>) -> View {
     let value = value.into();

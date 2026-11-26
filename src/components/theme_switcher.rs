@@ -4,9 +4,7 @@ use std::rc::Rc;
 use glory::prelude::*;
 
 use crate::presentation::{InksonContext, View};
-/// One of the three canonical theme modes. The string round-trip
-/// matches what `app.rs` writes into private data (`"theme"` key) so
-/// the existing hydration path keeps working unchanged.
+/// Theme preference stored in the local and account UI settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThemeMode {
     Light,
@@ -23,9 +21,6 @@ impl ThemeMode {
         }
     }
 
-    /// The string form persisted in local state. Matches the existing
-    /// `"theme"` private-data key written by the topbar toggle so the
-    /// two surfaces stay in sync without an explicit migration.
     pub fn as_persisted_str(self) -> &'static str {
         match self {
             Self::Light => "light",
@@ -46,60 +41,41 @@ pub fn theme_switcher(
 ) -> View {
     let theme = props.theme;
     let on_persist = props.on_persist;
-    {
-        let selected = scope.bond(move || {
-            ThemeMode::from_persisted_str(&theme.get())
-                .as_persisted_str()
-                .to_owned()
-        });
-        Box::new(
-            sapid::radio_group("theme-switcher")
-                .unstyled()
-                .class("theme-switcher")
-                .label(context.translated(scope, "theme.switcher_aria_label"))
-                .value(selected)
-                .orientation(glory::render::Orientation::Horizontal)
-                .items(
-                    [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System]
-                        .into_iter()
-                        .map(|mode| {
-                            let class = scope.bond(move || {
-                                format!(
-                                    "button theme-switcher-option {}",
-                                    if ThemeMode::from_persisted_str(&theme.get()) == mode {
-                                        "primary"
-                                    } else {
-                                        "secondary"
-                                    }
-                                )
-                            });
-                            sapid::radio(mode.as_persisted_str())
-                                .unstyled()
-                                .class(class)
-                                .name(context.translated(
-                                    scope,
-                                    match mode {
-                                        ThemeMode::Light => "settings.theme.light",
-                                        ThemeMode::Dark => "settings.theme.night",
-                                        ThemeMode::System => "settings.theme.system",
-                                    },
-                                ))
-                                .label(context.translated(
-                                    scope,
-                                    match mode {
-                                        ThemeMode::Light => "settings.theme.light",
-                                        ThemeMode::Dark => "settings.theme.night",
-                                        ThemeMode::System => "settings.theme.system",
-                                    },
-                                ))
-                        }),
-                )
-                .on_value_change(move |next| {
+    let selected = scope.bond(move || {
+        ThemeMode::from_persisted_str(&theme.get())
+            .as_persisted_str()
+            .to_owned()
+    });
+    Box::new(
+        sapid::segmented_control("theme-switcher")
+            .theme(context.theme_tokens())
+            .with_item_borders(false)
+            .class("settings-choice-group theme-switcher")
+            .label(context.translated(scope, "theme.switcher_aria_label"))
+            .value(selected)
+            .segments(
+                [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System].map(|mode| {
+                    let label = context.translated(
+                        scope,
+                        match mode {
+                            ThemeMode::Light => "settings.theme.light",
+                            ThemeMode::Dark => "settings.theme.night",
+                            ThemeMode::System => "settings.theme.system",
+                        },
+                    );
+                    sapid::segment(mode.as_persisted_str())
+                        .class("theme-switcher-option")
+                        .name(label)
+                        .label(label)
+                }),
+            )
+            .on_value_change(move |next| {
+                if next != theme.get_untracked() {
                     theme.revise(|value| *value = next.clone());
                     on_persist(next);
-                }),
-        )
-    }
+                }
+            }),
+    )
 }
 
 #[cfg(test)]

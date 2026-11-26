@@ -527,22 +527,11 @@ fn board_grid(scope: &Scope, board: Board) -> View {
                                 "kanban.ui.no_board_selected"
                             }),
                             kind: crate::components::EmptyStateKind::Empty,
-                            message: Some(
-                                if selected {
-                                    "Add a list before adding cards to this board."
-                                } else {
-                                    "Create or select a board before adding lists and cards."
-                                }
-                                .into(),
-                            ),
-                            badge_override: Some(
-                                if selected {
-                                    "empty board"
-                                } else {
-                                    "select board"
-                                }
-                                .into(),
-                            ),
+                            message: Some(board.app.tr(if selected {
+                                "kanban.ui.add_list_hint"
+                            } else {
+                                "kanban.ui.choose_board_hint"
+                            })),
                             test_id: Some("kanban-empty-board".into()),
                         },
                     )],

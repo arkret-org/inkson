@@ -50,17 +50,20 @@ test("setup realm form stays in the main realm layout", async ({ page }) => {
   );
   await expect(activeStepButton).toHaveCount(1);
   await expect(activeStepButton).toHaveJSProperty("tagName", "BUTTON");
-  const activeStepStyle = await activeStepButton.evaluate((button) => {
-    const style = getComputedStyle(button);
-    return {
-      display: style.display,
-      borderRadius: style.borderRadius,
-      backgroundImage: style.backgroundImage,
-    };
+  const selectedColors = await activeStepButton.evaluate((button) => {
+    const theme = getComputedStyle(button);
+    const colors = document.createElement("span").style;
+    colors.backgroundColor = theme.getPropertyValue("--accent");
+    colors.color = theme.getPropertyValue("--text-on-accent");
+    return { fill: colors.backgroundColor, text: colors.color };
   });
-  expect(activeStepStyle.display).toBe("grid");
-  expect(activeStepStyle.borderRadius).toBe("8px");
-  expect(activeStepStyle.backgroundImage).toContain("linear-gradient");
+  await expect(activeStepButton).toHaveCSS("display", "grid");
+  await expect(activeStepButton).toHaveCSS("border-radius", "8px");
+  await expect(activeStepButton).toHaveCSS("background-image", "none");
+  await expect(activeStepButton).toHaveCSS("background-color", selectedColors.fill);
+  await expect(activeStepButton).toHaveCSS("color", selectedColors.text);
+  const otherStep = page.locator(".setup-step-list button:not(.active):enabled").first();
+  await expect(otherStep).not.toHaveCSS("background-color", selectedColors.fill);
 
   const stepTops = await page
     .locator(".setup-step-list button")
@@ -304,7 +307,7 @@ test("realm profile fills the current canonical metadata values", async ({
     `/realms/${DEMO_REALM}/settings/profile`,
   );
 
-  await expect(page.locator(".realm-settings-content > .event").filter({ has: page.locator(".event-head", { hasText: /^Realm Profile$/ }) })).toBeVisible();
+  await expect(page.locator(".realm-settings-content > .event").filter({ has: page.getByRole("heading", { name: "Realm Profile", exact: true }) })).toBeVisible();
   await expect(inputByClass(page, "realm-name-input")).toHaveValue(
     "Arkret Demo Realm",
   );
@@ -366,7 +369,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
     page,
     `/realms/${DEMO_REALM}/settings/profile`,
   );
-  await expect(page.locator(".realm-settings-content > .event").filter({ has: page.locator(".event-head", { hasText: /^Realm Profile$/ }) })).toBeVisible();
+  await expect(page.locator(".realm-settings-content > .event").filter({ has: page.getByRole("heading", { name: "Realm Profile", exact: true }) })).toBeVisible();
   await inputByClass(page, "realm-name-input").fill("Updated Demo Realm");
   await inputByClass(page, "realm-summary-input").fill("Updated realm summary");
   await expect(byClass(page, "realm-avatar-blob-ref-input")).toHaveCount(0);
@@ -383,9 +386,9 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
     page,
     `/realms/${DEMO_REALM}/settings/access`,
   );
-  await expect(page.locator(".realm-settings-content > .event").filter({ has: page.locator(".event-head", { hasText: /^Realm Profile$/ }) })).toHaveCount(0);
+  await expect(page.locator(".realm-settings-content > .event").filter({ has: page.getByRole("heading", { name: "Realm Profile", exact: true }) })).toHaveCount(0);
   await expect(inputByClass(page, "realm-name-input")).toHaveCount(0);
-  await expect(page.locator(".realm-settings-content .event").filter({ has: page.locator(".event-head", { hasText: /^Join Policy$/ }) })).toBeVisible();
+  await expect(page.locator(".realm-settings-content .event").filter({ has: page.getByRole("heading", { name: "Join Policy", exact: true }) })).toBeVisible();
   await expect(
     page.getByRole("checkbox", { name: "Tighten to since joining", exact: true }),
   ).toBeVisible();

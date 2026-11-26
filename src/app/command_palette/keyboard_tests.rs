@@ -71,7 +71,7 @@ fn mount(
     );
     let ui = super::super::shell_state::ShellState::new(app.scope(), &context);
     app.mount(group().fill((
-        search_trigger(app.scope(), ui.clone()),
+        search_trigger(app.scope(), &context, ui.clone()),
         command_palette(app.scope(), context.clone(), ui.clone()),
     )))
     .unwrap();
@@ -126,7 +126,7 @@ fn production_sapid_destination_activates_its_current_route() {
     ui.search_open.revise(|value| *value = true);
     app.flush().unwrap();
     change(&app, class(&app, "sapid-command-search"), "Settings");
-    let target = nodes(&app).into_iter().find(|id| matches!(app.tree().node(*id).unwrap().descriptor.view().props, Props::Button(button) if button.label.starts_with("Settings —"))).unwrap();
+    let target = nodes(&app).into_iter().find(|id| matches!(app.tree().node(*id).unwrap().descriptor.view().props, Props::Button(button) if button.label == "Settings")).unwrap();
     app.dispatch(target, Event::Activate).unwrap();
     app.flush().unwrap();
     assert_eq!(context.route.get_untracked(), Route::Settings);

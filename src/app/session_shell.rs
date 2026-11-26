@@ -225,13 +225,8 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
     let class = scope.bond({
         let context = context.clone();
         move || {
-            let chrome = super::shell_model::shell_chrome(
-                &context.theme.get(),
-                context.system_theme_is_night.get(),
-                context.locale.get().direction(),
-                false,
-                false,
-            );
+            let chrome =
+                super::shell_model::shell_chrome(context.locale.get().direction(), false, false);
             let navigation = &context.workspace_navigation;
             format!(
                 "{} workspace-shell{}{}",
@@ -434,60 +429,6 @@ fn health_prompt(scope: &Scope, context: Rc<InksonContext>) -> View {
         }
     })
 }
-fn theme_toggle_button(scope: &Scope, context: Rc<InksonContext>) -> View {
-    let chrome = scope.bond({
-        let context = context.clone();
-        move || {
-            let chrome = super::shell_model::shell_chrome(
-                &context.theme.get(),
-                context.system_theme_is_night.get(),
-                context.locale.get().direction(),
-                false,
-                false,
-            );
-            (
-                chrome.theme_toggle_icon.to_owned(),
-                chrome.theme_toggle_title,
-            )
-        }
-    });
-    let caption_context = context.clone();
-    let name = scope.bond(move || {
-        let _ = caption_context.locale.get();
-        caption_context.tr(if chrome.get().0 == "sun" {
-            "theme.switch_to_light"
-        } else {
-            "theme.switch_to_dark"
-        })
-    });
-    let sun = scope.bond(move || chrome.get().0 == "sun");
-    Box::new(
-        sapid::button()
-            .unstyled()
-            .class("btn icon theme-toggle-button")
-            .name(name)
-            .fill(
-                glory::ui::group().fill((
-                    glory::ui::when(sun, || crate::components::ui_icon("sun"))
-                        .otherwise(|| crate::components::ui_icon("moon")),
-                    text().class("theme-toggle-caption").content(name),
-                )),
-            )
-            .on_press(move || {
-                let next = super::next_manual_theme(&context.theme.get());
-                context.theme.revise(|value| *value = next.clone());
-                context
-                    .state_store
-                    .write(|store| store.save_plain_local_data("theme", next.clone()));
-                crate::views::settings::push_client_ui_account_data(
-                    context.clone(),
-                    context.base_url.get(),
-                    context.token.get(),
-                    next,
-                );
-            }),
-    )
-}
 fn connection_status_region(scope: &Scope, context: Rc<InksonContext>) -> View {
     let cursor = context.sync_cursor;
     let error = reactive(context.last_error, |_, error| match error {
@@ -677,7 +618,7 @@ fn topbar(
         }
     });
     let search = Box::new(view().class("topbar-command-search").fill(vec![
-        super::command_palette::search_trigger(scope, ui.clone()),
+        super::command_palette::search_trigger(scope, &context, ui.clone()),
     ])) as View;
     block(
         "topbar realm-header",
@@ -704,22 +645,15 @@ fn topbar(
                 "actions",
                 vec![
                     search,
-                    block(
-                        "desktop-chrome-actions",
-                        vec![
-                            theme_toggle_button(scope, context.clone()),
-                            icon_action(
-                                "btn icon",
-                                context.translated(scope, "shortcuts.title"),
-                                "keyboard",
-                                {
-                                    let ui = ui.clone();
-                                    move || ui.shortcut_open.revise(|value| *value = !*value)
-                                },
-                            ),
-                        ],
+                    icon_action(
+                        "btn icon topbar-shortcuts",
+                        context.translated(scope, "shortcuts.title"),
+                        "keyboard",
+                        {
+                            let ui = ui.clone();
+                            move || ui.shortcut_open.revise(|value| *value = !*value)
+                        },
                     ),
-                    topbar_more(scope, context.clone(), ui.clone()),
                     notifications_button(scope, &context, unread, {
                         let ui = ui.clone();
                         move || ui.notifications_open.revise(|value| *value = !*value)
@@ -728,49 +662,6 @@ fn topbar(
                 ],
             ),
         ],
-    )
-}
-fn topbar_more(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
-    let open = scope.cage(false);
-    let help_ui = ui.clone();
-    let appearance = context.clone();
-    let mut content = Some(block(
-        "topbar-more-actions",
-        vec![
-            theme_toggle_button(scope, context.clone()),
-            nav(
-                appearance,
-                Route::SettingsSection {
-                    section: "theme".into(),
-                    filter: String::new(),
-                },
-                "secondary",
-                context.translated(scope, "settings.group.appearance"),
-                "",
-            ),
-            action(
-                "secondary",
-                context.translated(scope, "shortcuts.title"),
-                move || {
-                    open.revise(|value| *value = false);
-                    help_ui.shortcut_open.revise(|value| *value = true);
-                },
-            ),
-        ],
-    ));
-    block(
-        "topbar-more",
-        vec![Box::new(
-            sapid::popover(format!("topbar-more-{}", scope.id().slot()))
-                .unstyled()
-                .class("topbar-more-panel")
-                .label(context.translated(scope, "app.nav.more"))
-                .open(open)
-                .on_open_change(move |next| open.revise(|value| *value = next))
-                .trigger_content(|| Box::new(text().content("•••")) as View)
-                .content_policy(sapid::ContentPolicy::KeepMounted)
-                .content(move || content.take().unwrap_or_else(empty)),
-        ) as View],
     )
 }
 pub(super) fn account_page_avatar(
@@ -1269,6 +1160,8 @@ mod tests {
                 app.flush().unwrap();
                 assert_eq!(class_nodes("command-palette"), palette, "{route:?}");
                 assert_eq!(class_nodes("realm-header").len(), 1, "{route:?}");
+                assert_eq!(class_nodes("topbar-shortcuts").len(), 1, "{route:?}");
+                assert!(class_nodes("theme-toggle-button").is_empty(), "{route:?}");
             }
         }
     }

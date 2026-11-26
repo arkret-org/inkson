@@ -309,34 +309,23 @@ pub(super) fn filter_and_sort_direct_contacts(
     filtered
 }
 
-/// Theme-derived and layout-derived shell attributes.
+/// Layout-derived shell attributes.
 pub(super) struct ShellChrome {
-    pub theme_toggle_icon: &'static str,
-    pub theme_toggle_title: String,
     pub shell_class: String,
     pub auth_class: String,
 }
 
 pub(super) fn shell_chrome(
-    theme: &str,
-    system_theme_is_night: bool,
     direction: TextDirection,
     sidebar_collapsed: bool,
     sidebar_resizing: bool,
 ) -> ShellChrome {
-    let theme_is_night = super::theme_renders_as_night(theme, system_theme_is_night);
     let rtl = if direction == TextDirection::Rtl {
         " rtl"
     } else {
         ""
     };
     ShellChrome {
-        theme_toggle_icon: if theme_is_night { "sun" } else { "moon" },
-        theme_toggle_title: crate::i18n::tr(if theme_is_night {
-            "theme.switch_to_light"
-        } else {
-            "theme.switch_to_night"
-        }),
         shell_class: format!(
             "shell app{rtl}{}{}",
             if sidebar_collapsed {

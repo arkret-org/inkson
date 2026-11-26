@@ -7,8 +7,8 @@
   border-radius: 50%;
   display: inline-grid; place-items: center;
   font-size: 11px; font-weight: 600;
-  color: white;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: var(--text-2);
+  background: var(--surface-3);
   flex-shrink: 0;
 }
 .avatar.lg { width: 40px; height: 40px; font-size: 14px; }
@@ -59,12 +59,13 @@ label.avatar-upload-button,
   gap: 6px;
   padding: 7px 14px;
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  background: var(--surface);
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
   color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.4;
+  min-height: var(--control-md);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
   cursor: pointer;
   transition: background 150ms ease, border-color 150ms ease, transform 80ms ease;
 }

@@ -142,8 +142,7 @@ fn unselected_frame(scope: &Scope, app: Rc<InksonContext>) -> View {
                 crate::components::EmptyStateProps {
                     title: crate::i18n::tr("kanban.ui.no_board_selected"),
                     kind: crate::components::EmptyStateKind::Empty,
-                    message: Some("Create or select a board before adding lists and cards.".into()),
-                    badge_override: Some("select board".into()),
+                    message: Some(crate::i18n::tr("kanban.ui.choose_realm_hint")),
                     test_id: Some("kanban-empty-board".into()),
                 },
             )],

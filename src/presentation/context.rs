@@ -16,6 +16,10 @@ use crate::runtime::session::{CurrentSessionRefresh, LocalRefreshFuture, Session
 use crate::state::projection::ProjectionEvent;
 use crate::sync_engine::ConnectionState;
 
+mod palettes {
+    include!(concat!(env!("OUT_DIR"), "/inkson_palettes.rs"));
+}
+
 pub struct BootState {
     pub config_store: LocalConfigStore,
     pub config: ClientConfig,
@@ -122,10 +126,7 @@ impl InksonContext {
                 .read(|store| store.device_pref("locale"))
                 .as_deref(),
         );
-        let theme = state_store
-            .read(|store| store.load_plain_local_data("theme"))
-            .filter(|value| matches!(value.as_str(), "light" | "night" | "system"))
-            .unwrap_or_else(|| "night".into());
+        let theme = state_store.read(crate::app::stored_theme_preference);
         let active_account = config.active_account.clone();
         let principal = active_account
             .as_ref()
@@ -485,58 +486,15 @@ impl InksonContext {
 
     #[allow(clippy::expect_used)]
     pub fn theme_tokens(&self) -> sapid::Theme {
-        let preference = self.theme.get();
-        let dark = preference == "night"
-            || preference == "system" && crate::app::browser_prefers_dark_theme();
-        let color = |value: u32| Color((value >> 16) as u8, (value >> 8) as u8, value as u8, 255);
-        let palette = if dark {
-            sapid::Palette {
-                canvas: color(0x101722),
-                surface: color(0x1b2430),
-                input: color(0x1b2430),
-                foreground: color(0xf8f2ee),
-                muted: color(0xcbbab1),
-                border: color(0x3a4454),
-                accent: color(0xf59e0b),
-                accent_hover: color(0xf7ae3a),
-                accent_soft: color(0x392c1e),
-                accent_text: color(0xfde7ba),
-                on_accent: color(0x2c170b),
-                success: color(0x7bc9b5),
-                danger: color(0xff7a59),
-                warning: color(0xf0be78),
-                ..sapid::BLUE.base
-            }
+        let dark =
+            crate::app::theme_renders_as_night(&self.theme.get(), self.system_theme_is_night.get());
+        let (scheme, palette) = if dark {
+            (sapid::ColorScheme::Dark, palettes::DARK)
         } else {
-            sapid::Palette {
-                canvas: color(0xf6eee7),
-                surface: color(0xfffaf5),
-                input: color(0xfffaf5),
-                foreground: color(0x2f2723),
-                muted: color(0x6f625a),
-                border: color(0xe6d9cf),
-                accent: color(0xd97706),
-                accent_hover: color(0xb96505),
-                accent_soft: color(0xfff4e6),
-                accent_text: color(0x7f3f02),
-                on_accent: color(0xfffaf6),
-                success: color(0x317d6a),
-                danger: color(0xc44c2d),
-                warning: color(0xb97824),
-                ..sapid::BLUE.base
-            }
+            (sapid::ColorScheme::Light, palettes::LIGHT)
         };
-        // Finite constants above satisfy the palette's construction invariants.
-        let mut theme = sapid::Theme::from_palette(
-            "inkson",
-            if dark {
-                sapid::ColorScheme::Dark
-            } else {
-                sapid::ColorScheme::Light
-            },
-            palette,
-        )
-        .expect("the static Inkson palette is valid");
+        let mut theme = sapid::Theme::from_palette("inkson", scheme, palette)
+            .expect("the static Inkson palette is valid");
         theme.radius = 8.0;
         theme
     }

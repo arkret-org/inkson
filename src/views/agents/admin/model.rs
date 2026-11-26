@@ -7,7 +7,8 @@
 use super::*;
 
 pub(super) fn normalize_agent_slug(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
+    let value = value.trim();
+    arkret_wire::prepare_agent_slug(value).unwrap_or_else(|_| value.to_owned())
 }
 
 /// Pairing renewal is offered for a controller-bound Agent whose runtime key is
@@ -262,8 +263,11 @@ pub(super) fn reconcile_refreshed_pairing(
     Ok(())
 }
 
-pub(super) const AGENT_LIST_FILTERS: [(&str, &str); 3] =
-    [("all", "All"), ("active", "Active"), ("paused", "Paused")];
+pub(super) const AGENT_LIST_FILTERS: [(&str, &str); 3] = [
+    ("all", "agents.filter.all"),
+    ("active", "realm_admin.roster.agent_active"),
+    ("paused", "realm_admin.roster.agent_paused"),
+];
 
 pub(super) fn normalize_agent_filter(filter: &str) -> &'static str {
     match filter.trim().to_ascii_lowercase().as_str() {
@@ -283,6 +287,48 @@ pub(super) fn agent_matches_filter(status: &str, filter: &str) -> bool {
     }
 }
 
+pub(super) fn agent_visible(agent: &AgentView, filter: &str, search: &str) -> bool {
+    agent_matches_filter(agent_lifecycle_wire(agent.agent.lifecycle), filter)
+        && (search.is_empty()
+            || agent_slug_label(agent).to_lowercase().contains(search)
+            || agent
+                .agent
+                .agent_id
+                .as_str()
+                .to_lowercase()
+                .contains(search))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum AgentEmptyState {
+    Loading,
+    Failed,
+    SignIn,
+    Filtered,
+    FirstUse,
+}
+
+pub(super) fn agent_empty_state(
+    rows: &[AgentView],
+    filter: &str,
+    search: &str,
+    phase: AgentListPhase,
+) -> Option<AgentEmptyState> {
+    if rows
+        .iter()
+        .any(|agent| agent_visible(agent, filter, search))
+    {
+        return None;
+    }
+    Some(match phase {
+        AgentListPhase::Loading => AgentEmptyState::Loading,
+        AgentListPhase::Failed => AgentEmptyState::Failed,
+        AgentListPhase::SignInRequired => AgentEmptyState::SignIn,
+        AgentListPhase::Ready if filter != "all" || !search.is_empty() => AgentEmptyState::Filtered,
+        AgentListPhase::Ready => AgentEmptyState::FirstUse,
+    })
+}
+
 /// Everything the panel reads off the Agent directory and the selected row.
 ///
 /// This ran inline between the panel's `use_signal` declarations and its
@@ -290,8 +336,6 @@ pub(super) fn agent_matches_filter(status: &str, filter: &str) -> bool {
 /// renew pairing, which may replace a runtime, when the pairing card appears —
 /// was reachable without mounting the component.
 pub(super) struct AgentAdminView {
-    pub(super) visible_agents: Vec<AgentView>,
-    pub(super) has_any_agents: bool,
     pub(super) selected_grants: Vec<serde_json::Value>,
     pub(super) selected_title: String,
     pub(super) selected_slug: String,
@@ -332,15 +376,6 @@ pub(super) fn build_agent_admin_view(
                 && agent_matches_filter(agent_lifecycle_wire(agent.agent.lifecycle), filter)
         })
         .cloned();
-    let visible_agents = rows
-        .iter()
-        .filter(|agent| agent_matches_filter(agent_lifecycle_wire(agent.agent.lifecycle), filter))
-        .cloned()
-        .collect::<Vec<_>>();
-    let has_any_agents = rows
-        .iter()
-        .any(|agent| agent_matches_filter(agent_lifecycle_wire(agent.agent.lifecycle), "all"));
-
     let selected_title = selected_agent
         .as_ref()
         .map(agent_slug_label)
@@ -431,8 +466,6 @@ pub(super) fn build_agent_admin_view(
         .collect();
 
     AgentAdminView {
-        visible_agents,
-        has_any_agents,
         selected_grants: selected_agent
             .as_ref()
             .map(|agent| agent.grants.clone())

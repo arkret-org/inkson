@@ -47,7 +47,26 @@
   gap: 2px;
 }
 
-.circle-composer-banner .circle-identity-badge {
+.circle-composer-banner /* Identity hues belong to the Circle. The glyph and name remain readable in either theme. */
+.circle-identity-slate { --circle-hue: #64748b; }
+.circle-identity-red { --circle-hue: #db4048; }
+.circle-identity-orange { --circle-hue: #d76020; }
+.circle-identity-amber { --circle-hue: #c57c0d; }
+.circle-identity-yellow { --circle-hue: #b4950b; }
+.circle-identity-lime { --circle-hue: #77a12d; }
+.circle-identity-green { --circle-hue: #42964b; }
+.circle-identity-emerald { --circle-hue: #29996d; }
+.circle-identity-teal { --circle-hue: #218e85; }
+.circle-identity-cyan { --circle-hue: #218da3; }
+.circle-identity-sky { --circle-hue: #2d8abb; }
+.circle-identity-blue { --circle-hue: #4879ce; }
+.circle-identity-indigo { --circle-hue: #6967c4; }
+.circle-identity-violet { --circle-hue: #965ec0; }
+.circle-identity-fuchsia { --circle-hue: #b550ac; }
+.circle-identity-pink { --circle-hue: #c75687; }
+.circle-identity-high-contrast { --circle-hue: var(--text); }
+
+.circle-identity-badge {
   max-width: 100%;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -220,13 +239,19 @@
   align-items: center;
   gap: 6px;
   padding: 3px 8px;
-  border: 2px solid var(--circle-accent);
-  border-radius: 8px;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-inline-start: 4px solid color-mix(in srgb, var(--circle-hue) 78%, var(--text));
+  border-radius: var(--radius-sm);
   color: var(--text);
-  background: var(--surface);
+  background: color-mix(in srgb, var(--circle-hue) 9%, var(--surface-solid));
 }
 
+.circle-identity-short-name { margin: 0; overflow-wrap: anywhere; font-size: var(--text-label); }
 .circle-identity-symbol {
+  margin: 0;
+  flex: none;
   font-size: 1.1em;
   line-height: 1;
 }

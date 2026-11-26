@@ -31,7 +31,7 @@ test("settings capabilities and consent read surfaces and forms follow the activ
     await selectLanguage(page, language);
     await byClass(page, "settings-nav-item-capabilities").click();
     const capabilities = page.locator(".settings-content-column > .event").filter({ has: byClass(page, "capabilities-empty") });
-    await expect(capabilities.locator(".event-head").first()).toHaveText(language === "zh" ? "权限授权" : "Capabilities");
+    await expect(capabilities.getByRole("heading", { name: language === "zh" ? "权限授权" : "Capabilities", exact: true })).toBeVisible();
     await expect(byClass(page, "capabilities-empty")).toContainText(language === "zh" ? "没有权限授权" : "No capabilities");
     await expect(byClass(page, "capability-relinquish-open")).toHaveCount(0);
     failConsent = true;
