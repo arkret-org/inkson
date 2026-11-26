@@ -1,17 +1,11 @@
-import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
-
-const styles = readFileSync(new URL("../../web/styles.list", import.meta.url), "utf8");
-const css = styles.split("\n").map(line => line.trim())
-  .filter(line => line && !line.startsWith("#"))
-  .map(line => readFileSync(new URL(`../../${line}`, import.meta.url), "utf8"))
-  .join("\n");
+import { appCss } from "./app-styles";
 
 for (const theme of ["light", "dark"]) {
   for (const width of [1254, 360]) {
     test(`offline banner reserves space above the topbar at ${width}px in ${theme}`, async ({ page }) => {
       await page.setViewportSize({ width, height: 650 });
-      await page.setContent(`<!doctype html><html data-theme="${theme}"><head><style>${css}</style></head><body>
+      await page.setContent(`<!doctype html><html data-theme="${theme}"><head><style>${appCss}</style></head><body>
         <div class="shell app workspace-shell">
           <nav class="navigation-rail" aria-label="Main navigation">Inkson | Arkret</nav>
           <div class="workspace">

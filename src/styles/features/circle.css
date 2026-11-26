@@ -47,7 +47,7 @@
   gap: 2px;
 }
 
-.circle-composer-banner /* Identity hues belong to the Circle. The glyph and name remain readable in either theme. */
+/* Circle identity colors decorate the edge and background of the named badge. */
 .circle-identity-slate { --circle-hue: #64748b; }
 .circle-identity-red { --circle-hue: #db4048; }
 .circle-identity-orange { --circle-hue: #d76020; }
@@ -65,12 +65,6 @@
 .circle-identity-fuchsia { --circle-hue: #b550ac; }
 .circle-identity-pink { --circle-hue: #c75687; }
 .circle-identity-high-contrast { --circle-hue: var(--text); }
-
-.circle-identity-badge {
-  max-width: 100%;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
 
 .circle-realm {
   display: grid;
@@ -242,10 +236,11 @@
   max-width: 100%;
   min-width: 0;
   border: 1px solid var(--border);
-  border-inline-start: 4px solid color-mix(in srgb, var(--circle-hue) 78%, var(--text));
+  overflow-wrap: anywhere;
+  border-inline-start: 4px solid color-mix(in srgb, var(--circle-hue, var(--text-3)) 78%, var(--text));
   border-radius: var(--radius-sm);
   color: var(--text);
-  background: color-mix(in srgb, var(--circle-hue) 9%, var(--surface-solid));
+  background: color-mix(in srgb, var(--circle-hue, var(--text-3)) 9%, var(--surface-solid));
 }
 
 .circle-identity-short-name { margin: 0; overflow-wrap: anywhere; font-size: var(--text-label); }
