@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { inksonWire, mockArkretApi, validateMockResponseForOperation, validateMockSchema } from "../e2e/mockArkretApi";
+import { CURRENT_ACCOUNT_ID, DEMO_REALM, PRINCIPAL_CONTROL_REALM, inksonWire, mockArkretApi, validateMockResponseForOperation, validateMockSchema } from "../e2e/mockArkretApi";
 import { captureRouteHandler, driveOnce, mockOperations } from "./mockShapeDriver";
 
 type Fixture = {
@@ -918,4 +918,29 @@ test("founding PCR sources obey the public committed Event schema without privat
   const invalid = structuredClone(fixture.source_create);
   invalid.event.semantic_refs = [{ id: fixture.identity.inception_log_entry.versionId, role: "did_inception", critical: true }];
   expect(() => validateMockSchema("schemas/service-operation-dtos.schema.json#/$defs/CommittedEventView", invalid)).toThrow();
+});
+
+test("personal Sidecar reads expose the home Realm and keep the source project separate", async () => {
+  const owner = captureRouteHandler();
+  const other = captureRouteHandler();
+  const base = "https://local.host/_arkret/self/agent-sidecars";
+  try {
+    await mockArkretApi(owner.page as never);
+    await mockArkretApi(other.page as never, { accountPrincipalId: "did:web:bob.example" });
+    const list = await driveOnce(owner.handler(), { method: "GET", url: base });
+    expect(list?.status).toBe(200);
+    const { sidecars } = list!.body as { sidecars: Array<{ sidecar: { id: string } }> };
+    expect(sidecars).toHaveLength(1);
+    const view = sidecars[0];
+    expect(view.sidecar).toMatchObject({
+      realm_id: PRINCIPAL_CONTROL_REALM, source_realm_id: DEMO_REALM, controller_account_id: CURRENT_ACCOUNT_ID,
+    });
+    const url = base + "/" + encodeURIComponent(view.sidecar.id);
+    expect((await driveOnce(owner.handler(), { method: "GET", url }))?.body).toEqual(view);
+    expect((await driveOnce(other.handler(), { method: "GET", url: base }))?.body).toEqual({ sidecars: [] });
+    expect((await driveOnce(other.handler(), { method: "GET", url }))?.status).toBe(404);
+  } finally {
+    owner.close();
+    other.close();
+  }
 });

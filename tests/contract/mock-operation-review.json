@@ -734,6 +734,19 @@
       "contract_digest": "sha256:0a2492a464665c2b134568cbdb01a3e1a573bb025842d0ae307b90ab6b5ebf83"
     },
     {
+      "operation_id": "ak.peer.mls.command.reconcile_recovery_scope.v1",
+      "verification_need": "native_authority",
+      "reason": "The peer endpoint requires authenticated origin and custodian evidence, a native eligibility cut and durable idempotent cleanup settlement.",
+      "normative_documents": [
+        "zh/crypto-media/content-history.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/models-crypto/src/content_history/scope_cleanup.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:c26c93eb2da9090854346fe6cb0b41113298f962682dedbe1d26f1c2e75cd843"
+    },
+    {
       "operation_id": "ak.peer.mls.read.group_state_material.v1",
       "verification_need": "native_fixture_replay",
       "reason": "The member Station sends a real Service HTTP signature to the current governor for the accepted target cut and Genesis Blob references. The SDK validates the returned public bytes against the actual joined group. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
@@ -1532,6 +1545,32 @@
         "name": "remaining valid request and response contract: ak.self.read_cursor.read.list.v1"
       },
       "contract_digest": "sha256:9344f8e9e0d26f4c34b175989014d49f56dc6b9b448562e570c031014c656a35"
+    },
+    {
+      "operation_id": "ak.self.mls.command.reconcile_recovery_scope.v1",
+      "verification_need": "native_authority",
+      "reason": "The self endpoint requires the authenticated recovery subject, accepted scope evidence and durable idempotent cleanup settlement.",
+      "normative_documents": [
+        "zh/crypto-media/content-history.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/models-crypto/src/content_history/scope_cleanup.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:1879691a5c4a5d078c6d73d800f77e0e5b4917298a76b8cba66d025db3a5fe58"
+    },
+    {
+      "operation_id": "ak.self.mls.content_recovery.resource.get.v1",
+      "verification_need": "native_authority",
+      "reason": "Private recovery preparation is bound to the exact accepted authorization Event, the recovery subject and the native preparation state.",
+      "normative_documents": [
+        "zh/crypto-media/content-history.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/mls.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:b8b10f0520e5ae7695cfda7f25ef194a814ad6c45efbed54067bb098651997b9"
     },
     {
       "operation_id": "ak.self.mls.read.group_state_material.v1",

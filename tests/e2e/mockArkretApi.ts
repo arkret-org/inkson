@@ -1383,42 +1383,40 @@ export async function mockArkretApi(
   preflightStaticMockResponses(
     staticMockResponseFixtures(serverDidDocument),
   );
-  let sidecarAgentIds = ["ak:did_core:web:agents.example:assistant"];
-  const sidecarAgentJoinFixtures = new Map<string, string>();
-  const sidecarDesiredAgents = (agentIds: string[]) => agentIds.map(agentId => {
-    const fixture = nativeFixtures.get(DEMO_REALM) ?? demoNative;
-    const member = fixture.snapshot.current_state_entries.find(
-      (row: Record<string, any>) => row.selector.kind === "member_state"
-        && row.selector.actor_id?.kind === "account"
-        && row.selector.actor_id.account_id.principal_id === agentId
-        && row.selector.actor_id.account_id.station_id === accountId.station_id
-        && row.value?.membership === "join",
-    );
-    if (member) {
-      const source = fixture.committed_events.find(
-        full => full.commit.commit_id === member.revision.commit_id,
-      );
-      if (!source || source.commit.realm_id !== fixture.snapshot.realm_id
-        || source.event.realm_id !== fixture.snapshot.realm_id
-        || source.event.kind !== "ak.member.state"
-        || source.event.payload?.membership !== "join"
-        || canonicalJson(source.event.payload.member_id) !== canonicalJson(member.selector.actor_id)
-        || typeof source.event.event_id !== "string"
-        || source.commit.event_ref !== source.event.event_id) {
-        throw new Error("Sidecar member fixture omits its exact accepted join original");
-      }
-      // The membership target is the Agent; its original author may be the controller.
-      return { agent_id: agentId, join_event_ref: source.event.event_id };
-    }
-    // Page-only mocks have explicit stable join fixtures, not accepted/native evidence.
-    let join = sidecarAgentJoinFixtures.get(agentId);
-    if (!join) {
-      join = mockCommitId(["sidecar-member-join-fixture", agentId])
-        .replace("ak:realm_commit:", "ak:event:");
-      sidecarAgentJoinFixtures.set(agentId, join);
-    }
-    return { agent_id: agentId, join_event_ref: join };
-  });
+  const ownsSidecar = canonicalJson(accountId) === canonicalJson(CURRENT_ACCOUNT_ID);
+  const sidecarId = "ak:sidecar:ARtoYyyaAqwT8z7xX2YLO-x_zdkPXEy8ygoDx-tu-5fm";
+  function sidecarView() {
+    const desiredAgentIds = ["ak:did_core:web:agents.example:assistant"];
+    // Stable page fixture entries represent this Sidecar's private joins.
+    const desiredAgents = desiredAgentIds.map(agentId => ({
+      agent_id: agentId,
+      join_event_ref: mockCommitId(["ak.sidecar.member.state", PRINCIPAL_CONTROL_REALM, sidecarId, accountId, agentId, "join"])
+        .replace("ak:realm_commit:", "ak:event:"),
+    }));
+    return {
+      sidecar: {
+        id: sidecarId,
+        schema: "ak.schema.agent_sidecar.v1",
+        realm_id: PRINCIPAL_CONTROL_REALM,
+        source_realm_id: DEMO_REALM,
+        controller_account_id: accountId,
+        state: "active",
+        created_at: "2026-07-20T00:00:00.000Z",
+      },
+      desired_agent_ids: desiredAgentIds,
+      effective_agent_ids: desiredAgentIds,
+      mls_context: {
+        participant_authority_digest: canonicalSha256({
+          domain: "ak.sidecar.participant_authority.v1", sidecar_id: sidecarId,
+          realm_id: PRINCIPAL_CONTROL_REALM, controller_account_id: accountId, desired_agents: desiredAgents,
+        }),
+        mls_group_id: mockMlsGroupId(sidecarId), epoch: "1",
+        genesis_event_ref: "ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh",
+        current_controller_device_ready: true,
+      },
+      access_readiness: "ready", pending_access_reconciliations: [],
+    };
+  }
   const seededRecoveryPolicyId =
     "ak:policy:019a6aa0-0000-7000-8000-0000000000bb";
   const seededBackupHpkeKey =
@@ -2551,7 +2549,6 @@ export async function mockArkretApi(
         validateMockSchema("schemas/account-subscribe-frame.schema.json", value),
       );
       const body = `${frames.map(canonicalJson).join("\n")}\n`;
-      options.observeAccountSubscribe?.(body, url);
       // Register before sending headers; resolve only after actual fulfillment.
       // A non-catchup consumer may cancel its body after the first valid delta.
       const delivered = Promise.resolve().then(async () => {
@@ -3372,109 +3369,25 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/agent-sidecars:ensure" &&
       route.request().method() === "POST"
     ) {
-      const body = await route.request().postDataJSON();
-      if (
-        Array.isArray(body?.addressed_agent_ids) &&
-        body.addressed_agent_ids.every(
-          (value: unknown) => typeof value === "string",
-        )
-      ) {
-        sidecarAgentIds = [...body.addressed_agent_ids];
-      }
-      const contextRef = body?.context_ref ?? {};
-      const contextExists = boardStrandProjections.some(
-        (strand) =>
-          strand.realm_id === contextRef.realm_id &&
-          strand.strand_id === contextRef.strand_id &&
-          strand.state === "active",
-      );
-      if (!contextExists) {
-        return mockProblem(route, "failed_precondition", "Agent Sidecar could not be ensured", "sidecar_create_denied");
-      }
-      return json(route, {
-        ok: true,
-        sidecar_id: "ak:sidecar:ARtoYyyaAqwT8z7xX2YLO-x_zdkPXEy8ygoDx-tu-5fm",
-        access_readiness: "ready",
-        pending_access_reconciliations: [],
-      });
+      // This page fixture has no home-Station reservation or accepted signed context attachment.
+      return mockProblem(route, "failed_precondition", "Agent Sidecar could not be ensured", "sidecar_create_denied");
     }
 
     if (
       url.pathname === "/_arkret/self/agent-sidecars" &&
       route.request().method() === "GET"
     ) {
-      const sidecarId =
-        "ak:sidecar:ARtoYyyaAqwT8z7xX2YLO-x_zdkPXEy8ygoDx-tu-5fm";
-      const desiredAgentIds = [...sidecarAgentIds].sort();
-      return json(route, {
-        sidecars: [
-          {
-            sidecar: {
-              id: sidecarId,
-              schema: "ak.schema.agent_sidecar.v1",
-              realm_id: DEMO_REALM,
-              controller_account_id: accountId,
-              state: "active",
-              created_at: "2026-07-20T00:00:00.000Z",
-            },
-            desired_agent_ids: desiredAgentIds,
-            effective_agent_ids: desiredAgentIds,
-            mls_context: {
-              participant_authority_digest: canonicalSha256({
-                domain: "ak.sidecar.participant_authority.v1",
-                sidecar_id: sidecarId,
-                realm_id: DEMO_REALM,
-                controller_account_id: accountId,
-                desired_agents: sidecarDesiredAgents(desiredAgentIds),
-              }),
-              mls_group_id: mockMlsGroupId(sidecarId),
-              epoch: "1",
-              genesis_event_ref:
-                "ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh",
-              current_controller_device_ready: true,
-            },
-            access_readiness: "ready",
-            pending_access_reconciliations: [],
-          },
-        ],
-      });
+      return json(route, { sidecars: ownsSidecar ? [sidecarView()] : [] });
     }
 
     if (
       url.pathname.startsWith("/_arkret/self/agent-sidecars/") &&
       route.request().method() === "GET"
     ) {
-      const sidecarId =
-        "ak:sidecar:ARtoYyyaAqwT8z7xX2YLO-x_zdkPXEy8ygoDx-tu-5fm";
-      const desiredAgentIds = [...sidecarAgentIds].sort();
-      return json(route, {
-        sidecar: {
-          id: sidecarId,
-          schema: "ak.schema.agent_sidecar.v1",
-          realm_id: DEMO_REALM,
-          controller_account_id: accountId,
-          state: "active",
-          created_at: "2026-07-20T00:00:00.000Z",
-        },
-        desired_agent_ids: desiredAgentIds,
-        effective_agent_ids: desiredAgentIds,
-        mls_context: {
-          participant_authority_digest: canonicalSha256({
-            domain: "ak.sidecar.participant_authority.v1",
-            sidecar_id: sidecarId,
-            realm_id: DEMO_REALM,
-            controller_account_id: accountId,
-            desired_agents: sidecarDesiredAgents(desiredAgentIds),
-          }),
-          mls_group_id: mockMlsGroupId(sidecarId),
-          epoch: "1",
-          genesis_event_ref:
-            "ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh",
-          current_controller_device_ready: true,
-        },
-        access_readiness: "ready",
-        pending_access_reconciliations: [],
-      });
+      if (!ownsSidecar || decodeURIComponent(url.pathname.split("/").at(-1) ?? "") !== sidecarId) {
+        return mockProblem(route, "not_found", "Sidecar is not available to this fixture holder.");
+      }
+      return json(route, sidecarView());
     }
 
     if (

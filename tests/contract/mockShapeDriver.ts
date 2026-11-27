@@ -48,6 +48,7 @@ const PATH_PARAMETERS: Record<string, string> = {
   actor_id: "ak:did_core:web:alice.example",
   agent_id: "ak:did_core:web:agents.example:assistant",
   applet_id: "ak:applet:01964137-0000-7000-8000-0000000000a2",
+  authorization_event_ref: "ak:event:AUftf_3k2fRKMG0NFlHe5iEMBOUpxMwYMRu-yhMJl-yz",
   backup_id: "ak:backup:01964137-0000-7000-8000-0000000000b1",
   event_id: "ak:event:AUftf_3k2fRKMG0NFlHe5iEMBOUpxMwYMRu-yhMJl-yz",
   morph_id: "ak:morph:AY61QviMxoJ0ALEn5U39bA7Qbi1BxHCrOq4950m2JRjM",
