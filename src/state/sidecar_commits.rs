@@ -17,7 +17,34 @@ impl LocalStateStore {
         strand: &arkret_sdk::StrandId,
     ) -> anyhow::Result<Option<arkret_sdk::AgentSidecar>> {
         use arkret_sdk::{CurrentSelector, CurrentState, EventKind, SidecarContextRef};
-        let (snapshot, histories) = self.verified_sidecar_inputs(realm)?;
+        let home = self.with_unoverlaid_account_fields(|state| {
+            let mut matches = state
+                .verified_sidecar_current
+                .iter()
+                .filter(|(_, snapshot)| {
+                    snapshot.current_state_entries.iter().any(|row| match row {
+                        CurrentState::Value {
+                            selector: CurrentSelector::Sidecar { .. },
+                            value,
+                            ..
+                        } => serde_json::from_value::<arkret_sdk::AgentSidecar>(value.clone())
+                            .is_ok_and(|item| {
+                                item.source_realm_id.as_str() == realm
+                                    && &item.controller_account_id == controller
+                                    && item.realm_id == snapshot.realm_id
+                            }),
+                        _ => false,
+                    })
+                });
+            let first = matches.next().map(|(id, _)| id.clone());
+            anyhow::ensure!(
+                matches.next().is_none(),
+                "controller Sidecars span multiple home Realms"
+            );
+            Ok::<_, anyhow::Error>(first)
+        })?;
+        let Some(home) = home else { return Ok(None) };
+        let (snapshot, histories) = self.verified_sidecar_inputs(&home)?;
         let source = SidecarContextRef::Strand {
             strand_id: strand.clone(),
         };
@@ -98,7 +125,8 @@ impl LocalStateStore {
                     sidecar.id == *sidecar_id && sidecar.realm_id == snapshot.realm_id,
                     "Sidecar current identity differs from its selector"
                 );
-                if &sidecar.controller_account_id != controller
+                if sidecar.source_realm_id.as_str() != realm
+                    || &sidecar.controller_account_id != controller
                     || attached.event.actor_id.as_account_id() != Some(controller)
                     || sidecar.state == arkret_sdk::AgentSidecarState::Tombstoned
                 {

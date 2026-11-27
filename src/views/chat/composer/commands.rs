@@ -695,19 +695,9 @@ pub(super) fn route_to_owned_agent_sidecar(
         )
         .await;
         trace_private_send_stage("private_route_ensure_finished");
-        let current_private_mode = if matches!(&sidecar_outcome, Ok(Some(_))) {
-            require_current_private_targets(
-                &base_url,
-                api_token.clone(),
-                &realm_id,
-                &authority,
-                &mentions,
-                &addressed_agent_ids,
-            )
-            .await
-        } else {
-            Ok(())
-        };
+        let current_private_mode = if let Ok(Some(sidecar)) = &sidecar_outcome {
+            require_current_private_targets(&sidecar.view, &authority, &mentions, &addressed_agent_ids)
+        } else { Ok(()) };
         let draft_unchanged = draft_fence.finish();
         trace_private_send_stage(if draft_unchanged {
             "private_route_draft_current"
@@ -727,6 +717,21 @@ pub(super) fn route_to_owned_agent_sidecar(
                 sidecar_route_pending.revise(|value| *value = next_value);
             };
             return;
+        }
+        if draft_unchanged && let Ok(Some(sidecar)) = &sidecar_outcome {
+            let agents = mentions.iter().filter_map(MentionNode::as_mention)
+                .map(|m| m.subject_account_id.clone())
+                .filter(|agent| agent.station_id == authority.station_id && addressed_agent_ids.iter().any(|id| id == agent.principal_id.as_str())
+                    && !sidecar.view.desired_agent_ids.contains(&agent.principal_id))
+                .collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>();
+            if !agents.is_empty() {
+                controller.sidecar_enrollment.revise(|pending| *pending = Some(crate::sidecar::PersonalSidecarEnrollment {
+                    owner: authority.clone(), realm: sidecar.view.sidecar.realm_id.clone(), sidecar: sidecar.sidecar_id.clone(),
+                    project: realm_id.clone(), strand: strand_id.clone(), agents,
+                }));
+                sidecar_route_pending.revise(|value| *value = false);
+                return;
+            }
         }
         if let Err(error) = current_private_mode {
             trace_private_send_stage("private_route_mode_rejected");
@@ -771,6 +776,7 @@ pub(super) fn route_to_owned_agent_sidecar(
                     controller_account_id: sidecar_view.sidecar.controller_account_id.clone(),
                     addressed_agent_ids: addressed_agent_ids.clone(),
                     addressed_agent_label,
+                    home_realm_id: sidecar_view.sidecar.realm_id.clone(),
                     source_realm_id: realm_id.clone(),
                     source_strand_id: strand_id.clone(),
                     sidecar_id: sidecar_id.clone(),
@@ -804,7 +810,7 @@ pub(super) fn route_to_owned_agent_sidecar(
                         crate::sidecar::validate_agent_sidecar_view(&view)?;
                         anyhow::ensure!(
                             view.sidecar.id == sidecar_id
-                                && view.sidecar.realm_id.as_str() == realm_id
+                                && view.sidecar.source_realm_id.as_str() == realm_id
                                 && view.sidecar.controller_account_id == authority
                                 && addressed_agent_ids.iter().all(|id| view
                                     .desired_agent_ids
@@ -847,20 +853,10 @@ pub(super) fn route_to_owned_agent_sidecar(
                 } else {
                     "private_route_access_wait_failed"
                 });
-                let mode = if ready.is_ok() {
-                    require_current_private_targets(
-                        &base_url,
-                        api_token.clone(),
-                        &realm_id,
-                        &authority,
-                        &mentions,
-                        &addressed_agent_ids,
-                    )
-                    .await
-                    .and_then(|_| session_fence.check())
-                } else {
-                    Ok(())
-                };
+                let mode = if let Ok(view) = &ready {
+                    require_current_private_targets(view, &authority, &mentions, &addressed_agent_ids)
+                        .and_then(|_| session_fence.check())
+                } else { Ok(()) };
                 let unchanged = readiness_fence.finish()
                     && sidecar_session
                         .get_untracked()
@@ -962,55 +958,26 @@ pub(super) fn route_to_owned_agent_sidecar(
     });
 }
 
-async fn require_current_private_targets(
-    base: &str,
-    credential: String,
-    realm: &str,
+fn require_current_private_targets(
+    view: &arkret_sdk::AgentSidecarView,
     controller: &arkret_sdk::AccountId,
     mentions: &[MentionNode],
     addressed_agent_ids: &[String],
 ) -> anyhow::Result<()> {
-    let agents = mentions
-        .iter()
-        .filter_map(MentionNode::as_mention)
-        .map(|mention| mention.subject_account_id.clone())
-        .filter(|account| {
-            addressed_agent_ids
-                .iter()
-                .any(|id| id == account.principal_id.as_str())
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    anyhow::ensure!(
-        !agents.is_empty()
-            && addressed_agent_ids
-                .iter()
-                .all(|id| agents.iter().any(|agent| agent.principal_id.as_str() == id)),
-        "private Agent targets require current structured AccountId mentions"
-    );
-    let realm = arkret_sdk::RealmId::new(realm.to_owned())?;
-    let controller = controller.clone();
-    crate::transport::auth::with_authed_sdk_client(base, credential, |http| async move {
-        for agent in agents {
-            let (mode, _, owner) =
-                crate::transport::agent_interaction::read(&http, &realm, &agent).await?;
-            anyhow::ensure!(
-                private_target_mode_matches(mode, owner.as_ref(), &controller),
-                "Agent mode or controller changed; keep the draft and review its current audience"
-            );
-        }
-        Ok(())
-    })
-    .await
-    .map_err(|error| anyhow::anyhow!(error.display()))
+    anyhow::ensure!(&view.sidecar.controller_account_id == controller && !addressed_agent_ids.is_empty(),
+        "private Sidecar controller or recipient changed");
+    for id in addressed_agent_ids {
+        anyhow::ensure!(mentions.iter().filter_map(MentionNode::as_mention).any(|mention|
+            matches_private_recipient(&mention.subject_account_id, controller, id, &view.desired_agent_ids)),
+            "private Agent is not enabled by its controller at the owning Station");
+    }
+    Ok(())
 }
 
-fn private_target_mode_matches(
-    mode: arkret_sdk::AgentInteractionMode,
-    owner: Option<&arkret_sdk::AccountId>,
-    controller: &arkret_sdk::AccountId,
-) -> bool {
-    mode == arkret_sdk::AgentInteractionMode::Private
-        && owner.is_none_or(|owner| owner == controller)
+fn matches_private_recipient(account: &arkret_sdk::AccountId, controller: &arkret_sdk::AccountId,
+    target: &str, desired: &[arkret_sdk::DidCoreId]) -> bool {
+    account.station_id == controller.station_id && account.principal_id.as_str() == target
+        && desired.contains(&account.principal_id)
 }
 
 /// Any intervening draft/binding/Strand write cancels delayed automatic Send,
@@ -1567,16 +1534,8 @@ fn send_sidecar_message_with_hosted(
             };
         let outcome = match view {
             Ok(view) => {
-                let modes = require_current_private_targets(
-                    &base_url,
-                    api_token.clone(),
-                    &session.source_realm_id,
-                    &authority,
-                    &resolved_mentions,
-                    &addressed_agent_ids,
-                )
-                .await
-                .and_then(|_| authoring_fence.check());
+                let modes = require_current_private_targets(&view,&authority,&resolved_mentions,&addressed_agent_ids)
+                    .and_then(|_| authoring_fence.check());
                 match modes {
                     Err(error) => Err(error),
                     Ok(()) => {
@@ -2340,29 +2299,16 @@ mod pending_sidecar_draft_tests {
     }
 
     #[test]
-    fn delayed_private_send_rejects_a_changed_mode_or_controller() {
+    fn delayed_private_send_rechecks_full_agent_account_and_private_enrollment() {
         let controller = crate::test_support::authority("ak:did_core:web:alice.example");
-        let replacement = crate::test_support::authority("ak:did_core:web:bob.example");
-        assert!(private_target_mode_matches(
-            arkret_sdk::AgentInteractionMode::Private,
-            None,
-            &controller
-        ));
-        assert!(private_target_mode_matches(
-            arkret_sdk::AgentInteractionMode::Private,
-            Some(&controller),
-            &controller
-        ));
-        assert!(!private_target_mode_matches(
-            arkret_sdk::AgentInteractionMode::Public,
-            Some(&controller),
-            &controller
-        ));
-        assert!(!private_target_mode_matches(
-            arkret_sdk::AgentInteractionMode::Private,
-            Some(&replacement),
-            &controller
-        ));
+        let agent = crate::test_support::authority("ak:did_core:web:agent.example");
+        let id = agent.principal_id.as_str();
+        let enabled = [agent.principal_id.clone()];
+        assert!(matches_private_recipient(&agent, &controller, id, &enabled));
+        assert!(!matches_private_recipient(&agent, &controller, id, &[]));
+        let foreign = arkret_sdk::AccountId::new(agent.principal_id.clone(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:foreign.example").unwrap());
+        assert!(!matches_private_recipient(&foreign, &controller, id, &enabled));
     }
 
     #[test]

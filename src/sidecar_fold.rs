@@ -439,7 +439,7 @@ pub(crate) fn rebuild_with_closes(
                         let source = SidecarContextRef::Strand {
                             strand_id: context.source_track_ref.strand_id.clone(),
                         };
-                        if context.source_track_ref.realm_id != sidecar.realm_id
+                        if context.source_track_ref.realm_id != sidecar.source_realm_id
                             || context.source_track_ref.track_name.is_empty()
                             || context.addressed_agent_ids.is_empty()
                             || !attached

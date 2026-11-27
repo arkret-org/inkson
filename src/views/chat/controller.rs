@@ -475,6 +475,7 @@ pub(super) struct ChatController {
     pub eligible_circle_scope_request_in_flight: Cage<bool>,
     pub new_channel_scope: Cage<crate::circle::CircleScope>,
     pub sidecar_send_pending: Cage<bool>,
+    pub(crate) sidecar_enrollment: Cage<Option<crate::sidecar::PersonalSidecarEnrollment>>,
     /// Member handle lookups already in flight, so a re-render does not issue
     /// the same Directory request twice.
     pub member_handle_fetching: Cage<std::collections::BTreeSet<String>>,
@@ -620,6 +621,7 @@ impl ChatController {
         set!(eligible_circle_scope_request_in_flight, false);
         set!(new_channel_scope, crate::circle::CircleScope::default());
         set!(sidecar_send_pending, false);
+        set!(sidecar_enrollment, None);
         let _ = self
             .selection_revision
             .try_revise(|value| *value = value.wrapping_add(1));
@@ -3144,6 +3146,7 @@ pub(super) fn chat_controller_for_initial_target(
         eligible_circle_scope_request_in_flight: scope.cage(false),
         new_channel_scope: scope.cage((crate::circle::CircleScope::default)()),
         sidecar_send_pending: scope.cage(false),
+        sidecar_enrollment: scope.cage(None),
         member_handle_fetching: scope.cage((std::collections::BTreeSet::new)()),
     };
     context.chat_state.controllers.borrow_mut().insert(

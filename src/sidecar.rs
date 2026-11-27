@@ -4,12 +4,24 @@
 //! ensure action into the source Strand shell without inventing a wire type or
 //! persisting message plaintext outside the existing composer lifecycle.
 
+/// A pending, explicitly confirmed recipient change on the owner's Station.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PersonalSidecarEnrollment {
+    pub owner: arkret_sdk::AccountId,
+    pub realm: arkret_sdk::RealmId,
+    pub sidecar: arkret_sdk::SidecarId,
+    pub project: String,
+    pub strand: String,
+    pub agents: Vec<arkret_sdk::AccountId>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct HostedSidecarState {
     pub trace_id: String,
     pub controller_account_id: arkret_sdk::AccountId,
     pub addressed_agent_ids: Vec<String>,
     pub addressed_agent_label: String,
+    pub home_realm_id: arkret_sdk::RealmId,
     pub source_realm_id: String,
     pub source_strand_id: String,
     pub sidecar_id: arkret_sdk::SidecarId,
@@ -855,6 +867,7 @@ mod tests {
             controller_account_id: controller_account(),
             addressed_agent_ids: vec!["ak:did_core:web:agents.example:assistant".to_owned()],
             addressed_agent_label: "Assistant".to_owned(),
+            home_realm_id: arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x29;32])),
             source_realm_id: "ak:realm:AUqzNZlfuL-7z087TbZhKOdYyKUNPAa2o_neyoFRh3o2".to_owned(),
             source_strand_id: "ak:strand:AUvEs_-d1tc81yDszBZAVWapgIr3Gs6ofbmtZSLQNejL".to_owned(),
             sidecar_id: arkret_sdk::SidecarId::new(
@@ -895,7 +908,7 @@ mod tests {
             controller_account_id: controller_account(),
             sidecar_id: session.sidecar_id.clone(),
             context_ref: arkret_sdk::SidecarStrandContextRef {
-                realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+                realm_id: session.home_realm_id.clone(),
                 strand_id: arkret_sdk::StrandId::new(session.source_strand_id.clone()).unwrap(),
             },
             pinned: Some(pinned),
@@ -1167,7 +1180,7 @@ mod tests {
     ) -> arkret_sdk::AgentSidecarExchangeRequestContext {
         arkret_sdk::AgentSidecarExchangeRequestContext {
             source_track_ref: arkret_sdk::SidecarSourceTrackRef {
-                realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+                realm_id: session.home_realm_id.clone(),
                 strand_id: arkret_sdk::StrandId::new(session.source_strand_id.clone()).unwrap(),
                 track_name: "discussion".to_owned(),
             },

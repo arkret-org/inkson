@@ -90,6 +90,9 @@ fn fixture(seed: u8, key: &serde_json::Value) -> PrivateFixture {
     use arkret_test_kit::signed_event::SignedEventFixtureBuilder;
     let station = FixtureStation::did_web();
     let device = "ak:device:0196419b-0000-7000-8000-000000000001";
+    let source_realm = arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+        arkret_sdk::DigestSuite::Sha256, [seed ^ 0x55; 32],
+    ));
     let seed = arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
         arkret_sdk::DigestSuite::Sha256,
         [seed; 32],
@@ -107,7 +110,7 @@ fn fixture(seed: u8, key: &serde_json::Value) -> PrivateFixture {
         "ak.sidecar.create",
         realm_scope.clone(),
         actor.clone(),
-        serde_json::json!({}),
+        serde_json::json!({"source_realm_id": source_realm}),
     )
     .with_created_at(fixture_time(2))
     .sign_verifiable(&signer)
@@ -115,7 +118,7 @@ fn fixture(seed: u8, key: &serde_json::Value) -> PrivateFixture {
     .expect_verifiable();
     let sidecar_id = arkret_sdk::SidecarId::from_event_id(&create.event_id);
     let mut strand = arkret_models_collaboration::objects::strand::Strand::new_create(
-        bundle.realm_id.clone(),
+        source_realm.clone(),
         "Private source",
         actor.clone(),
     );
@@ -127,7 +130,7 @@ fn fixture(seed: u8, key: &serde_json::Value) -> PrivateFixture {
     );
     let source = SignedEventFixtureBuilder::new(
         "ak.strand.create",
-        realm_scope,
+        arkret_sdk::ScopeRef::Realm { realm_id: source_realm },
         actor.clone(),
         serde_json::json!({"object":strand}),
     )
@@ -136,19 +139,14 @@ fn fixture(seed: u8, key: &serde_json::Value) -> PrivateFixture {
     .unwrap()
     .expect_verifiable();
     let strand_id = arkret_sdk::StrandId::from_event_id(&source.event_id);
-    let mut realm_items = Vec::<arkret_sdk::CommittedEventFullView>::new();
-    let mut previous = bundle.genesis_commit.commit_id.clone();
-    for (index, event) in [create, source].into_iter().enumerate() {
-        let mut commit = bundle.genesis_commit.clone();
-        commit.stream_position = index as u64 + 1;
-        commit.previous_commit_ref = Some(previous);
-        commit.event_ref = event.event_id.clone();
-        commit.committed_at = fixture_time(51 + index as i64);
-        commit = station.seal_commit(commit);
-        previous = commit.commit_id.clone();
-        realm_items.push(arkret_sdk::CommittedEventFullView { commit, event });
-    }
-    let mut base = frozen(&[CommittedEventView::Full(realm_items[1].clone())]);
+    let mut commit = bundle.genesis_commit.clone();
+    commit.stream_position = 1;
+    commit.previous_commit_ref = Some(bundle.genesis_commit.commit_id.clone());
+    commit.event_ref = create.event_id.clone();
+    commit.committed_at = fixture_time(51);
+    let private_create = arkret_sdk::CommittedEventFullView { commit: station.seal_commit(commit), event: create };
+    let realm_items = [private_create.clone()];
+    let mut base = frozen(&[CommittedEventView::Full(private_create)]);
     base.current_state_entries = super::super::tests::coland_bootstrap_rows(&bundle, &realm_items);
     let scope = arkret_sdk::ScopeRef::Sidecar {
         realm_id: bundle.realm_id.clone(),

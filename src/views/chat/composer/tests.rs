@@ -40,7 +40,8 @@ fn prior_private_session(controller: arkret_sdk::AccountId) -> crate::sidecar::H
         controller_account_id: controller,
         addressed_agent_ids: vec!["ak:did_core:web:agents.example:previous".into()],
         addressed_agent_label: "Previous".into(),
-        source_realm_id: "ak:realm:AUqzNZlfuL-7z087TbZhKOdYyKUNPAa2o_neyoFRh3o2".into(),
+        home_realm_id: arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x29;32])),
+            source_realm_id: "ak:realm:AUqzNZlfuL-7z087TbZhKOdYyKUNPAa2o_neyoFRh3o2".into(),
         source_strand_id: "ak:strand:AUvEs_-d1tc81yDszBZAVWapgIr3Gs6ofbmtZSLQNejL".into(),
         sidecar_id: arkret_sdk::SidecarId::new(
             "ak:sidecar:Abbk-ALq9nZszIh8qJC26XasNIx9TYjU5-BzXWyqwDVx",

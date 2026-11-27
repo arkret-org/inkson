@@ -1450,7 +1450,10 @@ mod tests {
                 json!({"object": collaboration_genesis(GENESIS_SALT)}),
                 ordinary_bootstrap_entries(&creator)
                     .into_iter()
-                    .chain([("ak.sidecar.create".to_owned(), json!({}))])
+                    .chain([(
+                        "ak.sidecar.create".to_owned(),
+                        json!({"source_realm_id":realm_id}),
+                    )])
                     .collect(),
                 "alice.example",
                 DEVICE_ID,
@@ -3086,6 +3089,8 @@ mod tests {
                         id: sidecar_id.clone(),
                         schema: arkret_sdk::SchemaId::AGENT_SIDECAR_V1.to_owned(),
                         realm_id: item.event.realm_id.clone(),
+                        source_realm_id: serde_json::from_value(payload["source_realm_id"].clone())
+                            .expect("signed Sidecar source"),
                         controller_account_id: item.event.actor_id.as_account_id().unwrap().clone(),
                         state: arkret_sdk::AgentSidecarState::Active,
                         state_changed_at: None,

@@ -651,12 +651,23 @@ pub(crate) fn participant_mention_account(
     participant.actor_id.as_ref()?.as_account_id().cloned()
 }
 
+/// A current personal inventory belongs to its full Human Account at H.
+pub(crate) fn composer_recipient_account(participant: &SpaceParticipant, controller: &arkret_sdk::AccountId) -> Option<arkret_sdk::AccountId> {
+    if participant.actor_id.is_some() { return participant_mention_account(participant); }
+    if !participant.is_agent || !participant.agent_metadata.as_ref().is_some_and(|metadata|
+        same_principal_core(&metadata.controller_principal_id,controller.principal_id.as_str())) { return None; }
+    Some(arkret_sdk::AccountId::new(participant.principal_id.clone(), controller.station_id.clone()))
+}
+
 pub(crate) fn mention_candidate_for_participant(
     participant: &SpaceParticipant,
     participants: &[SpaceParticipant],
     principal_id: &str,
 ) -> Option<crate::messaging::mentions::MentionCandidate> {
-    let subject_account_id = participant_mention_account(participant)?;
+    let subject_account_id = participant_mention_account(participant).or_else(|| {
+        let actor=crate::mls_api_helpers::local_account_actor_id(principal_id).ok()?;
+        composer_recipient_account(participant, actor.as_account_id()?)
+    })?;
     if participant.is_agent {
         // No verified current selector claim is available on this path.
         // The roster ActorId is complete, so the picker may still select the

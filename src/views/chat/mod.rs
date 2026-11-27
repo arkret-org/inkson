@@ -392,10 +392,7 @@ fn owned_agent_ids_from_composer(
             participants.iter().any(|participant| {
                 participant.is_agent
                     && mention.subject_account_id.station_id == controller_account.station_id
-                    && participant
-                        .actor_id
-                        .as_ref()
-                        .and_then(arkret_sdk::ActorId::as_account_id)
+                    && composer_recipient_account(participant, &controller_account).as_ref()
                         == Some(&mention.subject_account_id)
                     && participant.agent_metadata.as_ref().is_some_and(|metadata| {
                         same_principal_core(
@@ -431,9 +428,9 @@ fn composer_shared_agent_targets(
         .filter(|m| {
             participants.iter().any(|p| {
                 p.is_agent && participant_mention_account(p).as_ref() == Some(&m.subject_account_id)
-            }) || candidates
-                .iter()
-                .any(|c| c.is_agent && c.subject_account_id == m.subject_account_id)
+            }) || candidates.iter().any(|c| {
+                c.is_agent && !c.is_owned_agent && c.subject_account_id == m.subject_account_id
+            })
         })
         .map(|m| m.subject_account_id.clone())
         .collect()
@@ -458,15 +455,19 @@ fn composer_agent_mode_route(
         mut selected_participant_agent_count,
     ) = (0, 0, 0, 0);
     for mention in mentions.iter().filter_map(MentionNode::as_mention) {
-        let target = participants
-            .iter()
-            .find(|p| participant_mention_account(p).as_ref() == Some(&mention.subject_account_id));
+        let target = participants.iter().find(|p| {
+            composer_recipient_account(p, controller).as_ref() == Some(&mention.subject_account_id)
+        });
         if target.is_some_and(|p| p.is_agent)
             || candidates
                 .iter()
                 .any(|c| c.is_agent && c.subject_account_id == mention.subject_account_id)
         {
-            let mode = modes.get(&mention.subject_account_id).copied();
+            let mode = if target.is_some_and(|p| p.actor_id.is_none()) {
+                Some(arkret_sdk::AgentInteractionMode::Private)
+            } else {
+                modes.get(&mention.subject_account_id).copied()
+            };
             let owned = target
                 .and_then(|p| p.agent_metadata.as_ref())
                 .is_some_and(|m| {
@@ -593,29 +594,30 @@ fn validate_native_prepared_sidecar_binding(
     context_attach_event: &arkret_sdk::Event,
     sidecar_id: &arkret_sdk::SidecarId,
     source_strand_id: &arkret_sdk::StrandId,
-    controller_did: &arkret_sdk::Did,
+    controller: &arkret_sdk::AccountId,
+    home_realm: &arkret_sdk::RealmId,
     source_realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<()> {
-    let controller_actor = arkret_sdk::project_did_to_core_id(controller_did)?;
     if let Some(create) = create_event
         && (create.kind != arkret_sdk::EventKind::SidecarCreate
-            || create.actor_id.signing_principal_id() != &controller_actor
-            || create.realm_id != *source_realm_id
+            || create.actor_id.as_account_id() != Some(controller)
+            || create.realm_id != *home_realm
             || create.scope_ref
                 != (arkret_sdk::ScopeRef::Realm {
-                    realm_id: source_realm_id.clone(),
+                    realm_id: home_realm.clone(),
                 })
-            || !create.payload.is_empty()
+            || serde_json::to_value(&create.payload)?
+                != serde_json::json!({"source_realm_id":source_realm_id})
             || arkret_sdk::SidecarId::from_event_id(&create.event_id) != *sidecar_id)
     {
         anyhow::bail!("native Sidecar create draft differs from its reservation");
     }
     if context_attach_event.kind != arkret_sdk::EventKind::SidecarContextAttach
-        || context_attach_event.actor_id.signing_principal_id() != &controller_actor
-        || context_attach_event.realm_id != *source_realm_id
+        || context_attach_event.actor_id.as_account_id() != Some(controller)
+        || context_attach_event.realm_id != *home_realm
         || context_attach_event.scope_ref
             != (arkret_sdk::ScopeRef::Sidecar {
-                realm_id: source_realm_id.clone(),
+                realm_id: home_realm.clone(),
                 sidecar_id: sidecar_id.clone(),
             })
     {
@@ -742,11 +744,6 @@ async fn ensure_owned_agent_sidecar(
     }
     let controller = authority.principal_id.clone();
     let source_realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
-    let source_digest_suite = state_store
-        .read(|value| value.station_realm_digest_suite(source_realm.as_str()))
-        .ok_or_else(|| {
-            anyhow::anyhow!("native Sidecar source Realm is waiting for its Station frontier")
-        })?;
     let source_strand = arkret_sdk::StrandId::new(strand_id.to_owned())?;
     let mut addressed = addressed_agent_ids
         .iter()
@@ -814,6 +811,9 @@ async fn ensure_owned_agent_sidecar(
         api_token,
         move |http| async move {
             ceremony_fence.check()?;
+            let home_realm=crate::transport::account::current_principal_for_authority(&http,&ceremony_controller_account_id).await?.principal_control_realm_id;
+            let home_digest_suite=home_realm.digest_suite_code().digest_suite();
+            ceremony_fence.check()?;
             let (expected_phase, expected_sidecar_id, request, expires_at) = if let Some(pending) = pending {
                 if pending.operation_id != ceremony_operation_id {
                     anyhow::bail!("durable native Sidecar commit changed its operation binding");
@@ -831,7 +831,7 @@ async fn ensure_owned_agent_sidecar(
                 let proof_context = crate::event_submit::EventSubmitter::new(http.clone())
                     .with_authority(ceremony_controller_account_id.clone())
                     .with_state_store(ceremony_state_store.handle())
-                    .event_proof_context(source_digest_suite)
+                    .event_proof_context(home_digest_suite)
                     .await?;
                 ceremony_fence.check()?;
                 let idempotency_key =
@@ -860,7 +860,7 @@ async fn ensure_owned_agent_sidecar(
                                 arkret_sdk::EventKind::SidecarCreate.as_str(),
                                 &ceremony_controller_did,
                                 &ceremony_device,
-                                &ceremony_realm,
+                                &home_realm,
                             )?;
                             let sidecar_id = arkret_sdk::SidecarId::from_event_id(
                                 create_event.event_id(),
@@ -871,14 +871,15 @@ async fn ensure_owned_agent_sidecar(
                                 arkret_sdk::EventKind::SidecarContextAttach.as_str(),
                                 &ceremony_controller_did,
                                 &ceremony_device,
-                                &ceremony_realm,
+                                &home_realm,
                             )?;
                             validate_native_prepared_sidecar_binding(
                                 Some(&create_event),
                                 &context_attach_event,
                                 &sidecar_id,
                                 &ceremony_strand,
-                                &ceremony_controller_did,
+                                &ceremony_controller_account_id,
+                                &home_realm,
                                 &ceremony_realm,
                             )?;
                             let request = arkret_sdk::SidecarEnsureRequestBody::Commit(
@@ -936,14 +937,15 @@ async fn ensure_owned_agent_sidecar(
                                 arkret_sdk::EventKind::SidecarContextAttach.as_str(),
                                 &ceremony_controller_did,
                                 &ceremony_device,
-                                &ceremony_realm,
+                                &home_realm,
                             )?;
                             validate_native_prepared_sidecar_binding(
                                 None,
                                 &context_attach_event,
                                 &sidecar_id,
                                 &ceremony_strand,
-                                &ceremony_controller_did,
+                                &ceremony_controller_account_id,
+                                &home_realm,
                                 &ceremony_realm,
                             )?;
                             let request = arkret_sdk::SidecarEnsureRequestBody::Attach(
@@ -1006,7 +1008,7 @@ async fn ensure_owned_agent_sidecar(
             ceremony_fence.check()?;
             crate::sidecar::validate_agent_sidecar_view(&view)?;
             if view.sidecar.id != sidecar_id
-                || view.sidecar.realm_id != ceremony_realm
+                || view.sidecar.source_realm_id != ceremony_realm || view.sidecar.realm_id != home_realm
                 || view.sidecar.controller_account_id != ceremony_controller_account_id
             {
                 anyhow::bail!("native Sidecar view differs from its accepted ceremony");
@@ -1023,12 +1025,6 @@ async fn ensure_owned_agent_sidecar(
             store.begin_durable_flush()
         })?;
         barrier.wait().await?;
-    }
-    if addressed
-        .iter()
-        .any(|agent_id| !view.desired_agent_ids.contains(agent_id))
-    {
-        anyhow::bail!("an addressed Agent is not a desired member of this Realm Sidecar");
     }
     tracing::info!(
         target: "sidecar",
@@ -1142,7 +1138,7 @@ async fn submit_source_routed_sidecar_message(
     crate::sidecar::validate_agent_sidecar_view(view)?;
     let api = crate::transport::auth::authed_api_with_sync(base_url, api_token.clone(), None)?;
     let history_pending =
-        state_store.read(|value| value.has_pending_sidecar_history(source_realm_id));
+        state_store.read(|value| value.has_pending_sidecar_history(view.sidecar.realm_id.as_str()));
     if history_pending {
         // An authenticated current may advance before its private originals.
         // Complete that cut before creating an intent or consuming the send
@@ -1162,12 +1158,16 @@ async fn submit_source_routed_sidecar_message(
         "private send belongs to a replaced account session"
     );
     state_store.read(|store| {
-        crate::sidecar::cached_sidecar_exchange_projections(store, authority, source_realm_id)
+        crate::sidecar::cached_sidecar_exchange_projections(
+            store,
+            authority,
+            view.sidecar.realm_id.as_str(),
+        )
     })?;
     if attached_source_strand_id != routed_source_strand_id {
         anyhow::bail!("native Sidecar send source differs from its attached context");
     }
-    if view.sidecar.realm_id.as_str() != source_realm_id
+    if view.sidecar.source_realm_id.as_str() != source_realm_id
         || view.access_readiness != arkret_sdk::AgentSidecarAccessReadiness::Ready
         || !view.mls_context.current_controller_device_ready
     {
@@ -1270,7 +1270,7 @@ async fn submit_source_routed_sidecar_message(
         .map(|pending| pending.request_context.clone())
         .unwrap_or(arkret_sdk::AgentSidecarExchangeRequestContext {
             source_track_ref: arkret_sdk::SidecarSourceTrackRef {
-                realm_id: view.sidecar.realm_id.clone(),
+                realm_id: view.sidecar.source_realm_id.clone(),
                 strand_id: arkret_sdk::StrandId::new(attached_source_strand_id.to_owned())?,
                 track_name: "discussion".to_owned(),
             },
@@ -1307,7 +1307,7 @@ async fn submit_source_routed_sidecar_message(
     let build = crate::views::secure_send::build_secure_send(
         &api,
         &state_store.handle(),
-        source_realm_id,
+        view.sidecar.realm_id.as_str(),
         authority,
         controller_principal_id,
         device_id,
@@ -1351,7 +1351,7 @@ async fn submit_source_routed_sidecar_message(
         &api,
         &state_store.handle(),
         build,
-        source_realm_id,
+        view.sidecar.realm_id.as_str(),
         None,
     )
     .await;
@@ -1389,8 +1389,9 @@ async fn submit_source_routed_sidecar_message(
                 .unwrap_or_else(|| message_id.clone());
             store.append_raw_operation(
                 local_operation_id,
-                Some(source_realm_id.to_owned()),
+                Some(view.sidecar.realm_id.to_string()),
                 json!({
+                    "scope_ref": effective_scope,
                     "event_id": event_id.clone(),
                     "kind": event_kind_str::MESSAGE_CREATE,
                     "actor_id": controller_principal_id,
@@ -1401,7 +1402,7 @@ async fn submit_source_routed_sidecar_message(
                 }),
             );
             store.save_private_plaintext(
-                source_realm_id,
+                view.sidecar.realm_id.as_str(),
                 attached_source_strand_id,
                 &format!("message:{protocol_message_id}"),
                 &content_for_sidecar,

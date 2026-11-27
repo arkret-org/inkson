@@ -2820,6 +2820,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("circles.controls.retire", "Permanently retire Circle");
 
     dict.set("chat.direct_structure.reply_hint", "Reply preference applies only to the selected Chat. Other permissions and encryption readiness are checked separately.");
+    dict.set("chat.sidecar.enable_private_reply", "Allow {agents} to join this private chat and reply");
     dict.set(
         "chat.direct_structure.allow_agent_reply",
         "Allow Agent replies in this Chat",

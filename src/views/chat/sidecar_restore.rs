@@ -289,7 +289,7 @@ pub(super) fn sidecar_reconciliation(
                     crate::sidecar::validate_agent_sidecar_view(&view)?;
                     anyhow::ensure!(
                         view.sidecar.id == session.sidecar_id
-                            && view.sidecar.realm_id.as_str() == realm_id
+                            && view.sidecar.source_realm_id.as_str() == realm_id
                             && view.sidecar.controller_account_id == authority,
                         "Sidecar reconciliation changed its private scope or controller"
                     );
@@ -421,6 +421,7 @@ pub(super) fn sidecar_restore(
                     anyhow::ensure!(
                         view.sidecar.id == candidate.id
                             && view.sidecar.realm_id == candidate.realm_id
+                            && view.sidecar.source_realm_id.as_str() == realm_id
                             && view.sidecar.controller_account_id == authority,
                         "Sidecar restore read changed its controller or native identity"
                     );
@@ -475,6 +476,7 @@ pub(super) fn sidecar_restore(
                             controller_account_id: authority.clone(),
                             addressed_agent_ids: last_addressed,
                             addressed_agent_label: "No agents addressed".to_owned(),
+                            home_realm_id: view.sidecar.realm_id.clone(),
                             source_realm_id: realm_id.clone(),
                             source_strand_id: strand_id.clone(),
                             sidecar_id: candidate.id.clone(),

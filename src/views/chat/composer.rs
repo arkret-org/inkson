@@ -287,7 +287,7 @@ fn preview(
     let private_scope = sidecar_session_for_draft(route, context.active_sidecar_session.as_ref())
         .and_then(|session| {
             Some(arkret_sdk::ScopeRef::Sidecar {
-                realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).ok()?,
+                realm_id: session.home_realm_id.clone(),
                 sidecar_id: session.sidecar_id.clone(),
             })
         });
@@ -609,7 +609,7 @@ pub(super) fn chat_composer(
         sidecar_session_for_draft(route, context.active_sidecar_session.as_ref()).and_then(
             |session| {
                 Some(arkret_sdk::ScopeRef::Sidecar {
-                    realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).ok()?,
+                    realm_id: session.home_realm_id.clone(),
                     sidecar_id: session.sidecar_id.clone(),
                 })
             },
@@ -1229,6 +1229,33 @@ pub(super) fn chat_composer(
             }
         },
     );
+    let enrollment_app = app.clone();
+    let enrollment = reactive_distinct(controller.sidecar_enrollment, move |scope, pending| {
+        let Some(pending) = pending else { return empty() };
+        let current = context.get_untracked();
+        if current.authority != pending.owner || current.selected_realm_id != pending.project
+            || controller.selected_channel.get_untracked() != pending.strand { return empty(); }
+        let label = pending.agents.iter().map(|agent| agent.principal_id.to_string()).collect::<Vec<_>>().join(", ");
+        let client_app = enrollment_app.clone();
+        let label = enrollment_app.translated_args(scope, "chat.sidecar.enable_private_reply", move || vec![("agents",label.clone())]);
+        button(label, "secondary", true, move || {
+            if controller.sidecar_enrollment.get_untracked().as_ref() != Some(&pending) { return; }
+            let current = context.get_untracked();
+            if current.authority != pending.owner || controller.selected_channel.get_untracked()!=pending.strand
+                || current.selected_realm_id!=pending.project { return; }
+            let base = client_app.base_url.get_untracked();
+            let token = current.token.get_untracked();
+            let selection = pending.clone();
+            controller.sidecar_enrollment.revise(|value| *value = None);
+            super::task::dispatch(async move {
+                if let Err(error) = crate::transport::auth::with_authed_sdk_client(&base,token,|http| async move {
+                    crate::transport::agent_interaction::enable_private_replies(&http, &selection).await
+                }).await {
+                    controller.status_msg.revise(|value| *value=error.display());
+                }
+            });
+        })
+    });
     let storage_app = app.clone();
     let storage_error =
         reactive_distinct(
@@ -1279,6 +1306,7 @@ pub(super) fn chat_composer(
                 scope.bond(move || preview.get().title),
             ),
             circle_banner,
+            enrollment,
             reply,
             block(
                 "composer-input-surface",

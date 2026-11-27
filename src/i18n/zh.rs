@@ -2563,6 +2563,7 @@ pub fn chinese_translations() -> TranslationDict {
         "chat.direct_structure.reply_hint",
         "回复偏好仅适用于所选聊天。其他权限和加密就绪状态会单独检查。",
     );
+    dict.set("chat.sidecar.enable_private_reply", "允许 {agents} 加入此私聊并回复");
     dict.set(
         "chat.direct_structure.allow_agent_reply",
         "允许 Agent 在此聊天中回复",
