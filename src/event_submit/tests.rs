@@ -714,9 +714,17 @@ fn snapshot_of(
     let mut queue = garth::SendQueue::default();
     let now = chrono::Utc::now();
     for (event, _) in &items {
-        queue
-            .enqueue(event_submission(event).unwrap(), now)
-            .unwrap();
+        let submission = if event.event().kind == arkret_sdk::EventKind::MlsCommit {
+            QueuedSubmission::new(arkret_wire::AuthoritySubmitRequestBody::MlsCommit(arkret_wire::MlsCommitSubmission {
+                commit_event: event.event().clone(),
+                recovery_source: None,
+                welcomes: vec![],
+                idempotency_key: arkret_wire::UuidV7::new(arkret_sdk::identifiers::uuid_v7_at(1_760_000_000_000)).unwrap(),
+            })).unwrap()
+        } else {
+            event_submission(event).unwrap()
+        };
+        queue.enqueue(submission, now).unwrap();
     }
     let mut snapshot = queue.snapshot();
     for (queued, (event, status)) in snapshot.items.iter_mut().zip(items.iter()) {
@@ -809,27 +817,24 @@ fn the_genesis_lane_projection_counts_committed_and_unsettled_attempts() {
         "the window between commit and local projection is not absence"
     );
 
-    let circle = arkret_sdk::ScopeRef::Circle {
-        realm_id: realm_id(REALM),
-        circle_id: arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
+    let foreign = arkret_sdk::ScopeRef::Realm { realm_id: arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
             arkret_sdk::DigestSuite::Sha256,
             [75; 32],
-        )),
-    };
-    let mut circle_intent = serde_json::to_value(EventIntent::from_authored(&genesis)).unwrap();
-    circle_intent["scope_ref"] = serde_json::to_value(&circle).unwrap();
-    circle_intent["payload"]["governance_binding"] = serde_json::to_value(
-        arkret_sdk::MlsGovernanceBindingPayload::new(circle, None, 0, 0, 0).unwrap(),
+        )) };
+    let mut foreign_intent = serde_json::to_value(EventIntent::from_authored(&genesis)).unwrap();
+    foreign_intent["scope_ref"] = serde_json::to_value(&foreign).unwrap();
+    foreign_intent["payload"]["governance_binding"] = serde_json::to_value(
+        arkret_sdk::MlsGovernanceBindingPayload::new(foreign, None, 0, 0, 0).unwrap(),
     )
     .unwrap();
-    let circle_genesis = author_and_sign(serde_json::from_value(circle_intent).unwrap(), &signer);
+    let foreign_genesis = author_and_sign(serde_json::from_value(foreign_intent).unwrap(), &signer);
     for status in [SendQueueStatus::Queued, SendQueueStatus::Committed] {
         assert!(
             !durable_mls_genesis_for_realm_from_snapshot(
-                &snapshot_of(vec![(circle_genesis.clone(), status)]),
+                &snapshot_of(vec![(foreign_genesis.clone(), status)]),
                 REALM
             ),
-            "a Circle Genesis cannot request activation of its plaintext parent Realm"
+            "an unrelated Genesis cannot activate this Realm"
         );
     }
 

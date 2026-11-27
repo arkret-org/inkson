@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn inventory_only_agent_has_no_guessed_station_or_selector_candidate() {
+fn owned_inventory_agent_uses_controllers_home_without_a_selector() {
     let controller = SpaceParticipant {
         actor_id: Some(local_fixture_actor(
             "ak:did_core:web:example.com:users:alice",
@@ -40,9 +40,22 @@ fn inventory_only_agent_has_no_guessed_station_or_selector_candidate() {
         }),
     };
     let participants = vec![controller.clone(), agent.clone()];
-    assert!(
+    let candidate =
         mention_candidate_for_participant(&agent, &participants, controller.principal_id.as_str())
-            .is_none()
+            .unwrap();
+    assert_eq!(
+        candidate.subject_account_id,
+        local_fixture_account(agent.principal_id.as_str())
+    );
+    assert!(candidate.is_owned_agent);
+    assert!(candidate.agent_slug_at_time.is_empty());
+    assert!(
+        mention_candidate_for_participant(
+            &agent,
+            &participants,
+            "ak:did_core:web:example.com:users:bob"
+        )
+        .is_none()
     );
 }
 

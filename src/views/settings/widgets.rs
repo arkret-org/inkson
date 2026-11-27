@@ -107,7 +107,8 @@ pub(crate) fn switch_toggle(
     Box::new(
         sapid::switch()
             .unstyled()
-            .class(format!("settings-toggle settings-switch {key}"))
+            .class(format!("settings-switch {key}"))
+            .label_position(sapid::SwitchLabelPosition::Before)
             .label(context.translated(scope, label_key))
             .checked(checked)
             .enabled(enabled)

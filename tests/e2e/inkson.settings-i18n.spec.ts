@@ -66,6 +66,33 @@ test("settings capabilities and consent read surfaces and forms follow the activ
   }
 });
 
+test("immediate notification switches keep their label and focus indicator on the right", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 810 });
+  await gotoAndDismissRecovery(page, "/settings/notifications");
+  const row = byClass(page, "settings-notification-kind-mention");
+  const input = row.getByRole("switch", { name: "Mention notifications" });
+  const track = row.locator(".sapid-switch-track");
+  await expect.poll(() => row.evaluate(element => {
+    const label = element.querySelector(".sapid-switch-label")!.getBoundingClientRect();
+    const track = element.querySelector(".sapid-switch-track")!.getBoundingClientRect();
+    return label.right < track.left && track.right <= element.getBoundingClientRect().right;
+  })).toBe(true);
+  const initial = await input.isChecked();
+  const border = await track.evaluate(el => getComputedStyle(el).borderTopColor);
+  await input.press("Space");
+  await expect(input).toBeChecked({ checked: !initial });
+  await expect(track).not.toHaveCSS("border-top-color", border);
+  await expect(track.locator(".sapid-switch-focus")).toHaveCSS("border-top-width", "2px");
+  await input.press("Tab");
+  await expect(track.locator(".sapid-switch-focus")).toHaveCSS("border-top-width", "0px");
+  await page.emulateMedia({ forcedColors: "active" });
+  await input.press("Space");
+  await expect(input).toBeChecked({ checked: initial });
+  await expect(track.locator(".sapid-switch-focus")).toHaveCSS("border-top-width", "2px");
+  const thumb = await track.locator(".sapid-switch-thumb").evaluate(el => getComputedStyle(el).backgroundColor);
+  await expect(track).not.toHaveCSS("background-color", thumb);
+});
+
 test("invite policy saves the actual Account policy and restores it after reload", async ({ page }) => {
   const policyPath = "/_arkret/self/invite-receive-policy";
   const writes: Array<Record<string, unknown>> = [];
@@ -78,13 +105,29 @@ test("invite policy saves the actual Account policy and restores it after reload
   });
   await gotoAndDismissRecovery(page, "/settings/invite-policy");
   await expect(byClass(page, "invite-policy-blocked-row")).toHaveCount(1);
-  await byClass(page, "invite-policy-explicit-behavior").getByRole("combobox").click();
+  const receipt = byClass(page, "invite-policy-disclosure-high-trust").getByRole("checkbox");
+  const initialReceipt = await receipt.isChecked();
+  await receipt.press("Space");
+  await expect(receipt).toBeChecked({ checked: !initialReceipt });
+  await expect(receipt).toHaveCSS("outline-offset", "2px");
+  expect(writes).toHaveLength(0);
+  const behavior = byClass(page, "invite-policy-explicit-behavior").getByRole("combobox");
+  await behavior.focus();
+  await expect(behavior).toHaveCSS("outline-offset", "2px");
+  await behavior.press("Space");
   await page.getByRole("option", { name: "Notify me", exact: true }).click();
   await byClass(page, "invite-policy-blocked-row").getByRole("button").click();
   await expect(page.getByText("No blocked inviters.", { exact: true })).toBeVisible();
   const saveResponsePromise = page.waitForResponse(response =>
     response.request().method() === "PUT" && new URL(response.url()).pathname === policyPath);
-  await byClass(page, "invite-policy-save-button").click();
+  const save = byClass(page, "invite-policy-save-button");
+  await save.focus();
+  await save.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(save).toBeFocused();
+  await expect(save).toHaveCSS("outline-style", "solid");
+  await expect(save).toHaveCSS("outline-offset", "2px");
+  await save.press("Enter");
   const saveResponse = await saveResponsePromise;
   expect(saveResponse.status()).toBe(200);
   const savedPolicy = await saveResponse.json();
@@ -97,6 +140,7 @@ test("invite policy saves the actual Account policy and restores it after reload
   // The formal field is optional. The SDK canonical serializer omits an
   // empty denied_actor_ids Vec; omission decodes as the empty block list.
   expect(written).not.toHaveProperty("denied_actor_ids");
+  expect(savedPolicy.disclosure.high_trust).toBe(initialReceipt ? "opaque" : "outcome");
   expect(savedPolicy).toEqual(written);
   const reloadResponsePromise = page.waitForResponse(response =>
     response.request().method() === "GET" && new URL(response.url()).pathname === policyPath);
@@ -172,15 +216,15 @@ test("settings notification labels and options switch between Chinese and Englis
     const kinds = ["mention", "reaction", "invite", "message"];
     for (const [index, kind] of kinds.entries()) {
       await expect(
-        byClass(page, `settings-notification-kind-${kind}`).locator(".settings-notification-kind-label"),
+        byClass(page, `settings-notification-kind-${kind}`).locator(".sapid-switch-label"),
       ).toHaveText(labels[index]);
-      await expect(byClass(page, `settings-notification-kind-${kind}`).getByRole("checkbox")).toHaveAccessibleName(labels[index]);
+      await expect(byClass(page, `settings-notification-kind-${kind}`).getByRole("switch")).toHaveAccessibleName(labels[index]);
     }
     const mention = byClass(page, "settings-notification-kind-mention");
-    const checkbox = mention.getByRole("checkbox");
-    const wasEnabled = await checkbox.isChecked();
-    await checkbox.click();
-    await expect(checkbox).toBeChecked({ checked: !wasEnabled });
+    const kindSwitch = mention.getByRole("switch");
+    const wasEnabled = await kindSwitch.isChecked();
+    await kindSwitch.click();
+    await expect(kindSwitch).toBeChecked({ checked: !wasEnabled });
     await expect(mention).toContainText(language === "zh"
       ? (wasEnabled ? "已静音" : "已开启")
       : (wasEnabled ? "Muted" : "Enabled"));

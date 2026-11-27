@@ -175,7 +175,7 @@ async fn join_original(
     snapshot: &arkret_sdk::RealmStateSnapshot,
 ) -> anyhow::Result<arkret_sdk::Event> {
     let revision = snapshot
-        .parent_membership_revision(member)
+        .active_realm_member_revision(member)
         .ok_or_else(|| anyhow::anyhow!("No verified current joined membership"))?;
     let stream = arkret_sdk::CommitStreamRef::Realm {
         realm_id: realm.clone(),

@@ -485,7 +485,6 @@
 .card-synthesis-latest-button:hover,
 .card-synthesis-latest-button:focus-visible {
   filter: brightness(1.08);
-  outline: none;
 }
 .card-synthesis-history-menu {
   position: absolute;
@@ -527,7 +526,6 @@
 .card-synthesis-history-item.active {
   border-color: color-mix(in srgb, var(--accent, var(--ak-brand)) 42%, var(--border, var(--ak-line)));
   background: color-mix(in srgb, var(--accent-soft, rgba(245, 158, 11, 0.14)) 38%, var(--surface, var(--ak-surface)));
-  outline: none;
 }
 .card-synthesis-history-meta {
   min-width: 0;
@@ -621,6 +619,9 @@
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
+.card-detail-edit-status:empty {
+  display: none;
+}
 /* Card detail forms inherit the shared workflow grid. Keep these actions
  * compact while preserving the global CTA treatment elsewhere. */
 .card-detail-form-actions .primary,
@@ -650,12 +651,25 @@
     max-height: 100vh;
   }
   .card-detail-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: max-content;
+    align-content: start;
     overflow: auto;
   }
   .card-detail-main,
   .card-detail-sidebar {
     overflow: visible;
+  }
+  .card-detail-main,
+  .card-detail-tabs-section {
+    grid-template-rows: auto auto;
+  }
+  .card-detail-discussion-panel .discussion-shell.embedded {
+    height: auto;
+    grid-template-rows: clamp(10rem, 30dvh, 20rem) auto;
+  }
+  .card-detail-discussion-panel .discussion-main-panel {
+    min-height: 0;
   }
   .card-detail-sidebar {
     border-left: 0;
@@ -690,7 +704,10 @@
 @media (max-width: 640px) {
   .card-detail-header { flex-direction: column; align-items: stretch; gap: 8px; }
   .card-detail-header-actions { align-self: flex-end; }
+  .card-detail-title-row { display: grid; grid-template-columns: auto minmax(0, 1fr); }
   .card-detail-title-row h2 { white-space: normal; overflow-wrap: anywhere; }
+  .card-detail-title-meta { grid-column: 1 / -1; flex-wrap: wrap; }
+  .card-detail-title-meta > * { max-width: 100%; }
 }
 
 /* Sidebar tabs use Sapid keyboard navigation and panel ownership. */
@@ -734,7 +751,6 @@
 .assignee-picker-option.secondary:not(:disabled):hover,
 .assignee-picker-option.secondary:focus-visible {
   background: var(--surface-2, var(--ak-panel));
-  outline: none;
 }
 .assignee-picker-option.secondary.selected {
   background: color-mix(in srgb, var(--accent) 14%, var(--surface));

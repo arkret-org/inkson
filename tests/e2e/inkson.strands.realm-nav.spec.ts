@@ -21,240 +21,14 @@ import {
 
 registerStrandsBeforeEach();
 
-async function rejectCircleControl(page: import("@playwright/test").Page, kind: string) {
-  const outcome = { status: "rejected", reason_code: "capability_denied" };
-  validateMockSchema("schemas/authority-commit-operations.schema.json#/$defs/self_submit_response_body", outcome);
-  await page.route("**/_arkret/self/events", async route => {
-    const event = submittedEvent(route.request().postDataJSON());
-    if (event?.kind !== kind) { await route.fallback(); return; }
-    expect(event.scope_ref.kind).toBe("circle");
-    expect(event.scope_ref.circle_id).toBe("ak:circle:AVhDoodj6EFMf5ZQ1JXfSmM5ZNZrK3ekqYa4-EOvqSiE");
-    expect(event.producer_proof).toBeTruthy();
-    if (kind === "ak.circle.history_access") {
-      expect(event.payload.from).toBe("all_history_for_current_members");
-      expect(event.payload.to).toBe("since_join");
-      expect(event.payload.patch).toBeUndefined();
-    }
-    if (kind === "ak.circle.update") {
-      expect(event.payload.patch.title).toBe("Ops Circle");
-      expect(event.payload.patch.history_access).toBeUndefined();
-      expect(event.payload.patch.mls_group_id).toBeUndefined();
-    }
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(outcome) });
-  });
-}
-
-
-test("ordinary Circle list fails closed when the response contains a Sidecar profile", async ({
-  page,
-}) => {
-  await gotoAndDismissRecovery(
-    page,
-    `/realms/${DEMO_REALM}/circles`,
-  );
-  const panel = page.locator("[class~=\"circle-realm\"]");
-  await expect(panel).toBeVisible();
-  await expect(panel.locator("[class~=\"circle-list-item\"]")).toHaveCount(1);
-  await expect(panel).toContainText("Demo Circle");
-  await expect(panel).not.toContainText("Alice AI Sidecar");
-});
-
-test("Circle creation fails closed without a complete verified parent Realm cut", async ({
-  page,
-}) => {
-  // This canonical Realm is deliberately absent from the Account baseline.
-  const response = { realm_id: INVITED_REALM, circles: [] };
-  validateMockSchema("schemas/circle-operations.schema.json#/$defs/circle_list", response);
-  await page.route("**/_arkret/self/circles?**", async route => {
-    if (new URL(route.request().url()).searchParams.get("realm_id") !== INVITED_REALM) {
-      await route.fallback(); return;
-    }
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(response) });
-  });
-  const writes: string[] = [];
-  page.on("request", request => {
-    const path = new URL(request.url()).pathname;
-    if (request.method() === "POST" &&
-      (["/_arkret/self/events", "/_arkret/self/event-batches", "/_arkret/self/circles"].includes(path) ||
-        /^\/_arkret\/self\/circles\/[^/]+\/members$/.test(path))) {
-      writes.push(request.url());
-    }
-  });
-  await gotoAndDismissRecovery(
-    page,
-    `/realms/${INVITED_REALM}/circles`,
-  );
-  const panel = page.locator("[class~=\"circle-realm\"]");
-  await panel.locator("[class~=\"circles-new\"]").click();
-  await page.locator(".circle-create-title input").fill("Incident Response");
-  await page.locator("[class~=\"circle-create\"]").click();
-
-  await expect(panel.getByRole("status")).toContainText(
-    "membership authoring requires a complete verified parent Realm cut",
-  );
-  await expect(page).toHaveURL(/\/realms\/.*\/circles$/);
-  await expect(panel).not.toContainText("Incident Response");
-  await expect(panel.locator("[class~=\"circle-list-item\"]")).toHaveCount(0);
-  await expect(panel.locator("[class~=\"circle-detail\"]")).not.toContainText("Incident Response");
-  expect(writes).toEqual([]);
-});
-
-test("Circle creation exposes matching configurable boundaries", async ({ page }) => {
-  await gotoAndDismissRecovery(page, `/realms/${DEMO_REALM}/circles`);
-  await page.locator("[class~=\"circles-new\"]").click();
-  const modal = page.locator("[class~=\"circle-create-modal\"]");
-  await modal.locator(".circle-create-title input").fill("运营协作");
-  await modal.locator(".circle-create-short input").fill("Ops");
-  await modal.getByRole("combobox", { name: "Circle directory visibility", exact: true }).click();
-  await page.getByRole("option", { name: "Preview for Realm members", exact: true }).click();
-  await modal.getByRole("combobox", { name: "Circle join rule", exact: true }).click();
-  await page.getByRole("option", { name: "Request approval", exact: true }).click();
-  await modal.getByRole("combobox", { name: "Circle history", exact: true }).click();
-  await page.getByRole("option", { name: "All history for current members", exact: true }).click();
-  await expect(modal.locator(".circle-boundary-preview")).toContainText("RealmMembers");
-  await expect(modal.locator(".circle-boundary-preview")).toContainText("Knock");
-  await expect(modal.locator(".circle-boundary-preview")).toContainText("AllHistoryForCurrentMembers");
-  await expect(modal.locator("[class~=\"circle-create\"]")).toBeEnabled();
-  await modal.locator(".circle-create-short input").fill("运营");
-  await expect(modal.locator("[class~=\"circle-create\"]")).toBeDisabled();
-});
-
-test("Circle detail exposes edit and protects irreversible retirement", async ({ page }, testInfo) => {
-  await gotoAndDismissRecovery(page, `/realms/${DEMO_REALM}/circles/ak:circle:AVhDoodj6EFMf5ZQ1JXfSmM5ZNZrK3ekqYa4-EOvqSiE`);
-  const detail = page.locator("[class~=\"circle-detail\"]");
-  await expect(detail.getByRole("button", { name: "Leave Circle", exact: true })).toHaveText("Leave Circle");
-  await expect(detail.locator("[class~=\"circle-identity-badge\"]")).toContainText("Demo");
-  await detail.locator("[class~=\"circle-edit\"]").locator(".circle-details-summary").click();
-  await expect(detail.getByLabel("Title", { exact: true })).toHaveValue("Demo Circle");
-  await detail.getByLabel("Title", { exact: true }).fill("Ops Circle");
-  await rejectCircleControl(page, "ak.circle.update");
-  await detail.locator("[class~=\"circle-edit-save\"]").click();
-  await expect(page.locator("[class~=\"circle-status\"]")).toContainText("Circle update failed");
-  await expect(detail.getByRole("heading", { name: "Demo Circle", exact: true })).toBeVisible();
-  await expect(detail.getByRole("option", { name: "Invite", exact: true })).toHaveCount(0);
-  await detail.locator("[class~=\"circle-terminal-actions\"]").locator(".circle-details-summary").click();
-  await expect(detail.locator("[class~=\"circle-tombstone\"]")).toBeDisabled();
-  await detail.locator(".circle-terminal-confirm input").check();
-  await expect(detail.locator("[class~=\"circle-tombstone\"]")).toBeEnabled();
-  await rejectCircleControl(page, "ak.circle.tombstone");
-  await detail.locator("[class~=\"circle-tombstone\"]").click();
-  await expect(page.locator("[class~=\"circle-status\"]")).toContainText("Circle retirement failed");
-  await expect(detail).toContainText("Active");
-  await detail.locator(".circle-terminal-confirm input").uncheck();
-  await expect(detail.locator("[class~=\"circle-tombstone\"]")).toBeDisabled();
-  await expect(detail.locator("[class~=\"circle-history-restrict\"]")).toHaveCount(0);
-  await detail.locator("[class~=\"circle-edit\"]").locator(".circle-details-summary").click();
-  await detail.getByRole("heading", { name: "Demo Circle", exact: true }).scrollIntoViewIfNeeded();
-  expect(await page.locator("[class~=\"circle-realm\"]").evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
-  await page.screenshot({ path: testInfo.outputPath("circle-detail.png") });
-});
-
-test("Circle history can only tighten after explicit confirmation", async ({ page }) => {
-  const realm = DEMO_REALM;
-  const circle = "ak:circle:AVhDoodj6EFMf5ZQ1JXfSmM5ZNZrK3ekqYa4-EOvqSiE";
-  const actor = { kind: "account", account_id: { principal_id: "ak:did_core:web:alice.example", station_id: CURRENT_STATION_ID } };
-  const response = { realm_id: realm, circles: [{ circle_id: circle, realm_id: realm, title: "History Circle", display: { short_name: "History", color_token: "blue", symbol: { glyph: "ring" } }, directory_visibility: "members", join_rule: "invite", history_access: "all_history_for_current_members", state: "active", viewer_membership: "join", member_ids: [actor], created_by: actor, created_at: "2026-06-23T00:00:00.000Z" }] };
-  validateMockSchema("schemas/circle-operations.schema.json#/$defs/circle_list", response);
-  await page.route("**/_arkret/self/circles?**", async route => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(response) });
-  });
-  await gotoAndDismissRecovery(page, `/realms/${realm}/circles/${circle}`);
-  const detail = page.locator("[class~=\"circle-detail\"]");
-  await expect(detail).toContainText("Not end-to-end encrypted");
-  await detail.locator("[class~=\"circle-terminal-actions\"]").locator(".circle-details-summary").click();
-  await expect(detail.locator("[class~=\"circle-history-restrict\"]")).toBeDisabled();
-  await detail.locator(".circle-history-confirm input").check();
-  await expect(detail.locator("[class~=\"circle-history-restrict\"]")).toBeEnabled();
-  await rejectCircleControl(page, "ak.circle.history_access");
-  await detail.locator("[class~=\"circle-history-restrict\"]").click();
-  await expect(page.locator("[class~=\"circle-status\"]")).toContainText("History change failed");
-  await expect(detail).toContainText("AllHistoryForCurrentMembers");
-});
-
-test("Circle member removal sends the exact signed leave Event and refreshes members", async ({ page }) => {
-  const circle = "ak:circle:AVhDoodj6EFMf5ZQ1JXfSmM5ZNZrK3ekqYa4-EOvqSiE";
-  const writes: Array<Record<string, any>> = [];
-  await page.route("**/_arkret/self/circles/*/members/**", async route => {
-    if (route.request().method() === "DELETE") {
-      const body = route.request().postDataJSON();
-      validateMockSchema("schemas/circle-operations.schema.json#/$defs/circle_member_delete_request_body", body);
-      const event = body.member_event.event;
-      expect(event.kind).toBe("ak.circle.member.state");
-      expect(event.actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
-      expect(event.scope_ref).toEqual({ kind: "circle", realm_id: DEMO_REALM, circle_id: circle });
-      expect(event.payload).toMatchObject({ circle_id: circle, member_id: CURRENT_ACCOUNT_ACTOR_ID, membership: "leave", expected_membership: "join" });
-      expect(event.producer_proof).toBeTruthy();
-      expect(JSON.parse(decodeURIComponent(new URL(route.request().url()).pathname.split("/members/")[1]))).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
-      writes.push(event);
-    }
-    await route.fallback();
-  });
-  await gotoAndDismissRecovery(page, `/realms/${DEMO_REALM}/circles/${circle}`);
-  const detail = page.locator("[class~=\"circle-detail\"]");
-  await expect(detail.locator(".circle-member-row")).toHaveCount(1);
-  await detail.locator(".circle-member-row").getByRole("button", { name: "Remove", exact: true }).click();
-  await expect(page.locator("[class~=\"circle-status\"]")).toContainText("Member access removed");
-  await expect(detail.locator(".circle-member-row")).toHaveCount(0);
-  expect(writes).toHaveLength(1);
-});
-
-for (const [joinRule, action] of [["public", "Join Circle"], ["knock", "Request to join"], ["invite", null]] as const) {
-  test(`Circle directory ${joinRule} offers only its permitted self action`, async ({ page }) => {
-    const realm = DEMO_REALM;
-    const circle = "ak:circle:AVhDoodj6EFMf5ZQ1JXfSmM5ZNZrK3ekqYa4-EOvqSiE";
-    const response = { realm_id: realm, circles: [{ circle_id: circle, realm_id: realm, visibility: "realm_members", display: { color_token: "slate", symbol: { glyph: "ring" } }, member_count_bucket: "2-3", join_rule: joinRule, opaque_commitment: createHash("sha256").update(`ak.circle.preview.v1\0${realm}\0${circle}`).digest("hex") }] };
-    validateMockSchema("schemas/circle-operations.schema.json#/$defs/circle_list", response);
-    await page.route("**/_arkret/self/circles?**", async route => {
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(response) });
-    });
-    await gotoAndDismissRecovery(page, `/realms/${realm}/circles/${circle}`);
-    const detail = page.locator("[class~=\"circle-detail\"]");
-    await expect(detail).toContainText("Private details are visible after joining");
-    await expect(detail).not.toContainText("Demo Circle");
-    await expect(page.locator(".circle-list .circle-list-item .circle-identity-badge")).toHaveText("◯");
-    await expect(detail.locator("[class~=\"circle-edit\"]")).toHaveCount(0);
-    if (action) {
-      await expect(detail.getByRole("button", { name: action, exact: true })).toHaveText(action);
-      let membershipWrites = 0;
-      const memberEvents: Array<Record<string, any>> = [];
-      page.on("request", request => {
-        if (request.method() === "POST" && /\/circles\/[^/]+\/members$/.test(new URL(request.url()).pathname)) {
-          membershipWrites += 1;
-          memberEvents.push(request.postDataJSON().member_event.event);
-        }
-      });
-      await detail.getByRole("button", { name: action, exact: true }).click();
-      if (joinRule === "public") {
-        await expect(page.locator("[class~=\"circle-status\"]")).toContainText("Membership updated");
-        expect(membershipWrites).toBe(1);
-        expect(memberEvents).toHaveLength(1);
-        const event = memberEvents[0];
-        expect(event.actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
-        expect(event.scope_ref).toEqual({ kind: "circle", realm_id: realm, circle_id: circle });
-        expect(event.payload).toMatchObject({
-          circle_id: circle, member_id: CURRENT_ACCOUNT_ACTOR_ID, membership: "join",
-          parent_membership_revision: DEMO_PARENT_MEMBERSHIP_REVISION,
-        });
-        expect(event.producer_proof).toBeTruthy();
-      } else {
-        await expect(page.locator("[class~=\"circle-status\"]")).toContainText("Join request submitted");
-        expect(membershipWrites).toBe(1);
-      }
-    } else {
-      await expect(detail.getByRole("button", { name: /^(Join Circle|Request to join)$/, exact: true })).toHaveCount(0);
-      await expect(detail).toContainText("A Circle manager must grant access");
-    }
-  });
-}
-
-test("Realm row menu reaches the Circle directory", async ({ page }) => {
+test("Realm row menu lists the available Realm actions", async ({ page }) => {
   // Navigation needs the bounded list, not a forged signed detail snapshot.
   const frames = [
-    { kind: "delta", cursor: "ak:cursor:circle-menu", realm_list: {
-      snapshot_cursor: "ak:cursor:circle-list", snapshot_revision: 1,
+    { kind: "delta", cursor: "ak:cursor:realm-menu", realm_list: {
+      snapshot_cursor: "ak:cursor:realm-list", snapshot_revision: 1,
       items: [{ realm_id: DEMO_REALM, revision: 1, activity_position: 1, membership: "join", title: "Arkret Demo Realm" }],
     } },
-    { kind: "catchup_complete", cursor: "ak:cursor:circle-menu" },
+    { kind: "catchup_complete", cursor: "ak:cursor:realm-menu" },
   ];
   for (const frame of frames) validateMockSchema("schemas/account-subscribe-frame.schema.json", frame);
   await page.route("**/_arkret/self/account/subscribe?**", async route => {
@@ -263,11 +37,38 @@ test("Realm row menu reaches the Circle directory", async ({ page }) => {
   await page.reload();
   await assertRealmTreeSeeded(page);
   const row = page.locator(".shell.app").last().locator(".sidebar-row").filter({ hasText: "Arkret Demo Realm" }).first();
-  await row.hover();
-  await row.getByRole("button", { name: "Realm actions", exact: true }).click();
-  await row.getByRole("link", { name: "Circles", exact: true }).click();
-  await expect(page).toHaveURL(/\/realms\/.*\/circles$/);
-  await expect(page.locator("[class~=\"circle-realm\"]")).toBeVisible();
+  const trigger = row.getByRole("button", { name: "Realm actions", exact: true });
+  const panel = page.locator(".realm-row-actions-panel:visible");
+  await row.locator(".realm-tree-item").hover();
+  await trigger.click();
+  await expect(panel).toBeVisible();
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  for (const name of ["Pin Realm", "New Board", "New Chat"]) {
+    const item = panel.getByRole("button", { name, exact: true });
+    await expect(item).toBeVisible();
+    const lines = await item.evaluate(button => {
+      const text = document.createTreeWalker(button, NodeFilter.SHOW_TEXT);
+      const label = document.createRange();
+      const baselines = new Set<number>();
+      while (text.nextNode()) {
+        label.selectNodeContents(text.currentNode);
+        for (const rect of label.getClientRects()) {
+          if (rect.width > 0) baselines.add(Math.round(rect.bottom));
+        }
+      }
+      return baselines.size;
+    });
+    expect(lines, name).toBe(1);
+  }
+  const items = panel.locator(".sidebar-row-menu-item");
+  await expect(items).toHaveText([
+    "Pin Realm", "New Board", "New Chat", "Add Member", "Settings", "Leave",
+  ]);
+  for (const item of await items.all()) await expect(item.locator(".ui-icon")).toHaveCount(1);
+
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  await expect(trigger).toBeFocused();
 });
 
 test("Contacts list selects human and agent details before opening their direct conversations", async ({ page }) => {
@@ -296,6 +97,63 @@ test("Contacts list selects human and agent details before opening their direct 
     kind: "agent", actor_id: { kind: "account", account_id: BOB_HELPER_ACCOUNT_ID }, controller_account_id: BOB_ACCOUNT_ID,
   });
   await expect(page).toHaveURL(`/direct/${DIRECT_BOB_HELPER_REALM}/${DIRECT_BOB_HELPER_STRAND}`);
+});
+
+for (const width of [1280, 390]) {
+  test(`Private chats opens the existing conversation workspace at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await dismissBlockingRecoveryModal(page);
+    const rail = page.locator(".navigation-rail");
+    const entry = rail.getByRole("link", { name: "Private chats", exact: true });
+    await expect(rail.locator(".rail-realms + .rail-private-chats")).toHaveCount(1);
+    await entry.click();
+    await expect(entry).toHaveAttribute("aria-current", "page");
+    const rows = page.locator(".private-chat-list");
+    await expect(rows).toBeVisible();
+    await expect(rows).toContainText("Bob Helper");
+    await expect(rows).toContainText("Alice Assistant");
+    if (width < 861) await expect(page).toHaveURL(/\/direct$/);
+    await rows.getByRole("button", { name: /Bob Helper/ }).click();
+    await expect(page).toHaveURL(`/direct/${DIRECT_BOB_HELPER_REALM}/${DIRECT_BOB_HELPER_STRAND}`);
+    await expect(page.locator(".chat-panel")).toBeVisible();
+    await expect(page.locator(".direct-structure")).toBeVisible();
+    if (width > 860) {
+      await expect(rows.locator(".is-active")).toContainText("Bob Helper");
+      await page.getByRole("link", { name: "New private chat", exact: true }).click();
+      await expect(page).toHaveURL(/\/direct\/new$/);
+      await expect(page.locator(".contact-sidebar-self-row")).toBeVisible();
+    }
+  });
+}
+
+test("Private chats keeps an empty inbox on the list until a recipient is chosen", async ({ page }) => {
+  await dismissBlockingRecoveryModal(page);
+  await page.route("**/_arkret/self/contacts", route => route.fulfill({
+    json: { contacts: [], has_more: false },
+  }));
+  await page.route("**/_arkret/self/direct-conversations/resolve", route => route.fulfill({
+    json: { state: "awaiting_founder" },
+  }));
+  const lookup = page.waitForResponse(response =>
+    new URL(response.url()).pathname === "/_arkret/self/direct-conversations/resolve"
+  );
+  await page.locator(".rail-private-chats").click();
+  await lookup;
+  const list = page.locator(".private-chat-list");
+  await expect(list).toHaveText("No private chats yet.");
+  await expect(page).toHaveURL(/\/direct$/);
+  await page.getByRole("link", { name: "New private chat", exact: true }).click();
+  await expect(page.locator(".contact-sidebar-self-row")).toBeVisible();
+});
+
+test("contact badges leave room for the direct conversation title", async ({ page }) => {
+  await gotoAndDismissRecovery(page, `/direct/${DIRECT_BOB_HELPER_REALM}/${DIRECT_BOB_HELPER_STRAND}`);
+  const row = page.locator(".private-chat-list .direct-conversation-row.is-active");
+  await expect(row).toBeVisible();
+  await expect.poll(() => row.evaluate(el => {
+    const title = el.querySelector(".grow")!.getBoundingClientRect();
+    return title.width > 36 && el.scrollWidth <= el.clientWidth + 1;
+  })).toBe(true);
 });
 
 test("owned agent opens an independent two-principal Direct Conversation Realm", async ({
@@ -342,35 +200,50 @@ test("owned agent opens an independent two-principal Direct Conversation Realm",
   expect(sidecarEnsureCount).toBe(0);
 });
 
-test("new space strand uses sidebar realm context without home realm picker", async ({
-  page,
-}) => {
-  await refreshServer(page);
-  await assertRealmTreeSeeded(page);
-  const shell = page.locator(".shell.app").last();
-  await expect(shell.locator("[class~=\"realm-tree-list\"]")).toContainText(
-    "Arkret Demo Realm",
-  );
-  await dismissBlockingRecoveryModal(page);
-
-  const demoRealmRow = shell
-    .locator(".sidebar-row")
-    .filter({ hasText: "Arkret Demo Realm" })
-    .first();
-  await expect(demoRealmRow).toBeVisible();
-  await demoRealmRow.hover();
-  await demoRealmRow.getByRole("button", { name: "Realm actions", exact: true }).click();
-  await demoRealmRow.getByRole("button", { name: "New Space", exact: true }).click();
-
-  await expect(page).toHaveURL(/\/setup\/new-space$/);
-  const setupPanel = page.locator("[class~=\"setup-panel\"]");
-  await expect(setupPanel.locator("[class~=\"space-create-strand\"]")).toBeVisible();
-  await expect(setupPanel).not.toContainText("Home Realm");
-  await expect(setupPanel.locator("[class~=\"new-space-realm-input\"]")).toHaveCount(0);
-
-  await setupPanel.locator(".new-space-title-input input").fill("Scoped Space");
-  await expect(setupPanel.locator("[class~=\"new-space-submit-button\"]")).toBeEnabled();
-});
+for (const kind of ["Board", "Chat"] as const) {
+  test(`Realm row menu creates a new ${kind} in the chosen Realm`, async ({ page }) => {
+    await assertRealmTreeSeeded(page);
+    await dismissBlockingRecoveryModal(page);
+    const row = page.locator(".sidebar-row").filter({ hasText: "Launch Realm" }).first();
+    const realmPath = await row.locator(".realm-tree-item").getAttribute("href");
+    const realm = realmPath!.split("/").pop()!;
+    const open = async () => {
+      await row.getByRole("button", { name: "Realm actions", exact: true }).click();
+      const menu = page.locator(".realm-row-actions-panel:visible");
+      await expect(menu.getByRole("button", { name: "New Space", exact: true })).toHaveCount(0);
+      await menu.getByRole("button", { name: `New ${kind}`, exact: true }).click();
+    };
+    await open();
+    const board = kind === "Board";
+    const dialog = page.getByRole("dialog", { name: `New ${kind}`, exact: true });
+    await expect(dialog).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe(`/${board ? "kanban" : "chat"}/${realm}`);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await open();
+    await expect(dialog).toBeVisible();
+    const title = `Menu ${kind}`;
+    await dialog.getByRole("textbox", { name: board ? "Board title" : "Title", exact: true }).fill(title);
+    const submitted = page.waitForRequest(request => request.method() === "POST"
+      && new URL(request.url()).pathname === "/_arkret/self/events"
+      && submittedEvent(request.postDataJSON())?.kind === (board ? "ak.space.create" : "ak.strand.create"));
+    await dialog.locator(board ? ".create-board-space-button" : ".create-channel-button").click();
+    const event = submittedEvent((await submitted).postDataJSON());
+    expect(event.realm_id).toBe(realm);
+    if (board) {
+      expect(event.payload.object.kind).toBe("board");
+    } else {
+      expect(event.payload.object.tracks.discussion.is_primary).toBe(true);
+      expect(event.payload.object.topic).toBeUndefined();
+    }
+    await expect(dialog).toBeHidden();
+    if (board) {
+      await expect(page.locator(".board-space-selector")).toContainText(title);
+    } else {
+      await expect(page.locator(".chat-panel")).toContainText(title);
+    }
+  });
+}
 
 test("icon rail retains its width and omits the server picker", async ({ page }) => {
   const rail = page.locator(".navigation-rail");

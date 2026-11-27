@@ -281,9 +281,6 @@ fn row_surface(
         if private {
             class.push_str(" is-private-sidecar");
         }
-        if !private && context.strand_scope_lookup.contains_key(&message.strand_id) {
-            class.push_str(" has-circle-accent-rail");
-        }
         class
     });
     let head_app = app.clone();
@@ -613,30 +610,6 @@ fn row_surface(
             line("message-indicators", parts)
         },
     );
-    let accent = reactive_distinct(
-        scope.bond(move || {
-            let message = row.get();
-            if private {
-                None
-            } else {
-                context
-                    .get()
-                    .strand_scope_lookup
-                    .get(&message.strand_id)
-                    .cloned()
-            }
-        }),
-        move |_, circle| {
-            circle
-                .map(|circle| {
-                    Box::new(view().class("circle-accent-rail").name(format!(
-                        "This message is part of the Circle named {}",
-                        circle.title
-                    ))) as View
-                })
-                .unwrap_or_else(empty)
-        },
-    );
     let polls = poll_card(
         scope,
         app.clone(),
@@ -689,36 +662,6 @@ fn row_surface(
             )
         },
     );
-    let promoted_app = app.clone();
-    let promoted = reactive_distinct(
-        scope.bond(move || {
-            controller
-                .promoted_targets
-                .get()
-                .get(&row.get().id)
-                .cloned()
-        }),
-        move |_, target| {
-            let Some(target) = target else { return empty() };
-            let realm = context.get_untracked().selected_realm_id;
-            let context = promoted_app.clone();
-            let route = Route::Chat {
-                realm_id: realm,
-                message: String::new(),
-            };
-            Box::new(
-                crate::presentation::widgets::internal_link()
-                    .target(route.to_string())
-                    .fill(text().content(format!(
-                        "Discussion moved to private Strand {}",
-                        short_protocol_id(&target)
-                    )))
-                    .on(glory::render::EventKind::Activate, move |_| {
-                        context.navigate(route.clone())
-                    }),
-            ) as View
-        },
-    );
     let Ok(identity) =
         glory::render::SemanticId::new(format!("chat-message-{}", presentation_key(&id)))
     else {
@@ -734,12 +677,11 @@ fn row_surface(
             ..Default::default()
         })))
         .fill(vec![
-            accent,
-            block(
+                block(
                 "msg-body",
                 vec![
                     indicator, head, crypto, reply, body, reactions, error, overflow, receipt,
-                    polls, promoted, editor,
+                    polls, editor,
                 ],
             ),
         ]);

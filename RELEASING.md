@@ -4,6 +4,10 @@ Pushing a `v*` tag builds and publishes a GitHub Release after every required
 build succeeds. `workflow_dispatch` builds the same artifacts without publishing
 a release; use it before tagging. Existing source versions are not changed.
 
+Before tagging a client release, record its declared release date in
+`docs/release-dates.json`, keyed by the Cargo package version, in YYYY-MM-DD
+format. Settings → About reads the entry for the running client version.
+
 Sibling checkout revisions in the workflow are part of the release source set.
 Before tagging, update those pins to a compatible tested set and commit any
 required Cargo.lock changes. Do not replace pinned revisions with `main`. Each

@@ -197,32 +197,9 @@ pub(super) fn target(
             &composer_account.authority,
             &selected,
         );
-        let circle_encrypted = snapshot.send_scope.as_ref().and_then(|scope| {
-            composer_context.state_store.read(|store| {
-                match store.installed_scope_mls_current(scope) {
-                    crate::current_projection::ScopeMlsCurrent::Activated(_) => Some(true),
-                    crate::current_projection::ScopeMlsCurrent::NotActivated => Some(false),
-                    crate::current_projection::ScopeMlsCurrent::Unknown => None,
-                }
-            })
-        });
-        let circle_display = snapshot
-            .selected_channel_info
-            .as_ref()
-            .and_then(|channel| channel.scope_circle.as_ref())
-            .and_then(|scope| {
-                controller
-                    .eligible_circle_scopes
-                    .get()
-                    .into_iter()
-                    .find(|circle| circle.id == scope.circle_id)
-                    .map(|circle| circle.display)
-            });
         composer::ChatComposerContext {
             sidecar_route_pending: sidecar_pending,
             selected_channel_info: snapshot.selected_channel_info,
-            circle_display,
-            circle_encrypted,
             authority: composer_account.authority.clone(),
             did: composer_account.did().clone(),
             principal_id: composer_account.principal_id().clone(),
@@ -258,20 +235,9 @@ pub(super) fn target(
             &timeline_account.authority,
             &selected,
         );
-        let strand_scope_lookup = controller
-            .channels
-            .get()
-            .into_iter()
-            .filter_map(|channel| {
-                channel
-                    .scope_circle
-                    .map(|circle| (channel.strand_id, circle))
-            })
-            .collect();
         timeline_surface::ChatTimelineContext {
             embedded: timeline_props.embedded,
             visible_messages: visible,
-            strand_scope_lookup,
             private_sidecar_event_ids: private.private_event_ids,
             authority: timeline_account.authority.clone(),
             principal_id: timeline_account.principal_id().clone(),
@@ -324,7 +290,6 @@ pub(super) fn target(
                 effect_context.realm_live_epoch,
                 effect_context.frontier_state,
                 initial.agent_participation_sync_key.clone(),
-                initial.selected_scope_circle.clone(),
                 initial.readable_participation_agent_ids.clone(),
                 initial.participant_ids_for_presence.clone(),
                 initial.account_display_label.clone(),
@@ -524,7 +489,7 @@ fn shell(
                             vec![
                                 icon_button(
                                     "plus",
-                                    left_context.translated(scope, "chat.new_strand"),
+                                    left_context.translated(scope, "chat.new_chat"),
                                     "primary icon-button open-channel-dialog",
                                     true,
                                     move || controller.open_create_dialog(),
@@ -884,14 +849,12 @@ fn shell(
         }
     });
     let create = create_dialog(scope, context.clone(), props.clone(), controller);
-    let promote = promote_dialog(scope, context.clone(), props.clone(), controller);
     let composer = composer::chat_composer(scope, context.clone(), controller, composer, available);
     Box::new(view().class(class).fill(vec![
         left,
         block("discussion-panel discussion-main-panel", main),
         side,
         create,
-        promote,
         composer,
         block(
             "discussion-status-slot",
@@ -923,7 +886,7 @@ fn create_dialog(
             crate::components::DismissiblePopupProps {
                 overlay_class: "discussion-modal-backdrop channel-create-modal".into(),
                 surface_class: "discussion-modal".into(),
-                aria_label: "New Strand".into(),
+                aria_label: context.tr("chat.new_chat"),
                 on_dismiss: Rc::new(move |()| {
                     controller.create_dialog_open.revise(|value| *value = false)
                 }),
@@ -932,24 +895,6 @@ fn create_dialog(
                 overlay_style: None,
                 surface_style: None,
                 children: Rc::new(move |scope| {
-                    let select_context = context.clone();
-                    let circles = reactive_distinct(
-                        controller.eligible_circle_scopes,
-                        move |scope, circles| {
-                            crate::components::circle_scope_picker(
-                                scope,
-                                select_context.clone(),
-                                crate::components::CircleScopePickerProps {
-                                    selected: controller.new_channel_scope,
-                                    circles,
-                                    test_id: None,
-                                    onchange: Rc::new(move |scope| {
-                                        controller.new_channel_scope.revise(|value| *value = scope)
-                                    }),
-                                },
-                            )
-                        },
-                    );
                     let create_context = context.clone();
                     let realm = props.selected_realm_id.clone();
                     let create = button(
@@ -977,28 +922,12 @@ fn create_dialog(
                                 .trim()
                                 .to_owned();
                             let create_card = controller.new_channel_create_card.get_untracked();
-                            let selected_scope_circle =
-                                match controller.new_channel_scope.get_untracked() {
-                                    CircleScope::Realm => None,
-                                    CircleScope::Circle {
-                                        circle_id,
-                                        title,
-                                        member_count,
-                                    } => Some(StrandScopeCircle {
-                                        circle_id,
-                                        title,
-                                        member_count,
-                                    }),
-                                };
                             let operation = ak_ops::discussion_strand_create(
                                 &realm,
                                 actor.as_str(),
                                 &title,
                                 "general",
                                 (!summary.is_empty()).then_some(summary.as_str()),
-                                selected_scope_circle
-                                    .as_ref()
-                                    .map(|scope| scope.circle_id.as_str()),
                                 create_card,
                             )
                             .and_then(|builder| builder.build_sdk_event("inkson"));
@@ -1018,7 +947,6 @@ fn create_dialog(
                                             category: "general".into(),
                                             topic: (!summary.is_empty()).then_some(summary),
                                             create_card,
-                                            scope_circle: selected_scope_circle,
                                             frontier_state: create_context.frontier_state,
                                         },
                                     );
@@ -1032,12 +960,16 @@ fn create_dialog(
                     block(
                         "discussion-modal-content",
                         vec![
-                            heading(2, "discussion-modal-head", "New Strand"),
+                            heading(
+                                2,
+                                "discussion-modal-head",
+                                context.translated(scope, "chat.new_chat"),
+                            ),
                             block(
                                 "discussion-modal-fields",
                                 vec![
                                     field(
-                                        "Strand title",
+                                        context.translated(scope, "chat.label.title"),
                                         "new-channel-name",
                                         controller.new_channel_name,
                                         false,
@@ -1046,7 +978,7 @@ fn create_dialog(
                                         },
                                     ),
                                     field(
-                                        "Topic",
+                                        context.translated(scope, "chat.label.summary"),
                                         "new-channel-topic",
                                         controller.new_channel_topic,
                                         true,
@@ -1056,7 +988,6 @@ fn create_dialog(
                                                 .revise(|topic| *topic = value)
                                         },
                                     ),
-                                    circles,
                                     Box::new(
                                         sapid::checkbox()
                                             .unstyled()
@@ -1097,109 +1028,6 @@ fn create_dialog(
     })
 }
 
-fn promote_dialog(
-    scope: &Scope,
-    context: Rc<crate::presentation::InksonContext>,
-    props: ChatPanelProps,
-    controller: ChatController,
-) -> View {
-    use super::native::{block, button, field};
-    use crate::presentation::widgets::{empty, heading, line, reactive_distinct};
-    let open = scope.bond(move || {
-        crate::messaging::discussion_promote::discussion_promote_enabled()
-            && controller.promote_discussion_draft.get().is_open()
-    });
-    reactive_distinct(open, move |scope, open| {
-        if !open {
-            return empty();
-        };
-        let context = context.clone();
-        let realm = props.selected_realm_id.clone();
-        crate::components::dismissible_popup(
-            scope,
-            context.clone(),
-            crate::components::DismissiblePopupProps {
-                overlay_class: "discussion-modal-backdrop discussion-promote-modal".into(),
-                surface_class: "discussion-modal".into(),
-                aria_label: "Create a private Circle discussion".into(),
-                on_dismiss: Rc::new(move |()| {
-                    controller
-                        .promote_discussion_draft
-                        .revise(|draft| draft.close())
-                }),
-                overlay_test_id: None,
-                surface_test_id: Some("discussion-promote-modal".into()),
-                overlay_style: None,
-                surface_style: None,
-                children: Rc::new(move |scope| {
-                    let title = scope.bond(move || controller.promote_discussion_draft.get().title);
-                    let create_context = context.clone();
-                    let realm = realm.clone();
-                    block(
-                        "discussion-modal-content",
-                        vec![
-                            heading(
-                                2,
-                                "discussion-modal-head",
-                                "Create a private Circle discussion",
-                            ),
-                            field(
-                                "Private discussion title",
-                                "discussion-promote-confirm-input",
-                                title,
-                                false,
-                                move |value| {
-                                    controller
-                                        .promote_discussion_draft
-                                        .revise(|draft| draft.title = value)
-                                },
-                            ),
-                            line(
-                                "actions",
-                                vec![
-                                    button(
-                                        "Cancel",
-                                        "secondary discussion-promote-cancel",
-                                        true,
-                                        move || {
-                                            controller
-                                                .promote_discussion_draft
-                                                .revise(|draft| draft.close())
-                                        },
-                                    ),
-                                    button(
-                                        "Create private discussion",
-                                        "primary discussion-promote-confirm-button",
-                                        scope.bond(move || {
-                                            controller
-                                                .promote_discussion_draft
-                                                .get()
-                                                .is_submittable()
-                                        }),
-                                        move || {
-                                            let draft =
-                                                controller.promote_discussion_draft.get_untracked();
-                                            let Some(source) = draft.source_id else {
-                                                return;
-                                            };
-                                            let Some(actor) =
-                                                create_context.principal_id.get_untracked()
-                                            else {
-                                                return;
-                                            };
-                                            match crate::messaging::discussion_promote::build_promote_steps(&realm,actor.as_str(),&source,draft.title.trim()) {Ok(steps)=>{controller.promote_discussion_draft.revise(|draft|draft.close());controller.promote_private_discussion(create_context.base_url.get_untracked(),create_context.token.get_untracked(),source,steps);},Err(error)=>controller.status_msg.revise(|value|*value=format!("Private discussion creation failed: {error}"))}
-                                        },
-                                    ),
-                                ],
-                            ),
-                        ],
-                    )
-                }),
-            },
-        )
-    })
-}
-
 fn watch_picker(
     scope: &Scope,
     context: Rc<crate::presentation::InksonContext>,
@@ -1221,7 +1049,7 @@ fn watch_picker(
             .get()
             .into_iter()
             .find(|channel| channel.strand_id == selected);
-        let request = if !sidecar && channel.is_some_and(|channel| channel.scope_circle.is_none()) {
+        let request = if !sidecar && channel.is_some() {
             arkret_sdk::RealmId::new(realm.clone())
                 .ok()
                 .zip(arkret_sdk::StrandId::new(selected).ok())

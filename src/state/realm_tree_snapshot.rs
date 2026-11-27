@@ -262,9 +262,7 @@ impl LocalStateStore {
             commit_id: arkret_wire::RealmCommitId::from_digest([44; 32]),
             stream_position: 1,
         };
-        let selector = arkret_wire::CurrentSelector::ScopeReadReceiptPolicy {
-            scope_ref: scope.clone(),
-        };
+        let selector = arkret_wire::CurrentSelector::ScopeReadReceiptPolicy;
         let mut guard = self.current_view.lock().unwrap();
         let mut entries = guard
             .as_ref()
@@ -296,14 +294,7 @@ impl LocalStateStore {
             revision: revision.clone(),
             value: serde_json::json!({"membership":"join"}),
         });
-        if let arkret_sdk::ScopeRef::Circle { circle_id, .. } = &scope {
-            let member = arkret_wire::CurrentSelector::CircleMemberState {
-                circle_id: circle_id.clone(),
-                member_actor_id: actor,
-            };
-            entries.retain(|entry| !matches!(entry, arkret_wire::CurrentState::Value { selector, .. } if selector == &member));
-            entries.push(arkret_wire::CurrentState::Value { selector: member, source_stream_ref: arkret_wire::CommitStreamRef::from_scope(&scope, Some(realm.clone())).unwrap(), revision: revision.clone(), value: serde_json::json!({"membership":"join","parent_membership_revision":revision,"effective_at":"2026-10-19T00:00:00.000Z"}) });
-        }
+
         *guard = Some(super::CurrentProductView {
             account_key: self.cached_account_key.clone(),
             generation: self.current_generation(),
@@ -604,28 +595,25 @@ mod read_receipt_tests {
         let root = arkret_sdk::ScopeRef::Realm {
             realm_id: realm.clone(),
         };
-        let circle = arkret_sdk::ScopeRef::Circle {
-            realm_id: realm,
-            circle_id: arkret_sdk::CircleId::from_event_id(&event),
-        };
+        let other_realm = arkret_sdk::ScopeRef::Realm { realm_id: arkret_sdk::RealmId::from_event_id(&event) };
         store.install_read_receipt_current_for_test(
             root.clone(),
             Some(serde_json::json!({"disclosure":"disabled"})),
         );
         store.install_read_receipt_current_for_test(
-            circle.clone(),
+            other_realm.clone(),
             Some(serde_json::json!({"disclosure":"required"})),
         );
         store.set_read_receipt_default_send(false);
         let mut state = serde_json::to_value(store.load()).unwrap();
         state["verified_message_commits"] = serde_json::json!([{
-            "accepted_ref": {"event_id": event, "commit_id":arkret_sdk::RealmCommitId::from_digest([44;32]), "stream_ref":arkret_sdk::CommitStreamRef::from_scope(&circle, None).unwrap(), "stream_position":1},
-            "actor_id":arkret_sdk::ActorId::account(store.active_authority().unwrap()), "scope_ref":circle, "strand_id":strand, "track_name":"discussion"
+            "accepted_ref": {"event_id": event, "commit_id":arkret_sdk::RealmCommitId::from_digest([44;32]), "stream_ref":arkret_sdk::CommitStreamRef::from_scope(&other_realm, None).unwrap(), "stream_position":1},
+            "actor_id":arkret_sdk::ActorId::account(store.active_authority().unwrap()), "scope_ref":other_realm, "strand_id":strand, "track_name":"discussion"
         }]);
         store.save(serde_json::from_value(state).unwrap());
         assert!(
             store
-                .require_read_receipt_send(&circle, &strand, &event)
+                .require_read_receipt_send(&other_realm, &strand, &event)
                 .is_ok()
         );
         assert!(
@@ -638,33 +626,33 @@ mod read_receipt_tests {
             Some(serde_json::json!({"disclosure":"required"})),
         );
         store.install_read_receipt_current_for_test(
-            circle.clone(),
+            other_realm.clone(),
             Some(serde_json::json!({"disclosure":"disabled"})),
         );
         assert!(
             store
-                .require_read_receipt_send(&circle, &strand, &event)
+                .require_read_receipt_send(&other_realm, &strand, &event)
                 .is_err()
         );
         store.install_read_receipt_current_for_test(
-            circle.clone(),
+            other_realm.clone(),
             Some(serde_json::json!({"visibility":"members"})),
         );
         assert!(
             store
-                .require_read_receipt_send(&circle, &strand, &event)
+                .require_read_receipt_send(&other_realm, &strand, &event)
                 .is_err()
         );
         store.set_read_receipt_default_send(true);
         assert!(
             store
-                .require_read_receipt_send(&circle, &strand, &event)
+                .require_read_receipt_send(&other_realm, &strand, &event)
                 .is_ok()
         );
         store.set_current_generation(1);
         assert!(
             store
-                .require_read_receipt_send(&circle, &strand, &event)
+                .require_read_receipt_send(&other_realm, &strand, &event)
                 .is_err()
         );
     }

@@ -25,7 +25,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use glory::prelude::*;
 
-use crate::circle::CircleErrorKind;
 use crate::i18n::tr;
 use crate::presentation::widgets::{line, reactive, stack};
 use crate::presentation::{InksonContext, View};
@@ -223,33 +222,6 @@ pub fn is_policy_deny_code(code: &str) -> bool {
                 | "delegation_exceeds_grantor_expiry"
                 | "capability_not_held"
         )
-}
-
-/// Bridge: a queued [`CircleErrorKind`] becomes an Error
-/// toast. The kind's English fallback covers locales that don't carry
-/// the `error.circle.*` key yet.
-pub fn circle_error_to_toast(kind: CircleErrorKind) -> Toast {
-    Toast {
-        severity: FeedbackSeverity::Error,
-        key: kind.i18n_key().to_owned(),
-        args: Vec::new(),
-        fallback: Some(kind.english_fallback().to_owned()),
-        detail: None,
-        captured_at_ms: crate::clock::now_unix_ms(),
-        id: next_toast_id(),
-        source: "circle-error",
-    }
-}
-
-pub fn maybe_dispatch_circle_error(code: &str, reason: Option<&str>) -> bool {
-    let _ = code;
-    if let Some(reason) = reason
-        && let Some(kind) = CircleErrorKind::from_reason_code(reason)
-    {
-        enqueue_toast(circle_error_to_toast(kind));
-        return true;
-    }
-    false
 }
 
 /// Localize a toast: `tr(key)`, fall back to `toast.fallback` on a
@@ -521,19 +493,6 @@ mod tests {
         let detail = toast.detail.expect("detail carries the raw transcript");
         assert!(detail.contains("log_event"));
         assert!(detail.contains("policy_denied"));
-    }
-
-    #[test]
-    fn circle_error_converts_to_error_toast_with_fallback() {
-        let toast = circle_error_to_toast(CircleErrorKind::RealmMismatch);
-        assert_eq!(toast.severity, FeedbackSeverity::Error);
-        assert_eq!(toast.key, CircleErrorKind::RealmMismatch.i18n_key());
-        assert_eq!(toast.source, "circle-error");
-        assert_eq!(
-            toast.fallback.as_deref(),
-            Some(CircleErrorKind::RealmMismatch.english_fallback())
-        );
-        assert!(toast.detail.is_none());
     }
 
     #[test]

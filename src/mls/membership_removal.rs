@@ -81,7 +81,7 @@ impl MembershipRemovalSnapshot {
 
 /// The authored rotation: one `ak.mls.commit` plus the staged group state it
 /// will install once the Station accepts it.
-pub struct CircleScopeRotateDraft {
+pub struct MembershipRemovalDraft {
     pub commit_event: crate::operation::LocalOperation,
     pub staged_checkpoint: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     pub removed_leaves: Vec<u32>,
@@ -95,18 +95,16 @@ pub(crate) fn build_remove_scope_rotate_draft(
     actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
     frozen: &MembershipRemovalSnapshot,
-) -> Result<CircleScopeRotateDraft, String> {
+) -> Result<MembershipRemovalDraft, String> {
     let effective_scope = frozen.effective_scope.clone();
     let realm_id = effective_scope
         .realm_id_opt()
         .ok_or("MLS removal has no Realm")?
         .as_str()
         .to_owned();
-    let circle_id = match &effective_scope {
-        arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str().to_owned()),
-        arkret_sdk::ScopeRef::Realm { .. } => None,
-        _ => return Err("MLS membership rotation only accepts Realm/Circle".to_owned()),
-    };
+    if !matches!(&effective_scope, arkret_sdk::ScopeRef::Realm { .. }) {
+        return Err("ordinary membership rotation requires a Realm".to_owned());
+    }
     let (remove, staged) = crate::mls::runtime::build_mls_remove_actors_commit_for_scope(
         state_store,
         secure_store,
@@ -125,11 +123,11 @@ pub(crate) fn build_remove_scope_rotate_draft(
     let commit_event = crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
         state_store,
         &realm_id,
-        circle_id.as_deref(),
+
         actor_id,
         &staged,
     )?;
-    Ok(CircleScopeRotateDraft {
+    Ok(MembershipRemovalDraft {
         commit_event,
         staged_checkpoint: staged.staged_checkpoint,
         removed_leaves: remove.removed_leaves,

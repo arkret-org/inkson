@@ -94,8 +94,6 @@ export const UNIMPLEMENTED_OPERATIONS = new Set<string>(
   "ak.self.applet.revoke.command.preview.v1",
   "ak.self.blob.resource.head.v1",
   "ak.self.blob.command.presign.v1",
-  "ak.self.circle.resource.get.v1",
-  "ak.self.circle.command.rotate_scope.v1",
   "ak.self.consent.read.current.v1",
   "ak.self.consent.command.request.v1",
   "ak.self.consent.resource.get.v1",
@@ -164,6 +162,6 @@ export const ACCOUNT_AUTHORITY_OPERATIONS = new Set(["ak.gate.account.command.re
 
 export const MOCK_INSTALLS = [
   {},
-  { preseedRecoveryMaterial: true, includeSidecarInCircleList: true, includeLowFloorRealm: true,
+  { preseedRecoveryMaterial: true, includeLowFloorRealm: true,
     includePrincipalControlRealm: true, seedDefaultActiveAgent: true, invitePreview: "disclosed" as const },
 ];

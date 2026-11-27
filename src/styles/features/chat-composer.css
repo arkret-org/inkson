@@ -104,7 +104,6 @@
 .mention-suggestion:hover,
 .mention-suggestion:focus-visible{
   background: var(--surface-2, color-mix(in srgb, var(--accent) 10%, transparent));
-  outline: none;
 }
 
 .mention-suggestion-name {
@@ -227,6 +226,20 @@
   justify-content: center;
 }
 
+.chat-input-host {
+  display: grid;
+  min-width: 0;
+}
+.chat-input-host > * { grid-area: 1 / 1; }
+.chat-input-hint {
+  align-self: start;
+  margin: 0;
+  padding: 11px 13px;
+  color: var(--text-2);
+  line-height: 1.5;
+  pointer-events: none;
+}
+
 .discussion-composer textarea {
   width: 100%;
   min-height: 64px;
@@ -241,10 +254,6 @@
   resize: vertical;
 }
 
-.discussion-composer textarea:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
 
 .discussion-composer .composer-send-scope {
   margin: 0;
@@ -285,6 +294,14 @@
 }
 
 
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.composer-tools,
 .discussion-composer .mention-chip-row {
   position: relative;
   display: flex;
@@ -318,7 +335,6 @@
 .composer-tool-button:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
   color: var(--accent-ink);
-  outline: none;
 }
 
 .discussion-composer .attachment-menu {
@@ -347,16 +363,13 @@
   max-width: 100%;
 }
 
-.discussion-composer > .actions {
+.composer-send-actions {
+  margin-inline-start: auto;
   display: flex;
   flex-direction: row;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.discussion-composer > .actions > button {
-  width: auto;
 }
 
 /* Private-state revalidation is busy, not a loss of the public MLS state.
@@ -373,28 +386,6 @@
   position: relative;
 }
 
-.discussion-shell.embedded .discussion-composer .mention-chip-row {
-  min-height: 30px;
-  padding-right: 80px;
-}
-
-.discussion-shell.embedded .discussion-composer > .actions {
-  height: 0;
-  min-height: 0;
-  margin-top: -48px;
-  padding: 0 10px;
-  justify-content: flex-end;
-  overflow: visible;
-  pointer-events: none;
-  position: relative;
-  z-index: 1;
-}
-
-.discussion-shell.embedded .discussion-composer > .actions > button {
-  pointer-events: auto;
-}
-
-.discussion-shell.embedded .discussion-composer > .actions > button:not([class~="send-chat-button"]),
 .discussion-shell.embedded [class~="send-e2ee-move-button"]{
   display: none;
 }

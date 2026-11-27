@@ -484,11 +484,15 @@ fn topbar(
             let _ = (selected, nodes);
             let navigation = super::sidebar::navigation_model(&context, &route, "");
             let id = navigation.active_projection_realm_id.clone();
-            let title = navigation
-                .selected_preview
-                .as_ref()
-                .map(|node| node.title.clone())
-                .unwrap_or_else(|| context.tr(route_label_key(&route)));
+            let title = if matches!(route, Route::PrivateChats | Route::NewPrivateChat) {
+                context.tr(route_label_key(&route))
+            } else {
+                navigation
+                    .selected_preview
+                    .as_ref()
+                    .map(|node| node.title.clone())
+                    .unwrap_or_else(|| context.tr(route_label_key(&route)))
+            };
             let title_class =
                 if matches!(route, Route::Contacts) || super::sidebar::is_agents_route(&route) {
                     "topbar-context-title workspace-detail-mobile-title"
@@ -521,7 +525,7 @@ fn topbar(
                     context.clone(),
                     crate::components::mls_creator_retry::CreatorMlsRetryProps {
                         realm_id: id.clone().into(),
-                        circle_id: None,
+
                         refresh_hint: scope
                             .bond({
                                 let error = context.last_error;
@@ -540,7 +544,7 @@ fn topbar(
                     )
                 });
                 let (label, icon) = match current {
-                    Some(surface) => (surface.short_label().to_owned(), surface.icon_name()),
+                    Some(surface) => (context.tr(surface.short_label_key()), surface.icon_name()),
                     None if matches!(route, Route::RealmMembers { .. }) => {
                         (context.tr("realm_admin.members"), "users")
                     }

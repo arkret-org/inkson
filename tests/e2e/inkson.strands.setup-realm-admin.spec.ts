@@ -128,6 +128,37 @@ test("setup realm form stays in the main realm layout", async ({ page }) => {
   await test.info().attach("setup-basics", { body: await page.screenshot(), contentType: "image/png" });
 });
 
+test("Realm policy values align with text inputs on desktop and mobile", async ({ page }) => {
+  await gotoAndDismissRecovery(page, "/setup/realms");
+  const title = page.locator(".realm-title-input input");
+  const inset = await title.evaluate(el => parseFloat(getComputedStyle(el).paddingInlineStart));
+  expect(inset).toBeGreaterThanOrEqual(8);
+  await title.fill("Alignment test");
+  await byClass(page, "new-realm-next-button").click();
+  const choices = page.locator(".setup-axis-grid").first().getByRole("combobox");
+  await expect(choices).toHaveCount(5);
+
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 810 });
+    for (const choice of await choices.all()) {
+      const textInset = await choice.evaluate(button => {
+        const range = document.createRange();
+        range.selectNodeContents(button.querySelector(".sapid-select-value")!);
+        return range.getBoundingClientRect().left - button.getBoundingClientRect().left
+          - parseFloat(getComputedStyle(button).borderInlineStartWidth);
+      });
+      expect(textInset).toBeCloseTo(inset, 0);
+    }
+  }
+
+  const advanced = page.locator(".setup-advanced > button");
+  await expect(advanced).toHaveCSS("border-top-width", "0px");
+  await advanced.press("Enter");
+  await expect(advanced).toHaveAttribute("aria-expanded", "true");
+  await advanced.press("Enter");
+  await expect(advanced).toHaveAttribute("aria-expanded", "false");
+});
+
 test("setup, onboarding, and Board entry works", async ({ page }) => {
   await refreshServer(page);
   await expect(byClass(page, "sync-cursor")).toContainText(

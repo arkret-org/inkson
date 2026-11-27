@@ -61,11 +61,6 @@ const DIRECT_OWN_AGENT_REALM =
   "ak:realm:AbhO_nhWEZ7jojF3JULUGyzIUTiHNshUWblbkJCr7NbP";
 const DIRECT_OWN_AGENT_STRAND =
   "ak:strand:ASy992JMe_xzh5pluAqo5YuyCnAfDdFni4lmeHQldlUM";
-const DEMO_CIRCLE = "ak:circle:AVhDoodj6EFMf5ZQ1JXfSmM5ZNZrK3ekqYa4-EOvqSiE";
-const MOCK_CREATED_CIRCLE_IDS = [
-  "ak:circle:AQUeFABQK9MQb8JmkZyP7wD2QfYOSDaCH1LDepfyMD-G",
-  "ak:circle:AX-AFSYZHl0U2MQP-Ng7mU-aOm_Flhf0pVBoHYUK6Shg",
-] as const;
 const eventIdForDerivedId = (id: string, prefix: string): string => {
   if (!id.startsWith(prefix)) {
     throw new Error(`expected ${prefix} Event-derived id, got ${id}`);
@@ -143,7 +138,6 @@ type MockArkretApiOptions = {
   includeLowFloorRealm?: boolean;
   includePrincipalControlRealm?: boolean;
   personalAgentPairingExpiresAt?: string;
-  includeSidecarInCircleList?: boolean;
   preseedRecoveryMaterial?: boolean;
   seedDefaultActiveAgent?: boolean;
   assistantKeyBinding?: "missing" | "mismatched";
@@ -219,7 +213,6 @@ type MockAccountDevice = {
   verification_state?: "verified" | "unresolved" | "stale";
 };
 
-type MockCircleState = "active" | "archived" | "tombstoned";
 type InksonWireCommand =
   | "canonical-json"
   | "did-key-from-seed"
@@ -1308,8 +1301,6 @@ export async function mockArkretApi(
   const currentDeviceId =
     options.currentDeviceId ?? "ak:device:01964137-0000-7000-8000-0000000000a1";
   const includeDemoRealms = options.includeDemoRealms ?? true;
-  const includeSidecarInCircleList =
-    options.includeSidecarInCircleList ?? false;
   const includeLowFloorRealm = options.includeLowFloorRealm ?? false;
   const personalAgentPairingExpiresAt =
     options.personalAgentPairingExpiresAt ?? "2099-07-06T00:10:00.000Z";
@@ -1427,68 +1418,6 @@ export async function mockArkretApi(
       sidecarAgentJoinFixtures.set(agentId, join);
     }
     return { agent_id: agentId, join_event_ref: join };
-  });
-  const circleStates = new Map<string, MockCircleState>([
-    [DEMO_CIRCLE, "active"],
-  ]);
-  const circleMetadata = new Map<
-    string,
-    {
-      title: string;
-      summary?: string;
-      encryption_profile: string;
-      join_rule: string;
-    }
-  >([
-    [
-      DEMO_CIRCLE,
-      {
-        title: "Demo Circle",
-        summary: "Mock Circle for lifecycle operations",
-        encryption_profile: "mls_rfc9420",
-        join_rule: "invite",
-      },
-    ],
-  ]);
-  const circleMembers = new Map<string, Record<string, unknown>[]>([
-    [DEMO_CIRCLE, [accountActorId]],
-  ]);
-  let circleCounter = 0;
-  const circleView = (circleId = DEMO_CIRCLE) => ({
-    circle_id: circleId,
-    realm_id: DEMO_REALM,
-    title: circleMetadata.get(circleId)?.title ?? "Demo Circle",
-    summary: circleMetadata.get(circleId)?.summary,
-    display: {
-      short_name: "Demo",
-      color_token: "slate",
-      symbol: { glyph: "ring" },
-    },
-    directory_visibility: "realm_members",
-    join_rule: circleMetadata.get(circleId)?.join_rule ?? "invite",
-    history_access: "since_join",
-    mls_group_id: mockMlsGroupId(circleId),
-    state: circleStates.get(circleId) ?? "active",
-    viewer_membership: circleMembers
-      .get(circleId)
-      ?.some(member => canonicalJson(member) === canonicalJson(accountActorId))
-      ? "join"
-      : undefined,
-    member_ids: circleMembers.get(circleId) ?? [],
-    created_by: accountActorId,
-    created_at: "2026-06-23T00:00:00.000Z",
-    updated_by: accountActorId,
-    updated_at: "2026-06-23T00:00:00.000Z",
-  });
-  const sidecarCircleView = () => ({
-    ...circleView("ak:circle:ASIRcVOtSZ-VzuyAm1rolDcftU2vWjs2t6iTH21vQmP5"),
-    profile_ref: "ak.profile.internal_scope.v1",
-    title: "Internal scope",
-    display: {
-      short_name: "AI-ALICE",
-      color_token: "slate",
-      symbol: { glyph: "spark" },
-    },
   });
   const seededRecoveryPolicyId =
     "ak:policy:019a6aa0-0000-7000-8000-0000000000bb";
@@ -1911,7 +1840,6 @@ export async function mockArkretApi(
     seed: options.currentDeviceSigningSeedB64url ?? Buffer.alloc(32, 1).toString("base64url"),
     realmId: DEMO_REALM, principalRealmId: demoNative.identity.principal_control_realm_id, demo: demoNative,
     nativeFixtures, agents: personalAgents, pairingBootstraps, agentProjection: projectAgent, agentAxes: projectAgentAxes,
-    circle: id => circleStates.has(id) && circleStates.get(id) !== "tombstoned" ? circleView(id) : undefined,
     stationAccountData: () => inviteDeliveryContent,
     accountDataRules: JSON.parse(readFileSync(resolve(inksonRepoRoot, "../arkret-spec/spec/v1/artifacts/registry/account-data-key-registry.json"), "utf8")).account_data_key_patterns,
     native: (command, value) => inksonWire(command as Parameters<typeof inksonWire>[0], value),
@@ -2033,10 +1961,15 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       const realmId = decodeURIComponent(url.pathname.split("/")[4] ?? DEMO_REALM);
+      const current = nativeFixtures.get(realmId)?.snapshot.current_state_entries ?? [];
+      const spaces = boardSpaceContainers.filter(space => space.realm_id === realmId).map(space => {
+        const row = current.find(entry => entry.selector.kind === "space" && entry.selector.space_id === space.space_id);
+        return row ? { ...space, rank: row.value.rank } : space;
+      });
       return json(route, {
         realm_id: realmId,
-        total_count: boardSpaceContainers.length,
-        spaces: boardSpaceContainers,
+        total_count: spaces.length,
+        spaces,
         has_more: false,
       });
     }
@@ -2055,97 +1988,6 @@ export async function mockArkretApi(
         ),
         has_more: false,
       });
-    }
-
-    if (
-      url.pathname === "/_arkret/self/circles" &&
-      route.request().method() === "GET"
-    ) {
-      const realmId = url.searchParams.get("realm_id") ?? DEMO_REALM;
-      return json(route, {
-        realm_id: realmId,
-        circles:
-          realmId === DEMO_REALM
-            ? [
-                ...[...circleStates.keys()]
-                  .filter(
-                    (circleId) => circleStates.get(circleId) !== "tombstoned",
-                  )
-                  .map((circleId) => circleView(circleId)),
-                ...(includeSidecarInCircleList ? [sidecarCircleView()] : []),
-              ]
-            : [],
-      });
-    }
-
-    if (
-      url.pathname === "/_arkret/self/circles" &&
-      route.request().method() === "POST"
-    ) {
-      const request = route.request().postDataJSON() as {
-        title: string;
-        summary?: string;
-        encryption_profile?: string;
-        join_rule?: string;
-      };
-      const circleId = MOCK_CREATED_CIRCLE_IDS[circleCounter];
-      if (!circleId) {
-        throw new Error(
-          `mock Circle fixture exhausted at index ${circleCounter}`,
-        );
-      }
-      circleCounter += 1;
-      circleStates.set(circleId, "active");
-      circleMetadata.set(circleId, {
-        title: request.title,
-        summary: request.summary,
-        encryption_profile: request.encryption_profile ?? "mls_rfc9420",
-        join_rule: request.join_rule ?? "invite",
-      });
-      circleMembers.set(circleId, []);
-      return json(route, circleView(circleId));
-    }
-
-    const circleMemberCollection = url.pathname.match(
-      /^\/_arkret\/self\/circles\/([^/]+)\/members$/,
-    );
-    if (circleMemberCollection && route.request().method() === "POST") {
-      const circleId = decodeURIComponent(circleMemberCollection[1]);
-      const request = route.request().postDataJSON();
-      validateMockSchema("schemas/circle-operations.schema.json#/$defs/circle_member_request_body", request);
-      const event = request.member_event.event;
-      const { member_id: memberId, membership } = event.payload;
-      expect(event.kind).toBe("ak.circle.member.state");
-      expect(event.scope_ref).toEqual({ kind: "circle", realm_id: DEMO_REALM, circle_id: circleId });
-      expect(event.payload.circle_id).toBe(circleId);
-      const members = new Map((circleMembers.get(circleId) ?? []).map(member => [canonicalJson(member), member]));
-      if (membership === "join") {
-        members.set(canonicalJson(memberId), memberId);
-      } else if (membership === "leave" || membership === "ban") {
-        members.delete(canonicalJson(memberId));
-      }
-      circleMembers.set(circleId, [...members.values()]);
-      return json(route, { circle_id: circleId, member_id: memberId, membership });
-    }
-
-    const circleMemberResource = url.pathname.match(
-      /^\/_arkret\/self\/circles\/([^/]+)\/members\/(.+)$/,
-    );
-    if (circleMemberResource && route.request().method() === "DELETE") {
-      const circleId = decodeURIComponent(circleMemberResource[1]);
-      const request = route.request().postDataJSON();
-      validateMockSchema("schemas/circle-operations.schema.json#/$defs/circle_member_delete_request_body", request);
-      const event = request.member_event.event;
-      const memberId = event.payload.member_id;
-      expect(event.kind).toBe("ak.circle.member.state");
-      expect(event.payload.circle_id).toBe(circleId);
-      expect(event.payload.membership).toBe("leave");
-      expect(decodeURIComponent(circleMemberResource[2])).toBe(canonicalJson(memberId));
-      expect(event.scope_ref).toEqual({ kind: "circle", realm_id: DEMO_REALM, circle_id: circleId });
-      const members = new Map((circleMembers.get(circleId) ?? []).map(member => [canonicalJson(member), member]));
-      members.delete(canonicalJson(memberId));
-      circleMembers.set(circleId, [...members.values()]);
-      return json(route, { circle_id: circleId, member_id: memberId, membership: "leave" });
     }
 
     if (
@@ -2198,36 +2040,6 @@ export async function mockArkretApi(
             createdRealms.push({ id: realmId, title: profile?.title ?? "Invited Realm",
               summary: profile?.summary ?? "", encryption_profile: "none" });
           }
-          continue;
-        }
-        if (
-          event.kind === "ak.circle.archive" ||
-          event.kind === "ak.circle.restore" ||
-          event.kind === "ak.circle.tombstone"
-        ) {
-          const circleId = event.payload?.target_ref;
-          const state =
-            typeof circleId === "string" ? circleStates.get(circleId) : undefined;
-          if (!state) {
-            return mockProblem(route, "not_found", "not found");
-          }
-          if (event.kind === "ak.circle.archive" && state !== "active") {
-            return mockProblem(route, "failed_precondition", "circle not active");
-          }
-          if (event.kind === "ak.circle.restore" && state !== "archived") {
-            return mockProblem(route, "failed_precondition", "circle not archived");
-          }
-          if (event.kind === "ak.circle.tombstone" && state === "tombstoned") {
-            return mockProblem(route, "failed_precondition", "circle already terminal");
-          }
-          circleStates.set(
-            circleId,
-            event.kind === "ak.circle.archive"
-              ? "archived"
-              : event.kind === "ak.circle.restore"
-                ? "active"
-                : "tombstoned",
-          );
           continue;
         }
         if (event.kind === "ak.device.authorize") {

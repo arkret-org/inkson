@@ -33,7 +33,11 @@ test("chat fails closed until this device receives Realm encryption keys", async
   await expect(page.getByRole("alert")).toContainText(
     "Waiting for this device's encryption keys. Keep this conversation open to receive the MLS Welcome.",
   );
-  await inputByClass(page, "chat-input").fill("must not publish yet");
+  const composer = inputByClass(page, "chat-input");
+  await composer.fill("must not publish yet");
+  await expect(composer).toBeFocused();
+  await expect(composer).toHaveCSS("outline-style", "none");
+  await expect(composer).toHaveCSS("box-shadow", /inset/);
   await expect(byClass(page, "send-chat-button")).toBeDisabled();
   await expect(byClass(page, "chat-message")).toHaveCount(0);
   await expect(inputByClass(page, "chat-input")).toHaveValue("must not publish yet");

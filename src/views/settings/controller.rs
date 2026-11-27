@@ -1135,7 +1135,6 @@ impl SettingsController {
                         account_id: Some(push_account_id),
                         authorization_credential: Some(api_token),
                         session_grant: None,
-                        active_circle_id: None,
                     };
                     match crate::push::registration::register_via_chime(context, persisted_grant)
                         .await

@@ -45,15 +45,15 @@ test("Kanban local controls and card sections follow the language without changi
     await page.locator(".board-select-menu-host .sapid-popover-trigger").click();
     await expect(byClass(page, "kanban-card").first().locator(".board-card-title")).toHaveText(original ?? "");
     expect(await byClass(page, "kanban-card").first().locator(".board-card-labels .badge").allTextContents()).toEqual(originalLabels);
-    await page.locator(".board-toolbar-options > .sapid-collapsible-trigger").click();
-    await page.locator(".board-popover-host .sapid-popover-trigger").click();
+    await page.locator(".board-toolbar-options .sapid-menu-trigger").click();
+    await page.locator(".board-new-item").click();
     const boardTitle = inputByClass(page, "new-board-title-input");
     await expect(boardTitle).toHaveAccessibleName(zh ? "看板标题" : "Board title");
     const draft = await boardTitle.inputValue();
     await boardTitle.fill("");
     await expect(boardTitle).toHaveAttribute("placeholder", zh ? "看板标题" : "Board title");
     await boardTitle.fill(draft);
-    await page.locator(".board-popover-host .sapid-popover-trigger").click();
+    await page.keyboard.press("Escape");
     await byClass(page, "kanban-card").first().click();
     const detail = byClass(page, "card-detail-modal");
     await expect(byClass(detail, "card-detail-tab-description")).toHaveText(zh ? "描述" : "Description");

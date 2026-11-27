@@ -72,7 +72,7 @@ pub(super) fn install(
                 crypto_state.revise(|current| *current = "Session expired".to_owned());
                 connection_status
                     .revise(|current| *current = "Session expired; sign in again".to_owned());
-                network_state.revise(|current| *current = "online".to_owned());
+                network_state.revise(|current| *current = "sign-in-required".to_owned());
                 last_error.revise(|current| *current = Some(reason));
                 needs_device_authorization.revise(|current| *current = false);
                 device_authorization_check_complete.revise(|current| *current = false);

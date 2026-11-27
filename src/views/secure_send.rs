@@ -276,19 +276,13 @@ pub(crate) fn scope_send_probe(
                     && blocked == &crate::mls::send_gate::MlsSendGateBlocked::EpochUpdateRequired
                     && matches!(
                         scope,
-                        arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+                        arkret_sdk::ScopeRef::Realm { .. }
                     )
                     && store.read(|state| state.active_authority() == captured.authority)
                     && store.read(|state| {
-                        let circle = match scope {
-                            arkret_sdk::ScopeRef::Circle { circle_id, .. } => {
-                                Some(circle_id.as_str())
-                            }
-                            _ => None,
-                        };
                         scope.realm_id_opt().is_some_and(|realm| {
                             state
-                                .mls_coverage_stale_reason(realm.as_str(), circle)
+                                .mls_coverage_stale_reason(realm.as_str())
                                 .is_none()
                         })
                     })
@@ -387,7 +381,7 @@ pub(crate) fn run_local_mls_encrypt(
     plaintext_bytes: &[u8],
     metadata_plaintext_bytes: Option<&[u8]>,
     expected_sender_domain: Option<&str>,
-    circle_id: Option<&str>,
+
     sidecar_id: Option<&arkret_sdk::SidecarId>,
     content_material: arkret_models_crypto::EventContentMaterial,
     metadata_material: Option<arkret_models_crypto::EventContentMaterial>,
@@ -415,7 +409,7 @@ pub(crate) fn run_local_mls_encrypt(
         metadata_plaintext_bytes.map(|_| arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE),
         metadata_plaintext_bytes,
         expected_sender_domain,
-        circle_id,
+
         sidecar_id,
         content_material,
         metadata_material,
@@ -434,7 +428,7 @@ pub(crate) fn run_local_mls_encrypt_for_event(
     metadata_content_type: Option<&str>,
     metadata_plaintext_bytes: Option<&[u8]>,
     expected_sender_domain: Option<&str>,
-    circle_id: Option<&str>,
+
     sidecar_id: Option<&arkret_sdk::SidecarId>,
     content_material: arkret_models_crypto::EventContentMaterial,
     metadata_material: Option<arkret_models_crypto::EventContentMaterial>,
@@ -450,9 +444,6 @@ pub(crate) fn run_local_mls_encrypt_for_event(
             realm_id: realm_id_typed,
             sidecar_id: sidecar_id.clone(),
         }
-    } else if let Some(circle_id) = circle_id {
-        circle_effective_scope(realm_id, circle_id)
-            .map_err(crate::mls::runtime::MlsRuntimeError::Serialize)?
     } else {
         arkret_sdk::ScopeRef::Realm {
             realm_id: realm_id_typed,
@@ -484,7 +475,6 @@ pub(crate) fn run_local_mls_encrypt_for_event(
             metadata_content_type,
             metadata_plaintext_bytes,
             expected_sender_domain,
-            circle_id,
             sidecar_id,
             content_material,
             metadata_material,
@@ -492,17 +482,7 @@ pub(crate) fn run_local_mls_encrypt_for_event(
     })
 }
 
-fn circle_effective_scope(
-    realm_id: &str,
-    circle_id: &str,
-) -> Result<arkret_wire::ScopeRef, String> {
-    Ok(arkret_wire::ScopeRef::Circle {
-        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
-            .map_err(|error| format!("invalid MLS scope Realm id: {error:?}"))?,
-        circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
-            .map_err(|error| format!("invalid MLS scope Circle id: {error:?}"))?,
-    })
-}
+
 
 /// Builds the encrypted write against an already accepted epoch reference.
 pub(crate) type SecureMessagePlan = Box<
@@ -577,7 +557,7 @@ pub(crate) async fn build_secure_send(
     reply_to: Option<&str>,
     plaintext_bytes: &[u8],
     metadata_plaintext_bytes: Option<&[u8]>,
-    circle_id: Option<&str>,
+
     sidecar_id: Option<arkret_sdk::SidecarId>,
 ) -> Result<SecureSendBuild, String> {
     if state_store
@@ -592,8 +572,6 @@ pub(crate) async fn build_secure_send(
             realm_id: typed_realm_id.clone(),
             sidecar_id: sidecar_id.clone(),
         }
-    } else if let Some(circle_id) = circle_id {
-        circle_effective_scope(realm_id, circle_id)?
     } else {
         arkret_sdk::ScopeRef::Realm {
             realm_id: typed_realm_id,
@@ -663,7 +641,7 @@ pub(crate) async fn build_secure_send(
         plaintext_bytes,
         metadata_plaintext_bytes,
         None,
-        circle_id,
+
         sidecar_id.as_ref(),
         material,
         metadata_material,
@@ -837,7 +815,7 @@ pub(crate) async fn build_sidecar_exchange_control_send(
         None,
         None,
         None,
-        None,
+
         Some(&sidecar_id),
         material,
         None,
@@ -929,7 +907,7 @@ pub(crate) async fn submit_secure_send(
     state_store: &crate::runtime::input::StateStoreHandle,
     build: SecureSendBuild,
     realm_id: &str,
-    circle_id: Option<String>,
+
 ) -> SecureSendOutcome {
     let Ok(generation) = context.session_generation.try_get() else {
         return SecureSendOutcome::MessageFailed {
@@ -1009,7 +987,7 @@ pub(crate) async fn submit_secure_send(
                         crate::mls::coverage_liveness::note_e2ee_epoch_update_required(
                             &state_store.clone(),
                             realm_id,
-                            circle_id.as_deref(),
+
                             failure.detail(),
                         );
                     }
@@ -1040,7 +1018,7 @@ pub(crate) async fn submit_secure_send(
                 && crate::mls::coverage_liveness::note_e2ee_submit_refusal(
                     &state_store.clone(),
                     realm_id,
-                    circle_id.as_deref(),
+
                     &err,
                 ) =>
         {

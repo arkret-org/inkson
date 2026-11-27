@@ -163,7 +163,7 @@ impl LocalStateStore {
     }
 
     /// Resolve locally tracked membership transitions once the server reports
-    /// no remaining Realm or Circle MLS Remove obligations.  Membership Event
+    /// no remaining Realm MLS Remove obligations.  Membership Event
     /// lifecycle and MLS epoch lifecycle are distinct, so the Event becoming
     /// effective alone must not clear the send gate; the reconciliation worker
     /// calls this only after the cryptographic frontier has caught up.

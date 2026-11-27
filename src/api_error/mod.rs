@@ -306,11 +306,6 @@ pub fn decode_arkret_error(status: StatusCode, bytes: &[u8]) -> Problem {
     };
 
     maybe_dispatch_policy_deny(status, &envelope);
-    let reason = envelope
-        .extensions
-        .get("reason_code")
-        .and_then(|v| v.as_str());
-    crate::components::maybe_dispatch_circle_error(envelope.code(), reason);
     tracing::warn!(
         target: "inkson.api",
         request_id = envelope.instance.as_deref().unwrap_or("-"),

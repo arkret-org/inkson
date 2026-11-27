@@ -5,7 +5,7 @@ use super::*;
 pub(super) struct PollSubmissionContext {
     pub authority: arkret_sdk::AccountId,
     pub device_id: arkret_sdk::DeviceId,
-    pub circle_id: Option<String>,
+
 }
 
 /// Replacement declarations are derived only from the verified SDK projection.

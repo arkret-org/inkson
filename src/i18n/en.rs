@@ -89,73 +89,6 @@ pub fn english_translations() -> TranslationDict {
         "kanban.ui.members_unavailable",
         "Member identities are temporarily unavailable.",
     );
-    dict.set(
-        "circles.feedback.account_required",
-        "An active account is required",
-    );
-    dict.set("circles.feedback.archive_failed", "Archive failed: {error}");
-    dict.set("circles.feedback.archived", "Circle archived");
-    dict.set(
-        "circles.feedback.create_failed",
-        "Circle creation failed: {error}",
-    );
-    dict.set("circles.feedback.created", "Circle created");
-    dict.set(
-        "circles.feedback.creating",
-        "Creating Circle and establishing initial membership…",
-    );
-    dict.set(
-        "circles.feedback.history_failed",
-        "History change failed: {error}",
-    );
-    dict.set(
-        "circles.feedback.history_restricted",
-        "History restricted to since joining",
-    );
-    dict.set(
-        "circles.feedback.invalid_account",
-        "Invalid account principal id",
-    );
-    dict.set(
-        "circles.feedback.invalid_member",
-        "Enter a complete member ActorId including its identity kind and Station when applicable",
-    );
-    dict.set("circles.feedback.invalid_realm", "Invalid Realm id");
-    dict.set(
-        "circles.feedback.invalid_transition",
-        "Choose a valid membership transition",
-    );
-    dict.set("circles.feedback.join_requested", "Join request submitted");
-    dict.set(
-        "circles.feedback.load_failed",
-        "Could not load Circles: {error}",
-    );
-    dict.set(
-        "circles.feedback.member_removal_failed",
-        "Member removal failed: {error}",
-    );
-    dict.set("circles.feedback.member_removed", "Member access removed");
-    dict.set(
-        "circles.feedback.membership_failed",
-        "Membership update failed: {error}",
-    );
-    dict.set("circles.feedback.membership_updated", "Membership updated");
-    dict.set(
-        "circles.feedback.prepare_failed",
-        "Could not prepare the Circle change. Refresh and try again.",
-    );
-    dict.set("circles.feedback.restore_failed", "Restore failed: {error}");
-    dict.set("circles.feedback.restored", "Circle restored");
-    dict.set(
-        "circles.feedback.retire_failed",
-        "Circle retirement failed: {error}",
-    );
-    dict.set("circles.feedback.retired", "Circle permanently retired");
-    dict.set(
-        "circles.feedback.update_failed",
-        "Circle update failed: {error}",
-    );
-    dict.set("circles.feedback.updated", "Circle updated");
     dict.set("kanban.ui.actions", "Actions");
     dict.set(
         "kanban.ui.add_a_card_to_this_list",
@@ -190,6 +123,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.ui.archived_lists", "{count} list(s)");
     dict.set("kanban.ui.asia_shanghai", "Asia/Shanghai");
     dict.set("kanban.ui.assignees", "Assignees");
+    dict.set("kanban.ui.move_board", "Move board");
     dict.set("kanban.ui.board_options", "Board options");
     dict.set("chat.composer.retry_attachments", "Retry uploads");
     dict.set("kanban.ui.board_title", "Board title");
@@ -286,7 +220,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.ui.monthly", "Monthly");
     dict.set("kanban.ui.months", "Months");
     dict.set("kanban.ui.new", "New");
-    dict.set("kanban.ui.new_board", "New board");
+    dict.set("kanban.ui.new_board", "New Board");
     dict.set("kanban.ui.new_list_title", "New list title");
     dict.set("kanban.ui.next_cards", "Next cards");
     dict.set("kanban.ui.next_month", "Next month");
@@ -388,6 +322,13 @@ pub fn english_translations() -> TranslationDict {
     dict.set("nav.notifications", "Notifications");
     dict.set("nav.settings", "Settings");
     dict.set("nav.collaboration", "Collaboration");
+    dict.set("nav.private_chats", "Private chats");
+    dict.set("direct.new_chat", "New private chat");
+    dict.set("direct.search_chats", "Search private chats");
+    dict.set("direct.choose_chat", "Select a chat to view its messages.");
+    dict.set("direct.choose_recipient", "Choose a person or agent to start a private chat.");
+    dict.set("direct.empty_chats", "No private chats yet.");
+    dict.set("direct.no_matches", "No matching chats.");
     dict.set("nav.contacts", "Contacts");
     dict.set("direct.unavailable", "Direct conversation unavailable");
     dict.set("contacts.empty", "No contacts yet");
@@ -399,8 +340,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("sidebar.realms_sign_in", "Sign in to load Realms");
     dict.set("sidebar.realms_no_results", "No matching Realms");
 
-    // Circle error keys (P3B.3.2)
-    add_circle_error_keys(&mut dict);
 
     // Directory
 
@@ -433,6 +372,18 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.section.theme", "Appearance & language");
     dict.set("settings.section.release", "Release status");
     dict.set("settings.section.audit", "Audit log");
+    dict.set("settings.section.about", "About");
+    dict.set("settings.about.client_version", "Client version");
+    dict.set(
+        "settings.about.spec_version",
+        "Arkret specification version",
+    );
+    dict.set("settings.about.release_date", "Release date");
+    dict.set(
+        "settings.about.no_release_date",
+        "No release date available",
+    );
+    dict.set("settings.about.build", "Build ID");
     dict.set("settings.section.developer", "Developer tools");
     // Settings navigation — group labels + hints.
     dict.set("settings.group.account", "Account");
@@ -447,13 +398,11 @@ pub fn english_translations() -> TranslationDict {
         "settings.group.privacy.hint",
         "Profile visibility, invitations and your block list.",
     );
-    dict.set("settings.group.notifications", "Notifications");
+    dict.set("settings.group.preferences", "Preferences");
     dict.set(
-        "settings.group.notifications.hint",
-        "Notification delivery behavior.",
+        "settings.group.preferences.hint",
+        "Notifications, appearance and language.",
     );
-    dict.set("settings.group.appearance", "Appearance & language");
-    dict.set("settings.group.appearance.hint", "Theme and locale.");
     dict.set("settings.group.advanced", "Advanced");
     dict.set(
         "settings.group.advanced.hint",
@@ -694,6 +643,7 @@ pub fn english_translations() -> TranslationDict {
         "settings.notifications.sound_test_blocked",
         "Enable sound alerts before testing.",
     );
+    dict.set("settings.notifications.dnd_mode", "Do not disturb mode");
     dict.set("settings.notifications.dnd", " Do not disturb");
     dict.set("settings.notifications.dnd_off", "Off");
     dict.set("settings.notifications.dnd_now", "Now");
@@ -787,6 +737,9 @@ pub fn english_translations() -> TranslationDict {
         "settings.privacy.presence_visibility.nobody",
         "Nobody (appear offline)",
     );
+    dict.set("settings.privacy.presence", "Presence");
+    dict.set("settings.privacy.status_expiry", "Clear status after");
+    dict.set("settings.privacy.status_message", "Status message");
     dict.set("settings.privacy.status_title", "My status");
     dict.set("settings.privacy.status_badge", "manual presence");
     dict.set("settings.privacy.presence_state.auto", "Automatic");
@@ -1622,7 +1575,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.discussions_header", "Strand discussions");
     dict.set("chat.users_header", "Users");
     dict.set("chat.settings_header", "Settings");
-    dict.set("chat.new_strand", "New Strand");
+    dict.set("chat.new_chat", "New Chat");
     dict.set("chat.hide_list", "Hide discussion list");
     dict.set("chat.label.title", "Title");
     dict.set("chat.label.summary", "Summary");
@@ -2123,6 +2076,18 @@ pub fn english_translations() -> TranslationDict {
         "settings.privacy.blocklist.empty_body",
         "You haven't blocked anything yet.",
     );
+    dict.set("settings.privacy.blocklist.kind.service", "Service");
+    dict.set("settings.privacy.blocklist.kind.realm", "Realm actor");
+    dict.set("settings.privacy.blocklist.target.service", "Service ID");
+    dict.set(
+        "settings.privacy.blocklist.target.realm_actor",
+        "Realm actor ID",
+    );
+    dict.set(
+        "settings.privacy.blocklist.target.station",
+        "Home Station ID",
+    );
+    dict.set("settings.privacy.blocklist.target.realm", "Realm ID");
     dict.set("settings.privacy.blocklist.kind.domain", "Domain");
     dict.set("settings.privacy.blocklist.kind.actor", "Person or agent");
     dict.set(
@@ -2145,7 +2110,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.privacy.blocklist.target_type", "Target type");
     dict.set(
         "settings.privacy.blocklist.target.actor",
-        "Target account or agent",
+        "Account or agent ID",
     );
     dict.set("settings.privacy.blocklist.target.domain", "Target domain");
     dict.set(
@@ -2346,13 +2311,20 @@ pub fn english_translations() -> TranslationDict {
 
     // Developer Tools / Diagnostics entry points used to expose the
     // protocol-level details that used to leak into the main flow.
-    dict.set("developer.title", "Developer Tools");
-    dict.set("developer.subtitle", "Protocol diagnostics and audit");
+    dict.set(
+        "developer.diagnostics_intro",
+        "Use the protocol version and recent events to diagnose communication issues.",
+    );
     dict.set("developer.section.events", "Raw event log");
+    dict.set("developer.events.empty", "No raw operations recorded yet.");
+    dict.set(
+        "developer.events.preview",
+        "Showing {count} of {total} raw operations, newest first.",
+    );
     dict.set("developer.section.protocol_version", "Protocol version");
     dict.set(
-        "developer.hint",
-        "These details are intended for developers and operators. End users do not need to read them.",
+        "developer.protocol_version.description",
+        "Protocol version advertised by this client.",
     );
 
     // R3 spec sync (b47ff6ec) — new error toast strings surfaced by the
@@ -2516,10 +2488,6 @@ pub fn english_translations() -> TranslationDict {
         "Complete registration material JSON (AppletInstallPreviewRequestBody)",
     );
     dict.set(
-        "applets.circle_placeholder",
-        "optional Circle id (ak:circle:…) — blank = Realm-wide",
-    );
-    dict.set(
         "applets.actions_placeholder",
         "approved actions, comma or newline separated",
     );
@@ -2532,7 +2500,6 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("applets.trace_events", "Trace events");
     dict.set("applets.revoke_scope", "Uninstall target");
-    dict.set("applets.revoke_scope_help", "Choose the Circle to uninstall from, or leave blank for the Realm installation. Only the selected Service is affected. Registration history does not show whether an installation is active.");
     dict.set("applets.bot_name", "Bot display name (optional)");
     dict.set("applets.create_bot", "Create Bot");
     dict.set(
@@ -2657,10 +2624,6 @@ pub fn english_translations() -> TranslationDict {
         "Message this discussion. Use #task-123 to link a card.",
     );
     dict.set(
-        "chat.composer.circle_scope",
-        "Visible to authorized readers in this Circle",
-    );
-    dict.set(
         "chat.composer.direct_scope",
         "Visible to the two participants in this direct conversation",
     );
@@ -2669,155 +2632,6 @@ pub fn english_translations() -> TranslationDict {
         "Send to this Realm discussion; visible to authorized readers of this scope",
     );
 
-    dict.set("circles.page.state_active", "Active");
-    dict.set("circles.page.state_archived", "Archived");
-    dict.set("circles.page.state_tombstoned", "Tombstoned");
-    dict.set("circles.page.membership_join", "Member");
-    dict.set("circles.page.membership_knock", "Requested");
-    dict.set("circles.page.membership_leave", "Left");
-    dict.set("circles.page.membership_ban", "Banned");
-    dict.set("circles.page.membership_viewer", "Directory viewer");
-    dict.set(
-        "circles.page.encrypted",
-        "Independent MLS group · E2EE active",
-    );
-    dict.set("circles.page.unencrypted", "Restricted delivery · not E2EE");
-    dict.set("circles.page.heading", "Circles");
-    dict.set("circles.page.new", "New Circle");
-    dict.set("circles.page.loading", "Loading Circles…");
-    dict.set("circles.page.empty", "No ordinary Circles");
-    dict.set(
-        "circles.page.empty_help",
-        "Create a Circle for a smaller collaboration boundary. Agent Sidecars never appear here.",
-    );
-    dict.set("circles.page.preview", "Circle preview");
-    dict.set("circles.page.directory", "Directory");
-    dict.set("circles.page.membership", "Membership");
-    dict.set("circles.page.your_access", "Your access");
-    dict.set("circles.page.join_rule", "Join rule");
-    dict.set("circles.page.history", "History");
-    dict.set("circles.page.encryption", "Encryption");
-    dict.set("circles.page.not_encrypted", "Not end-to-end encrypted");
-    dict.set("circles.page.plaintext_warning", "This Circle remains a restricted delivery and query boundary until its own MLS genesis is accepted. The server may read plaintext.");
-    dict.set("circles.page.members", "Members");
-    dict.set(
-        "circles.page.members_private",
-        "Member identities are available only to active Circle members.",
-    );
-    dict.set("circles.page.remove", "Remove");
-    dict.set("circles.page.add_member", "Add member");
-    dict.set("circles.page.request", "Request (knock)");
-    dict.set("circles.page.leave", "Leave");
-    dict.set("circles.page.ban", "Ban");
-    dict.set("circles.page.apply", "Apply");
-    dict.set("circles.page.archive", "Archive");
-    dict.set("circles.page.restore", "Restore");
-    dict.set("circles.page.directory_preview", "Directory preview");
-    dict.set(
-        "circles.page.preview_private",
-        "Private details are visible after joining this Circle.",
-    );
-    dict.set("circles.page.select", "Select a Circle");
-    dict.set(
-        "circles.page.select_help",
-        "Review the exact membership and encryption boundary before creating scoped content.",
-    );
-    dict.set("circles.page.create", "Create Circle");
-    dict.set("circles.page.title", "Title");
-    dict.set(
-        "circles.page.short_name",
-        "Short name (ASCII, unique in this Realm)",
-    );
-    dict.set("circles.page.summary", "Summary");
-    dict.set("circles.page.since_join", "Since joining");
-    dict.set(
-        "circles.page.all_history",
-        "All history for current members",
-    );
-    dict.set("circles.page.e2ee", "End-to-end encryption");
-    dict.set("circles.page.boundary_preview", "Boundary preview");
-    dict.set("circles.page.boundary_help", "Starts as restricted delivery only. E2EE becomes active only after this Circle's own MLS genesis is accepted.");
-    dict.set("circles.page.nav_label", "Ordinary Circles");
-    dict.set(
-        "circles.page.actor_placeholder",
-        "Complete member ActorId JSON",
-    );
-    dict.set("circles.page.actor_label", "Circle member ActorId");
-    dict.set("circles.page.membership_state", "Circle membership state");
-    dict.set("circles.page.short_name_label", "Circle short name");
-    dict.set("circles.page.history_label", "Circle history");
-    dict.set(
-        "circles.page.help",
-        "Circles restrict membership, history, delivery and encryption inside this Realm.",
-    );
-    dict.set("circles.page.member_count", " · {count} members");
-    dict.set("circles.page.preview_count", "{count} members · {rule}");
-    dict.set("circles.page.active_count", "{count} active members");
-    dict.set("circles.page.approximate_count", "{count} (approximate)");
-    dict.set("circles.page.initial_member", "Initial member: {member}");
-    dict.set("circles.page.directory_value", "Directory: {value}");
-    dict.set("circles.page.join_rule_value", "Join rule: {value}");
-    dict.set("circles.page.history_value", "History: {value}");
-    dict.set(
-        "circles.controls.directory_visibility",
-        "Directory visibility",
-    );
-    dict.set(
-        "circles.controls.directory_visibility_aria",
-        "Circle directory visibility",
-    );
-    dict.set("circles.controls.members_only", "Circle members only");
-    dict.set(
-        "circles.controls.realm_preview",
-        "Preview for Realm members",
-    );
-    dict.set("circles.controls.join_rule", "Join rule");
-    dict.set("circles.controls.join_rule_aria", "Circle join rule");
-    dict.set("circles.controls.public_join", "Any active Realm member");
-    dict.set("circles.controls.knock_join", "Request approval");
-    dict.set("circles.controls.invite_join", "Added by a Circle manager");
-    dict.set("circles.controls.leave", "Leave Circle");
-    dict.set("circles.controls.withdraw", "Withdraw request");
-    dict.set("circles.controls.join", "Join Circle");
-    dict.set("circles.controls.request_join", "Request to join");
-    dict.set(
-        "circles.controls.terminal_unavailable",
-        "This Circle is permanently unavailable.",
-    );
-    dict.set(
-        "circles.controls.manager_access",
-        "A Circle manager must grant access. Preview access does not include Circle content.",
-    );
-    dict.set("circles.controls.edit", "Edit Circle");
-    dict.set(
-        "circles.controls.management_required",
-        "Changes require Circle management permission.",
-    );
-    dict.set("circles.controls.title", "Title");
-    dict.set("circles.controls.title_aria", "Circle title");
-    dict.set(
-        "circles.controls.short_name",
-        "Short name (ASCII, unique in this Realm)",
-    );
-    dict.set("circles.controls.short_name_aria", "Circle short name");
-    dict.set("circles.controls.summary", "Summary");
-    dict.set("circles.controls.summary_aria", "Circle summary");
-    dict.set("circles.controls.save_changes", "Save changes");
-    dict.set("circles.controls.irreversible", "Irreversible changes");
-    dict.set(
-        "circles.controls.irreversible_permission",
-        "These actions require Circle management permission and cannot be undone.",
-    );
-    dict.set(
-        "circles.controls.history_confirm",
-        "I understand history will be restricted to each member's join boundary.",
-    );
-    dict.set("circles.controls.restrict_history", "Restrict history");
-    dict.set(
-        "circles.controls.terminal_confirm",
-        "I understand this Circle will become permanently unavailable.",
-    );
-    dict.set("circles.controls.retire", "Permanently retire Circle");
 
     dict.set("chat.direct_structure.reply_hint", "Reply preference applies only to the selected Chat. Other permissions and encryption readiness are checked separately.");
     dict.set("chat.sidecar.enable_private_reply", "Allow {agents} to join this private chat and reply");
@@ -3822,37 +3636,6 @@ fn add_generic_error_keys(dict: &mut TranslationDict) {
     );
 }
 
-/// English i18n strings for the 6 Circle reason / error codes
-/// surfaced by [`crate::circle::CircleErrorKind`] (P3B.3.2). Zh / Ar
-/// translations follow in a later milestone; the toast falls back to
-/// the English string when the locale doesn't carry the key.
-fn add_circle_error_keys(dict: &mut TranslationDict) {
-    dict.set(
-        "error.circle.realm_mismatch",
-        "This Circle belongs to a different Realm than the message you tried to send.",
-    );
-    dict.set(
-        "error.circle.not_active",
-        "The Circle is archived or tombstoned and can no longer receive messages.",
-    );
-    dict.set(
-        "error.circle.member_not_in_realm",
-        "Cannot add this user to the Circle — they are not an active member of the parent Realm.",
-    );
-    dict.set(
-        "error.circle.scope_rebind_forbidden",
-        "Changing an existing object's Circle scope requires an audited admin action.",
-    );
-    // CircleScopePicker — default scope option + help text (render site
-    // localizes; `CircleScope::label()` stays a static str).
-    dict.set("circle.scope.realm_everyone", "Realm (everyone)");
-    dict.set(
-        "circle.scope.help",
-        "Choose a Circle to restrict visibility to a strict subset of Realm members.",
-    );
-
-    // Shareable object links.
-}
 
 /// Setup surface: the `ak.realm.create` wizard, the `ak.space.create` form,
 /// and the surface-map overview. Split out of [`english_translations`] only
@@ -4420,7 +4203,6 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.settings", "Settings");
     dict.set("route.notifications", "Notifications");
     dict.set("route.realm_members", "Members");
-    dict.set("route.circles", "Circles");
     dict.set("route.realm_admin", "Realm Settings");
     dict.set("route.realm_admin.profile", "Profile");
     dict.set("route.realm_admin.access", "Access Policy");
@@ -4720,6 +4502,12 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.nav.scope_toggle", "Collaboration and contacts");
     dict.set("app.nav.show_navigation", "Show navigation");
     dict.set("app.nav.hide_navigation", "Hide navigation");
+    dict.set("connection.online", "Connected to server");
+    dict.set("connection.offline", "Offline");
+    dict.set("connection.connecting", "Connecting");
+    dict.set("connection.reconnecting", "Reconnecting");
+    dict.set("connection.sign_in", "Sign-in required");
+    dict.set("connection.stopped", "Sync stopped");
     dict.set("app.brand.home", "Inkson | Arkret Home");
     dict.set("app.main_content", "Main content");
     dict.set("app.sidebar.hide_own_agents", "Hide your AI agents");
@@ -4736,6 +4524,7 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.sidebar.direct_badge", "DM");
     dict.set("app.sidebar.agent_count", "Agents {count}");
     dict.set("app.sidebar.contact_actions", "Contact actions");
+    dict.set("app.sidebar.realm_actions", "Realm actions");
     dict.set("app.sidebar.close_row_actions", "Close row actions");
     dict.set("app.sidebar.delete_contact", "Delete Contact");
     dict.set("app.topbar.current_view", "Current view: {surface}");

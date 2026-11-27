@@ -11,7 +11,7 @@ for (const theme of ["light", "dark"]) {
           <div class="workspace">
             <main class="main realm">
               <div class="app-banner app-banner--offline" role="status">You are offline. Changes will sync once the connection is restored.</div>
-              <div class="topbar realm-header"><div class="topbar-left">Facebook</div><div class="actions"><button>Board</button></div></div>
+              <div class="topbar realm-header"><div class="topbar-left">Facebook</div><div class="actions"><button>Boards</button></div></div>
               <div class="realm-body">Board content</div>
             </main>
           </div>
@@ -27,7 +27,7 @@ for (const theme of ["light", "dark"]) {
       expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
       const background = await banner.evaluate(el => getComputedStyle(el).backgroundColor);
       expect(background).toMatch(/^rgb\(/);
-      await page.getByRole("button", { name: "Board", exact: true }).click();
+      await page.getByRole("button", { name: "Boards", exact: true }).click();
       await page.screenshot({ path: test.info().outputPath(`offline-banner-${theme}-${width}.png`) });
       const previousY = topbar!.y;
       await banner.evaluate(el => el.remove());

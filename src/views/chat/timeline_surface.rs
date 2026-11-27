@@ -9,7 +9,6 @@ use crate::presentation::widgets::{empty, line, paragraph, reactive_distinct};
 pub(super) struct ChatTimelineContext {
     pub embedded: bool,
     pub visible_messages: Bond<Vec<ChatMessage>>,
-    pub strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle>,
     pub private_sidecar_event_ids: std::collections::BTreeSet<String>,
     pub authority: arkret_sdk::AccountId,
     pub principal_id: arkret_sdk::DidCoreId,

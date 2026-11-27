@@ -2,6 +2,14 @@
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; height: 100%; }
 
+/* Use native scrollbars so both axes keep the platform's scrolling behavior. */
+@media (forced-colors: none) and (pointer: fine) {
+  :where(*) { scrollbar-width: thin; }
+  :where(:root, [data-theme], .inkson-root) {
+    scrollbar-color: var(--field-border) transparent;
+  }
+}
+
 body {
   font-family: var(--font-sans);
   font-size: var(--text-body);

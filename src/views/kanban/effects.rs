@@ -108,7 +108,7 @@ async fn fetch_kanban_projection_snapshot(
     };
     // The Realm follower owns admitted, paginated Event history for every
     // visible stream. A panel-local first-page scan duplicates that work and
-    // cannot recover Events beyond that page or in independent Circle streams.
+    // cannot recover Events beyond that page.
     Ok(KanbanProjectionSnapshot {
         containers: spaces,
         strands,

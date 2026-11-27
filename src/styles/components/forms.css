@@ -4,6 +4,7 @@
 .workflow-form { display: grid; gap: 10px; align-content: start; }
 
 .input, .select, .textarea,
+:where(input.sapid-text-field.sapid-unstyled, textarea.sapid-text-field.sapid-unstyled, button.sapid-select.sapid-unstyled),
 :is(.search, .settings, .workflow-form, .composer) input:where(
   :not([type]), [type="text"], [type="search"], [type="password"], [type="url"],
   [type="email"], [type="tel"], [type="number"], [type="date"], [type="datetime-local"]
@@ -14,7 +15,7 @@
   max-width: 100%;
   min-width: 0;
   min-height: var(--control-md);
-  padding: 6px 10px;
+  padding: 6px var(--field-padding-inline);
   border: 1px solid var(--field-border);
   border-radius: var(--radius-sm);
   background: var(--surface-solid);
@@ -27,12 +28,32 @@
 :is(.search, .settings, .workflow-form, .composer) :where(input:not([type]), input[type="text"], input[type="search"], input[type="password"], input[type="url"], input[type="email"], input[type="tel"], input[type="number"], input[type="date"], input[type="datetime-local"], textarea),
 :is(.settings, .workflow-form) select { width: 100%; }
 .select { text-align: start; padding-inline-end: 32px; }
+/* Sapid reserves inline space on the trigger for the trailing chevron.
+   Inset the value itself so the same text edge is used even in compact selects. */
+.sapid-select.sapid-unstyled > .sapid-select-value {
+  padding-inline-start: var(--field-padding-inline);
+  text-overflow: ellipsis;
+}
+.sapid-select.sapid-unstyled > .sapid-select-chevron { color: var(--text-2); }
+.sapid-select.sapid-unstyled > .sapid-select-chevron path { stroke: currentColor; }
 .textarea { min-height: 80px; resize: vertical; }
 .input::placeholder, .textarea::placeholder { color: var(--text-3); opacity: 1; }
 
-.input:focus, .select:focus, .textarea:focus,
-:is(.search, .settings, .workflow-form, .composer, .actions, .event) :is(input, textarea, select):focus {
-  border-color: var(--focus);
+/* Unstyled Sapid editors use Inkson's palette with Sapid's inward focus stroke. */
+.sapid-unstyled:is(.sapid-text-field, .sapid-combobox, .sapid-tags-input, .sapid-pills-input):focus,
+.card-rich-editor .toastui-editor-popup-body input[type=text]:focus {
+  --field-focus: var(--focus);
+  border-color: var(--field-focus);
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--field-focus);
+}
+.sapid-unstyled:is([data-gly-invalid], [aria-invalid="true"], .danger):focus { --field-focus: var(--danger); }
+@media (forced-colors: active) {
+  .sapid-unstyled:is(.sapid-text-field, .sapid-combobox, .sapid-tags-input, .sapid-pills-input):focus,
+  .card-rich-editor .toastui-editor-popup-body input[type=text]:focus {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
 }
 .input.danger, .select.danger, .textarea.danger,
 .input[aria-invalid="true"], .select[aria-invalid="true"], .textarea[aria-invalid="true"] {

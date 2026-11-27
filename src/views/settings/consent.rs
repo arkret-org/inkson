@@ -466,7 +466,7 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
             children.push(Box::new(
                 sapid::checkbox()
                     .unstyled()
-                    .class("checkbox")
+                    .class("settings-toggle")
                     .label(scope_label(consent_scope.as_str()))
                     .checked(checked)
                     .enabled(enabled)

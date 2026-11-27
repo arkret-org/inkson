@@ -123,7 +123,7 @@ pub(crate) fn is_own_station_session_changed(error: &anyhow::Error) -> bool {
 /// exists for the identity and pairing paths that authenticate an Event before
 /// a submitter (which needs a bound account authority) can be built.
 ///
-/// There is deliberately no Realm-wide cursor: the Realm and every Circle and
+/// There is deliberately no Realm-wide cursor: the Realm and each
 /// Sidecar have their own stream, and the caller drives the tail of each one it
 /// is entitled to read.
 pub(crate) async fn scan_stream_with(
@@ -220,11 +220,7 @@ pub(crate) fn creator_intent_for_submission(
         arkret_sdk::EventKind::RealmCreate => arkret_sdk::ScopeRef::Realm {
             realm_id: create.realm_id.clone(),
         },
-        arkret_sdk::EventKind::CircleCreate => arkret_sdk::ScopeRef::Circle {
-            realm_id: create.realm_id.clone(),
-            circle_id: arkret_sdk::CircleId::from_event_id(&create.event_id),
-        },
-        _ => anyhow::bail!("creator intent requires a Realm or Circle create"),
+        _ => anyhow::bail!("creator intent requires a Realm create"),
     };
     let proof = create
         .producer_proof
@@ -242,34 +238,7 @@ pub(crate) fn creator_intent_for_submission(
     )
 }
 
-/// A new encrypted Circle has a metadata-free discussion before activation.
-/// Its identity is frozen with create/join, so recovery never invents another
-/// application object and no plaintext user metadata enters an activated scope.
-pub(crate) fn initial_circle_discussion_intent(
-    scope: &arkret_sdk::ScopeRef,
-    owner: &arkret_sdk::ActorId,
-) -> anyhow::Result<EventIntent> {
-    let arkret_sdk::ScopeRef::Circle {
-        realm_id,
-        circle_id,
-    } = scope
-    else {
-        anyhow::bail!("initial Circle discussion requires its exact scope");
-    };
-    let object = arkret_sdk::StrandCreateObject::new(realm_id.clone(), owner.clone())
-        .with_scope_circle_id(circle_id.clone())
-        .with_track("discussion", arkret_sdk::StrandTrack::discussion_primary());
-    let payload = crate::operation::ak_ops::strand_create_payload(object)?;
-    let created_at = payload.object.created_at;
-    Ok(
-        arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::StrandCreate>::new(
-            scope.clone(),
-            owner.clone(),
-            payload,
-        )?
-        .into_intent(created_at)?,
-    )
-}
+
 
 /// A browser runtime has multiple outbound triggers: the foreground writer and
 /// the account-sync drain. Engines opened on the same durable store do not
@@ -1250,8 +1219,7 @@ impl EventSubmitter {
 
     /// Scan one independent commit stream.
     ///
-    /// There is deliberately no Realm-wide cursor: the Realm and every Circle
-    /// and Sidecar have their own stream, and the caller drives the tail of
+    /// There is deliberately no Realm-wide cursor: the Realm and each personal Sidecar have their own stream, and the caller drives the tail of
     /// each one it is entitled to read.
     pub async fn scan_stream(
         &self,
@@ -1264,7 +1232,7 @@ impl EventSubmitter {
 
     /// One page of the Realm's own commit stream, from its start.
     ///
-    /// This is the Realm stream, not a Realm-wide ordering: Circle and Sidecar
+    /// This is the Realm stream, not a Realm-wide ordering: personal Sidecar
     /// streams are scanned separately through [`Self::scan_stream`].
     pub async fn backfill(&self, realm_id: &str) -> anyhow::Result<BackfillView> {
         let stream_ref = arkret_wire::CommitStreamRef::Realm {
@@ -1827,84 +1795,7 @@ impl EventSubmitter {
         Ok(result)
     }
 
-    /// Create an explicitly encrypted Circle. Freeze the signed creation
-    /// Events and the closed creator selector in one vault CAS before sending.
-    pub(crate) async fn submit_circle_creator_durable(
-        &self,
-        operation: &LocalOperation,
-        device_id: &arkret_sdk::DeviceId,
-    ) -> anyhow::Result<arkret_sdk::CircleId> {
-        let intent = operation.intent();
-        self.ensure_recovery_material_ready(intent).await?;
-        let _single_writer = outbound_submit_lock().lock().await;
-        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-        let _trace = OutboundWriterTrace::acquired("create_circle");
-        let parent_revision = self
-            .read_parent_membership_revision(
-                intent
-                    .realm_id_opt()
-                    .ok_or_else(|| anyhow::anyhow!("Circle create has no parent Realm"))?,
-                intent.actor_id(),
-            )
-            .await?;
-        let create = self.author_intent(intent).await?;
-        anyhow::ensure!(
-            create.kind == arkret_sdk::EventKind::CircleCreate,
-            "Circle creator requires a Circle create operation"
-        );
-        let circle_id = arkret_sdk::CircleId::from_event_id(create.event_id());
-        let scope = arkret_sdk::ScopeRef::Circle {
-            realm_id: create.realm_id.clone(),
-            circle_id: circle_id.clone(),
-        };
-        let member = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::CircleMemberState>::new(
-            scope.clone(),
-            create.actor_id.clone(),
-            arkret_sdk::CircleMemberStatePayload {
-                circle_id: circle_id.clone(),
-                member_id: create.actor_id.clone(),
-                membership: arkret_sdk::CircleMembership::Join,
-                parent_membership_revision: Some(parent_revision),
-                reason: None,
-                effective_at: None,
-                expected_membership: arkret_sdk::WirePresence::Missing,
-            },
-        )?
-        .into_intent(arkret_sdk::canonical::normalize_timestamp_canonical(
-            crate::clock::now_utc(),
-        ))?;
-        let member = self.author_intent(&member).await?;
-        let discussion = self
-            .author_intent(&initial_circle_discussion_intent(&scope, &create.actor_id)?)
-            .await?;
-        let create_submission = event_submission(&create)?;
-        let member_submission = event_submission(&member)?;
-        let discussion_submission = event_submission(&discussion)?;
-        let creator = creator_intent_for_submission(&create_submission, device_id.clone())?;
-        self.outbound(OutboundLane::Standard)?
-            .store()
-            .freeze_circle_creator_intent(
-                creator,
-                create_submission.clone(),
-                member_submission.clone(),
-                discussion_submission.clone(),
-            )
-            .await?;
-        for submission in [create_submission, member_submission, discussion_submission] {
-            let local_operation_id = submission.event_id.to_string();
-            let item = self
-                .enqueue_and_drive(QueuedWrite {
-                    lane: OutboundLane::Standard,
-                    submission,
-                    local_operation_id,
-                    post_accept: PostAccept::None,
-                    retry_scope: InteractiveRetryScope::Ordinary,
-                })
-                .await?;
-            settled_outbound_result(&item)?;
-        }
-        Ok(circle_id)
-    }
+
 
     pub(crate) async fn creator_bootstrap_records(
         &self,
@@ -3451,7 +3342,7 @@ impl EventSubmitter {
     async fn await_application_current(&self, intent: &EventIntent) -> anyhow::Result<()> {
         if !matches!(
             intent.scope_ref(),
-            arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+            arkret_sdk::ScopeRef::Realm { .. }
         ) || crate::mls::send_gate::ApplicationBody::of_event(intent)?.is_none()
         {
             return Ok(());
@@ -3750,7 +3641,7 @@ impl EventSubmitter {
         let event = &submission.event;
         if !matches!(
             event.scope_ref,
-            arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+            arkret_sdk::ScopeRef::Realm { .. }
         ) {
             return Ok(());
         }
@@ -3758,10 +3649,7 @@ impl EventSubmitter {
             let input = self.mls_send_gate_input(&event.scope_ref).ok_or_else(|| {
                 anyhow::anyhow!("outbound application send requires an account current index")
             })?;
-            if matches!(event.scope_ref, arkret_sdk::ScopeRef::Circle { .. }) {
-                crate::mls::send_gate::check_circle_send_membership(&input, &event.scope_ref)
-                    .await?;
-            }
+
             crate::mls::send_gate::check_application_body(&input, &event.scope_ref, body).await?;
         }
         Ok(())
@@ -3779,7 +3667,7 @@ impl EventSubmitter {
     async fn ensure_application_send_gate(&self, intent: &EventIntent) -> anyhow::Result<()> {
         if !matches!(
             intent.scope_ref(),
-            arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+            arkret_sdk::ScopeRef::Realm { .. }
         ) {
             return Ok(());
         }
@@ -3913,7 +3801,7 @@ impl EventSubmitter {
                 anyhow::anyhow!("current own Station cut does not cover the Signal stream")
             })?;
         // This is current coverage, not a downloaded replay predecessor.
-        // The actual scope remains its independent Realm/Circle/Sidecar stream.
+        // The actual scope remains its independent Realm/Sidecar stream.
         Ok(head.commit_id.clone())
     }
 
@@ -3955,23 +3843,12 @@ impl EventSubmitter {
     )> {
         state_store.read(|store| store.require_blocklist_signal_freshness(payload))?;
         let stream_head_ref = self.current_stream_head_for(&scope_ref).await?;
-        let parent_realm_authority_commit_id =
-            if matches!(&scope_ref, arkret_sdk::ScopeRef::Circle { .. }) {
-                Some(
-                    self.current_stream_head_for(&arkret_sdk::ScopeRef::Realm {
-                        realm_id: scope_ref.realm_id().clone(),
-                    })
-                    .await?,
-                )
-            } else {
-                None
-            };
         let header = crate::signal::SignalHeader::new(
             scope_ref,
             arkret_sdk::ActorId::account(authority.clone()),
             device_id.clone(),
             stream_head_ref,
-            parent_realm_authority_commit_id,
+
             payload.signal_class(),
             crate::clock::now_utc(),
         );
@@ -4347,22 +4224,11 @@ impl EventSubmitter {
         state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<arkret_wire::SignalEnvelope> {
         let stream_head_ref = self.current_stream_head_for(&scope_ref).await?;
-        let parent = if matches!(&scope_ref, arkret_sdk::ScopeRef::Circle { .. }) {
-            Some(
-                self.current_stream_head_for(&arkret_sdk::ScopeRef::Realm {
-                    realm_id: scope_ref.realm_id().clone(),
-                })
-                .await?,
-            )
-        } else {
-            None
-        };
         let header = crate::signal::SignalHeader::new(
             scope_ref.clone(),
             arkret_sdk::ActorId::account(authority.clone()),
             device.clone(),
             stream_head_ref,
-            parent,
             payload.signal_class(),
             crate::clock::now_utc(),
         );

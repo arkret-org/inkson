@@ -15,15 +15,15 @@ wasm_bindgen_test_configure!(run_in_browser);
 const REALM: &str = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";
 const COMMIT: &str = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq";
 
-#[path = "support/search_circle.rs"]
-mod search_circle;
+#[path = "support/search_realm.rs"]
+mod search_realm;
 
 #[wasm_bindgen_test(async)]
 async fn account_scope_removal_requires_fresh_current_without_mixing_list_and_stream_positions() {
-    let fixture = search_circle::Fixture::new();
+    let fixture = search_realm::Fixture::new();
     let id = authority("account-scope-removal");
     let actor = serde_json::to_string(&fixture.actor).unwrap();
-    let now = search_circle::at(20).to_rfc3339();
+    let now = search_realm::at(20).to_rfc3339();
     let snapshot = serde_json::to_string(&fixture.snapshot).unwrap();
     let expected = serde_json::to_string(&vec![fixture.message.clone()]).unwrap();
     let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
@@ -35,7 +35,7 @@ async fn account_scope_removal_requires_fresh_current_without_mixing_list_and_st
     index
         .commit_account_scope_change(
             1,
-            &search_circle::account_scope_removal_frame(&fixture.snapshot.realm_id),
+            &search_realm::account_scope_removal_frame(&fixture.snapshot.realm_id),
         )
         .await
         .unwrap();
@@ -54,7 +54,7 @@ async fn account_scope_removal_requires_fresh_current_without_mixing_list_and_st
     reopened
         .commit_account_scope_change(
             2,
-            &search_circle::account_scope_rejoin_frame(&fixture.snapshot.realm_id),
+            &search_realm::account_scope_rejoin_frame(&fixture.snapshot.realm_id),
         )
         .await
         .unwrap();
@@ -68,7 +68,7 @@ async fn account_scope_removal_requires_fresh_current_without_mixing_list_and_st
 
 #[wasm_bindgen_test(async)]
 async fn search_retention_policy_and_validity_boundaries_survive_restart() {
-    for (scenario, fixture, checks) in search_circle::policy_cases() {
+    for (scenario, fixture, checks) in search_realm::policy_cases() {
         let id = authority(&format!("retention-policy-{scenario}"));
         let actor = serde_json::to_string(&fixture.actor).unwrap();
         let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
@@ -105,10 +105,10 @@ async fn search_retention_policy_and_validity_boundaries_survive_restart() {
 
 #[wasm_bindgen_test(async)]
 async fn search_event_redaction_never_releases_cached_full_across_restart() {
-    for (scenario, steps) in search_circle::event_redaction_cases() {
+    for (scenario, steps) in search_realm::event_redaction_cases() {
         let id = authority(&format!("event-redaction-{scenario}"));
-        let actor = serde_json::to_string(&search_circle::Fixture::new().actor).unwrap();
-        let now = search_circle::at(20).to_rfc3339();
+        let actor = serde_json::to_string(&search_realm::Fixture::new().actor).unwrap();
+        let now = search_realm::at(20).to_rfc3339();
         for (generation, step) in steps.into_iter().enumerate() {
             let index = CurrentIndexHarness::open(&id, generation as u64)
                 .await
@@ -138,10 +138,10 @@ async fn search_event_redaction_never_releases_cached_full_across_restart() {
 
 #[wasm_bindgen_test(async)]
 async fn search_disclosure_backfill_recovers_exact_original_without_reopening_other_gates() {
-    for (scenario, steps) in search_circle::disclosure_cases() {
+    for (scenario, steps) in search_realm::disclosure_cases() {
         let id = authority(&format!("disclosure-{scenario}"));
-        let actor = serde_json::to_string(&search_circle::Fixture::new().actor).unwrap();
-        let now = search_circle::at(20).to_rfc3339();
+        let actor = serde_json::to_string(&search_realm::Fixture::new().actor).unwrap();
+        let now = search_realm::at(20).to_rfc3339();
         for (generation, step) in steps.into_iter().enumerate() {
             let index = CurrentIndexHarness::open(&id, generation as u64)
                 .await
@@ -173,9 +173,9 @@ async fn search_disclosure_backfill_recovers_exact_original_without_reopening_ot
 async fn search_revision_current_advance_waits_for_exact_original_across_restart() {
     let id = authority("current-revision");
     let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
-    let mut fixture = search_circle::Fixture::new();
+    let mut fixture = search_realm::Fixture::new();
     let actor = serde_json::to_string(&fixture.actor).unwrap();
-    let now = search_circle::at(20).to_rfc3339();
+    let now = search_realm::at(20).to_rfc3339();
     index
         .commit_snapshot(
             0,
@@ -243,7 +243,7 @@ async fn search_revision_current_requires_exact_carrier_evidence() {
             }
             let id = authority(&format!("current-revision-{revised}-{scenario}"));
             let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
-            let mut fixture = search_circle::Fixture::new();
+            let mut fixture = search_realm::Fixture::new();
             if revised {
                 fixture.revise_message();
             }
@@ -258,7 +258,7 @@ async fn search_revision_current_requires_exact_carrier_evidence() {
             let actor = serde_json::to_string(&fixture.actor).unwrap();
             assert_eq!(
                 index
-                    .search(&actor, &search_circle::at(20).to_rfc3339())
+                    .search(&actor, &search_realm::at(20).to_rfc3339())
                     .await
                     .unwrap(),
                 "[]",
@@ -278,13 +278,13 @@ async fn search_current_message_redaction_is_terminal_without_history_and_scrubs
     ] {
         let id = authority(&format!("current-redaction-{scenario}"));
         let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
-        let mut fixture = search_circle::Fixture::new();
+        let mut fixture = search_realm::Fixture::new();
         if scenario == "revised" {
             fixture.revise_message();
         }
         let message = arkret_sdk::MessageId::from_event_id(&fixture.message.event.event_id);
         let actor = serde_json::to_string(&fixture.actor).unwrap();
-        let now = search_circle::at(20).to_rfc3339();
+        let now = search_realm::at(20).to_rfc3339();
         index
             .commit_snapshot(
                 0,
@@ -345,8 +345,8 @@ async fn search_current_message_redaction_is_terminal_without_history_and_scrubs
                 }
             )
         });
-        fixture.snapshot.created_at = search_circle::at(13);
-        search_circle::seal(&mut fixture.snapshot);
+        fixture.snapshot.created_at = search_realm::at(13);
+        search_realm::seal(&mut fixture.snapshot);
         index
             .commit_snapshot(
                 3,
@@ -377,9 +377,9 @@ async fn search_current_message_redaction_rejects_bad_evidence_without_publicati
     for scenario in ["empty", "wrong_subject", "wrong_stream"] {
         let id = authority(&format!("invalid-redaction-{scenario}"));
         let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
-        let mut fixture = search_circle::Fixture::new();
+        let mut fixture = search_realm::Fixture::new();
         let actor = serde_json::to_string(&fixture.actor).unwrap();
-        let now = search_circle::at(20).to_rfc3339();
+        let now = search_realm::at(20).to_rfc3339();
         index
             .commit_snapshot(
                 0,
@@ -408,14 +408,16 @@ async fn search_current_message_redaction_rejects_bad_evidence_without_publicati
             }
             _ => {
                 let head = &fixture.snapshot.visible_stream_heads[0];
-                *source_stream_ref = head.stream_ref.clone();
+                *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
+                    realm_id: arkret_wire::RealmId::from_event_id(&fixture.message.event.event_id),
+                };
                 *revision = arkret_sdk::CurrentRevision {
                     commit_id: head.commit_id.clone(),
                     stream_position: head.stream_position,
                 };
             }
         }
-        search_circle::seal(&mut fixture.snapshot);
+        search_realm::seal(&mut fixture.snapshot);
         assert!(
             index
                 .commit_snapshot(
@@ -436,16 +438,16 @@ async fn search_current_message_redaction_rejects_bad_evidence_without_publicati
 }
 
 #[wasm_bindgen_test(async)]
-async fn search_circle_current_scope_survives_archive_but_not_terminal_or_missing_evidence() {
-    for scenario in search_circle::SCENARIOS {
-        let id = authority(&format!("search-circle-{scenario}"));
+async fn search_requires_active_strand_and_current_realm_evidence() {
+    for scenario in search_realm::SCENARIOS {
+        let id = authority(&format!("search-realm-{scenario}"));
         let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
-        let mut fixture = search_circle::Fixture::new();
+        let mut fixture = search_realm::Fixture::new();
         if scenario == "wrong_source" {
             fixture.change(scenario);
         }
         let actor = serde_json::to_string(&fixture.actor).unwrap();
-        let now = search_circle::at(20).to_rfc3339();
+        let now = search_realm::at(20).to_rfc3339();
         index
             .commit_snapshot(
                 0,
@@ -454,26 +456,21 @@ async fn search_circle_current_scope_survives_archive_but_not_terminal_or_missin
             )
             .await
             .unwrap();
-        let original = if scenario == "wrong_source" {
-            "[]".to_owned()
-        } else {
-            serde_json::to_string(&vec![fixture.message.clone()]).unwrap()
-        };
-        assert_eq!(
-            index.search(&actor, &now).await.unwrap(),
-            original,
-            "initial {scenario}"
-        );
+        let initial = index.search(&actor, &now).await;
         if scenario == "wrong_source" {
+            let denied =
+                Err("Strand current source stream differs from its security scope".to_owned());
+            assert_eq!(initial, denied);
             drop(index);
             let reopened = CurrentIndexHarness::open(&id, 1).await.unwrap();
-            assert_eq!(
-                reopened.search(&actor, &now).await.unwrap(),
-                "[]",
-                "reopened {scenario}"
-            );
+            assert_eq!(reopened.search(&actor, &now).await, denied);
             continue;
         }
+        assert_eq!(
+            initial.unwrap(),
+            serde_json::to_string(&vec![fixture.message.clone()]).unwrap(),
+            "initial {scenario}"
+        );
         fixture.change(scenario);
         index
             .commit_snapshot(
@@ -483,20 +480,16 @@ async fn search_circle_current_scope_survives_archive_but_not_terminal_or_missin
             )
             .await
             .unwrap();
-        let expected = if scenario == "archived" {
-            original
-        } else {
-            "[]".into()
-        };
+        let expected = search_realm::expected_search_result(scenario, "[]".to_owned());
         assert_eq!(
-            index.search(&actor, &now).await.unwrap(),
+            index.search(&actor, &now).await,
             expected,
             "live {scenario}"
         );
         drop(index);
         let reopened = CurrentIndexHarness::open(&id, 2).await.unwrap();
         assert_eq!(
-            reopened.search(&actor, &now).await.unwrap(),
+            reopened.search(&actor, &now).await,
             expected,
             "reopened {scenario}"
         );
@@ -505,14 +498,14 @@ async fn search_circle_current_scope_survives_archive_but_not_terminal_or_missin
 
 #[wasm_bindgen_test(async)]
 async fn search_authorization_context_uses_one_complete_cut_on_cold_reopen() {
-    for case in search_circle::authorization_cases() {
+    for case in search_realm::authorization_cases() {
         let id = authority(&format!("search-authorization-{}", case.name));
         let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
         let fixture = &case.fixture;
         let message = arkret_sdk::MessageId::from_event_id(&fixture.message.event.event_id);
         let holder = serde_json::to_string(&fixture.actor).unwrap();
         let requester = serde_json::to_string(&case.requester).unwrap();
-        let now = search_circle::at(20).to_rfc3339();
+        let now = search_realm::at(20).to_rfc3339();
         assert_eq!(
             index
                 .commit(0, &case.cached_originals_frame())

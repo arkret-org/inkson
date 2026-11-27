@@ -33,7 +33,7 @@ fn received(signal: &AdmittedSignal) -> SignalReceiveOutcome {
         plaintext: Box::new(signal.payload.clone()),
         effective_expires_at: signal.expires_at,
         authority_commit_id: signal.authority_commit_id.clone(),
-        parent_realm_authority_commit_id: signal.parent_realm_authority_commit_id.clone(),
+
         product_authority: signal.product_authority.clone(),
         call_invitation: signal.call_invitation.clone(),
         signer_verification_method: signal.signer_verification_method.clone(),
@@ -115,9 +115,7 @@ async fn routed_policy(value: Option<Value>, complete: bool) -> Vec<arkret_sdk::
     ));
     if let Some(value) = value {
         entries.push(row(
-            arkret_sdk::CurrentSelector::ScopeReadReceiptPolicy {
-                scope_ref: signal.scope_ref().clone(),
-            },
+            arkret_sdk::CurrentSelector::ScopeReadReceiptPolicy,
             value,
         ));
     }

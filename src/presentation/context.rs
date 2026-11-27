@@ -50,6 +50,7 @@ pub struct InksonContext {
     pub(crate) creator_retry_state: crate::components::mls_creator_retry::CreatorRetryState,
     pub kanban_state: crate::views::kanban::KanbanStatePool,
     pub route: Cage<Route>,
+    pub(crate) focus_search_on_navigation: Cage<bool>,
     pub workspace_navigation: super::workspace_navigation::WorkspaceNavigation,
     pub locale: Cage<UiLocale>,
     pub theme: Cage<String>,
@@ -61,10 +62,12 @@ pub struct InksonContext {
     pub contact_rows: Cage<Vec<ContactView>>,
     pub selected_realm_id: Cage<String>,
     pub new_space_context_node: Cage<String>,
+    realm_create_dialog: Cage<Option<Route>>,
     pub server_description: Cage<Option<ServiceDescribe>>,
     pub connection_state: Cage<ConnectionState>,
     pub connection_status: Cage<String>,
     pub network_state: Cage<String>,
+    pub network_available: Cage<bool>,
     pub crypto_state: Cage<String>,
     pub server_probe_status: Cage<String>,
     pub sync_generation: Cage<u64>,
@@ -208,6 +211,7 @@ impl InksonContext {
                 scope, &route,
             ),
             route: scope.cage(route),
+            focus_search_on_navigation: scope.cage(false),
             locale: scope.cage(locale),
             theme: scope.cage(theme),
             system_theme_is_night: scope.cage(crate::app::browser_prefers_dark_theme()),
@@ -220,10 +224,12 @@ impl InksonContext {
             contact_rows: scope.cage(Vec::new()),
             selected_realm_id: scope.cage(selected_realm_id),
             new_space_context_node: scope.cage(String::new()),
+            realm_create_dialog: scope.cage(None),
             server_description: scope.cage(None),
             connection_state: scope.cage(ConnectionState::Loading),
             connection_status: scope.cage(ConnectionState::Loading.label().to_owned()),
-            network_state: scope.cage("online".to_owned()),
+            network_state: scope.cage("connecting".to_owned()),
+            network_available: scope.cage(true),
             crypto_state: scope.cage("Not initialized".to_owned()),
             server_probe_status: scope.cage("Not probed".to_owned()),
             sync_generation: scope.cage(0),
@@ -350,6 +356,7 @@ impl InksonContext {
         self.projection_events.revise(Vec::clear);
         self.selected_realm_id.revise(String::clear);
         self.new_space_context_node.revise(String::clear);
+        self.realm_create_dialog.revise(|request| *request = None);
         self.account_primary_handle.revise(String::clear);
         self.personal_handles.revise(Vec::clear);
         self.personal_handles_status
@@ -397,7 +404,31 @@ impl InksonContext {
         scope.bond(move || crate::i18n::substitute_args(message.get(), &arguments()))
     }
 
+    pub(crate) fn navigate_to_create(&self, route: Route) {
+        self.navigate_with_dialog(route, true);
+    }
+
+    pub(crate) fn on_realm_create_dialog(
+        &self,
+        scope: &Scope,
+        target: Route,
+        open: impl Fn() + 'static,
+    ) {
+        let request = self.realm_create_dialog;
+        let route = self.route;
+        scope.effect(move || {
+            if request.get().as_ref() == Some(&target) && route.get() == target {
+                request.revise(|pending| *pending = None);
+                open();
+            }
+        });
+    }
+
     pub fn navigate(&self, route: Route) {
+        self.navigate_with_dialog(route, false);
+    }
+
+    fn navigate_with_dialog(&self, route: Route, create: bool) {
         #[cfg(target_arch = "wasm32")]
         if let Some(window) = web_sys::window() {
             match window.history().and_then(|history| {
@@ -414,6 +445,16 @@ impl InksonContext {
                 }
             }
         }
+        self.realm_create_dialog
+            .revise(|request| *request = create.then(|| route.clone()));
+        self.focus_search_on_navigation
+            .revise(|request| *request = matches!(route, Route::Search));
+        self.workspace_navigation.navigate(&route);
+        self.route.revise(|current| *current = route);
+    }
+
+    pub(crate) fn apply_history_route(&self, route: Route) {
+        self.realm_create_dialog.revise(|request| *request = None);
         self.workspace_navigation.navigate(&route);
         self.route.revise(|current| *current = route);
     }
@@ -436,8 +477,7 @@ impl InksonContext {
             }
         }
         if self.route.with_untracked(|current| current != &route) {
-            self.workspace_navigation.navigate(&route);
-            self.route.revise(|current| *current = route);
+            self.apply_history_route(route);
         }
     }
 

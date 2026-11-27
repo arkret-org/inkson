@@ -212,7 +212,7 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
         return;
     }
 
-    direct_contacts_loaded.revise(|current| *current = true);
+    direct_contacts_loaded.revise(|current| *current = false);
     own_agents_loaded.revise(|current| *current = true);
     let generation = context.session_generation.get_untracked();
     let account = context.active_account.get_untracked();
@@ -230,6 +230,7 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
                 if owner.upgrade().is_none() || !context.session_matches(generation, &account) {
                     return;
                 }
+                let contacts_ready = contacts.is_ok();
                 match contacts {
                     Ok(response) => {
                         if owner.upgrade().is_none()
@@ -265,6 +266,7 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
                         tracing::warn!(error = %err, "failed to load Agents for Contacts sidebar");
                     }
                 }
+                direct_contacts_loaded.revise(|current| *current = contacts_ready);
             }
             Err(err) => {
                 direct_contacts_loaded.revise(|current| *current = false);
@@ -483,85 +485,68 @@ pub(super) fn leave_sidebar_realm(
     }
 }
 
-/// Per-Realm UI pre-gate for the sidebar row menu's write actions
-/// (Add Member / Settings). Presence of a `realm_id` key in the cache means
-/// the authz probe has completed; the booleans mirror the server's
-/// authoritative decision so the row menu can hide entries the actor cannot
-/// use. This is advisory only — the server still makes the real call.
+/// Advisory permissions for this Realm's menu. Submission is authorized by the Station.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct SidebarRowRealmPerms {
     pub(super) can_add_member: bool,
     pub(super) can_settings: bool,
 }
 
-/// Lazily probe whether `actor` may add members (`ak.invite.create`) or edit
-/// settings (`ak.realm.profile`) on `realm_id`, caching the verdict in
-/// `perms_cache`.
-///
-/// Triggered when a sidebar row's kebab menu opens, so at most two authz
-/// requests are issued for the single Realm whose menu is open — never the
-/// `2*N` that eager per-row probing on every sidebar render would cost.
-/// Fail-closed: a transport error or a non-allow body both leave the write
-/// actions hidden, and we still cache that verdict so we don't re-probe a
-/// Realm the actor plainly cannot manage on every menu open.
-pub(super) fn ensure_sidebar_row_perms(
+fn refresh_sidebar_row_perms(
     scope: &glory::Scope,
     context: std::rc::Rc<crate::presentation::InksonContext>,
-    base_url: String,
-    api_token: String,
-    actor: String,
     realm_id: String,
     perms_cache: glory::Cage<BTreeMap<String, SidebarRowRealmPerms>>,
+    request: glory::Cage<u64>,
 ) {
-    if api_token.trim().is_empty() || actor.trim().is_empty() || realm_id.trim().is_empty() {
+    request.revise(|serial| *serial = serial.wrapping_add(1));
+    let serial = request.get_untracked();
+    perms_cache.revise(|cache| cache.remove(&realm_id));
+    let actor = super::principal_id_owned(context.principal_id.get());
+    let token = context.token.get();
+    if token.trim().is_empty() || actor.trim().is_empty() || realm_id.trim().is_empty() {
         return;
     }
-    if perms_cache.with(|store| store.contains_key(&realm_id)) {
+    let Ok(api) =
+        crate::transport::auth::authed_api_with_sync(&context.base_url.get(), token, None)
+    else {
         return;
-    }
+    };
+    let Ok(http) = api.sdk_http_client() else {
+        return;
+    };
     let generation = context.session_generation.get_untracked();
     let account = context.active_account.get_untracked();
     let owner = scope.downgrade();
     if let Err(error) = scope.spawn(async move {
-        let perms = match crate::transport::auth::authed_api_with_sync(&base_url, api_token, None) {
-            Ok(api) => {
-                let invite = async {
-                    crate::transport::realm_read::authz_check(
-                        &api.sdk_http_client()?,
-                        &actor,
-                        CapabilityActionId::INVITE_CREATE,
-                        &realm_id,
-                    )
+        let allowed = |action: &'static str| {
+            let check = crate::transport::realm_read::authz_check(&http, &actor, action, &realm_id);
+            async move {
+                check
                     .await
-                }
-                .await;
-                let settings = async {
-                    crate::transport::realm_read::authz_check(
-                        &api.sdk_http_client()?,
-                        &actor,
-                        CapabilityActionId::REALM_PROFILE,
-                        &realm_id,
-                    )
-                    .await
-                }
-                .await;
-                SidebarRowRealmPerms {
-                    can_add_member: invite
-                        .as_ref()
-                        .map(crate::transport::realm_read::authz_allowed)
-                        .unwrap_or(false),
-                    can_settings: settings
-                        .as_ref()
-                        .map(crate::transport::realm_read::authz_allowed)
-                        .unwrap_or(false),
-                }
+                    .as_ref()
+                    .is_ok_and(crate::transport::realm_read::authz_allowed)
             }
-            Err(_) => SidebarRowRealmPerms::default(),
         };
-        if owner.upgrade().is_none() || !context.session_matches(generation, &account) {
-            return;
+        let (can_add_member, can_settings) = futures_util::future::join(
+            allowed(CapabilityActionId::INVITE_CREATE),
+            allowed(CapabilityActionId::REALM_PROFILE),
+        )
+        .await;
+        if owner.upgrade().is_some()
+            && request.get_untracked() == serial
+            && context.session_matches(generation, &account)
+        {
+            perms_cache.revise(|cache| {
+                cache.insert(
+                    realm_id,
+                    SidebarRowRealmPerms {
+                        can_add_member,
+                        can_settings,
+                    },
+                )
+            });
         }
-        perms_cache.revise(|store| store.insert(realm_id, perms));
     }) {
         scope.report_error(error);
     }
@@ -690,7 +675,7 @@ use std::rc::Rc;
 use glory::prelude::*;
 use glory::render::{EventKind, Role, SemanticId, Semantics};
 
-use super::session_shell::{action, block, icon_action, nav};
+use super::session_shell::{action, block, icon_action};
 use super::shell_state::ShellState;
 use crate::presentation::widgets::*;
 use crate::presentation::{InksonContext, View};
@@ -716,7 +701,7 @@ fn icon_link(
 }
 
 fn load_sidebar_contacts(scope: &Scope, context: &Rc<InksonContext>, ui: &Rc<ShellState>) {
-    if ui.contacts_loaded.get_untracked() || context.token.get_untracked().trim().is_empty() {
+    if context.token.get_untracked().trim().is_empty() {
         return;
     }
     load_direct_contacts_and_agents_for_sidebar(
@@ -736,9 +721,13 @@ pub(super) fn is_agents_route(route: &Route) -> bool {
     matches!(route, Route::SettingsSection { section, .. } if section == "agents")
 }
 
+mod private_chats;
+
 pub(super) fn workspace_list_kind(route: &Route) -> Option<bool> {
     match route {
-        Route::DirectConversation { .. } => Some(true),
+        Route::PrivateChats | Route::NewPrivateChat | Route::DirectConversation { .. } => {
+            Some(true)
+        }
         Route::RealmsManage
         | Route::Realm { .. }
         | Route::Chat { .. }
@@ -749,11 +738,7 @@ pub(super) fn workspace_list_kind(route: &Route) -> Option<bool> {
         | Route::KanbanTask { .. }
         | Route::RealmMembers { .. }
         | Route::RealmAdmin { .. }
-        | Route::RealmAdminSection { .. }
-        | Route::Circles { .. }
-        | Route::CircleDetail { .. }
-        | Route::Setup
-        | Route::SetupSection { .. } => Some(false),
+        | Route::RealmAdminSection { .. } | Route::Setup | Route::SetupSection { .. } => Some(false),
         _ => None,
     }
 }
@@ -776,12 +761,48 @@ pub(super) fn has_page_columns(route: &Route) -> bool {
 
 pub(super) fn sidebar(scope: &Scope, context: Rc<InksonContext>) -> View {
     let home_context = context.clone();
+    let network = context.network_state;
+    let available = context.network_available;
+    let status = scope.bond(move || {
+        if !available.get() {
+            return ("offline", "connection.offline");
+        }
+        match network.get().as_str() {
+            "online" => ("online", "connection.online"),
+            "offline" => ("offline", "connection.offline"),
+            "reconnecting" => ("pending", "connection.reconnecting"),
+            "sign-in-required" => ("attention", "connection.sign_in"),
+            "stopped" => ("attention", "connection.stopped"),
+            _ => ("pending", "connection.connecting"),
+        }
+    });
+    let label = {
+        let context = context.clone();
+        scope.bond(move || {
+            format!(
+                "{} · {}",
+                context.tr("app.brand.home"),
+                context.tr(status.get().1)
+            )
+        })
+    };
     let brand = Box::new(
         internal_link()
             .class("rail-link rail-brand")
             .target(Route::Dashboard.to_string())
-            .name(context.translated(scope, "app.brand.home"))
-            .fill(arkret_logo("rail-logo"))
+            .name(label)
+            .fill((
+                view().class("rail-brand-icon").fill((
+                    arkret_logo("rail-logo"),
+                    view().class(
+                        scope.bond(move || format!("rail-connection is-{}", status.get().0)),
+                    ),
+                )),
+                text().class("rail-label rail-brand-tooltip").content(label),
+                text()
+                    .class("rail-brand-mobile-label")
+                    .content(context.translated(scope, "nav.dashboard")),
+            ))
             .on(EventKind::Activate, move |_| {
                 home_context.navigate(Route::Dashboard)
             }),
@@ -789,6 +810,12 @@ pub(super) fn sidebar(scope: &Scope, context: Rc<InksonContext>) -> View {
     let mut links = vec![brand];
     for (target, label, icon, section) in [
         (Route::RealmsManage, "nav.realms", "grid-2x2", "realms"),
+        (
+            Route::PrivateChats,
+            "nav.private_chats",
+            "message",
+            "private-chats",
+        ),
         (Route::Contacts, "nav.contacts", "users", "contacts"),
         (
             Route::SettingsSection {
@@ -806,10 +833,8 @@ pub(super) fn sidebar(scope: &Scope, context: Rc<InksonContext>) -> View {
             let route = route.get();
             let active = match section {
                 "agents" => is_agents_route(&route),
-                "contacts" => matches!(
-                    route,
-                    Route::Contacts | Route::ContactsManage | Route::DirectConversation { .. }
-                ),
+                "private-chats" => workspace_list_kind(&route) == Some(true),
+                "contacts" => matches!(route, Route::Contacts | Route::ContactsManage),
                 "realms" => workspace_list_kind(&route) == Some(false),
                 _ => {
                     !is_agents_route(&route)
@@ -866,29 +891,46 @@ pub(super) fn workspace_list(
 ) -> View {
     let kind = scope.bond({
         let context = context.clone();
-        move || workspace_list_kind(&context.route.get())
+        move || {
+            let route = context.route.get();
+            (workspace_list_kind(&route), route == Route::NewPrivateChat)
+        }
     });
-    reactive_distinct(kind, move |scope, kind| {
+    reactive_distinct(kind, move |scope, (kind, picking)| {
         let Some(direct) = kind else {
             return empty();
         };
         if direct {
             load_sidebar_contacts(scope, &context, &ui);
         }
-        let (value, label, title) = if direct {
-            (ui.contact_query, "sidebar.search_contacts", "nav.contacts")
+        let (value, label, title) = if picking {
+            (
+                ui.contact_query,
+                "sidebar.search_contacts",
+                "direct.new_chat",
+            )
+        } else if direct {
+            (
+                scope.cage(String::new()),
+                "direct.search_chats",
+                "nav.private_chats",
+            )
         } else {
             (ui.realm_query, "sidebar.search_realms", "nav.realms")
         };
-        let add = if direct {
+        let add = if picking {
             Route::Contacts
+        } else if direct {
+            Route::NewPrivateChat
         } else {
             Route::SetupSection {
                 section: "realms".into(),
             }
         };
-        let rows = if direct {
+        let rows = if picking {
             contacts(scope, context.clone(), ui.clone())
+        } else if direct {
+            private_chats::list(scope, context.clone(), ui.clone(), value)
         } else {
             realm_rows(scope, context.clone(), ui.clone())
         };
@@ -948,8 +990,10 @@ pub(super) fn workspace_list(
                             "sidebar-toolbar-action",
                             context.translated(
                                 scope,
-                                if direct {
+                                if picking {
                                     "contacts.empty_add"
+                                } else if direct {
+                                    "direct.new_chat"
                                 } else {
                                     "setup.new_realm"
                                 },
@@ -964,86 +1008,81 @@ pub(super) fn workspace_list(
     })
 }
 
-fn realm_link_security_hint(
-    _scope: &Scope,
-    key: String,
+fn realm_link_with_description(
+    scope: &Scope,
+    key: &str,
     description: String,
     link: glory::ui::Link,
 ) -> View {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let mut link = Some(link);
-        Box::new(
-            sapid::tooltip(key)
-                .label(description.clone())
-                .text(description)
-                .target(move |target| link.take().map(|link| target.link(link))),
-        )
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let id = match glory::render::SemanticId::new(format!("{key}-description")) {
-            Ok(id) => id,
-            Err(error) => {
-                _scope.report_error(error);
-                return empty();
-            }
-        };
-        Box::new(
-            glory::ui::group().fill((
-                link.semantics(Some(Box::new(glory::render::Semantics {
-                    described_by: Some(id.clone()),
+    let id = match glory::render::SemanticId::new(format!("{key}-description")) {
+        Ok(id) => id,
+        Err(error) => {
+            scope.report_error(error);
+            return empty();
+        }
+    };
+    Box::new(
+        glory::ui::group().fill((
+            link.semantics(Some(Box::new(glory::render::Semantics {
+                described_by: Some(id.clone()),
+                ..Default::default()
+            }))),
+            glory::ui::text()
+                .class("sr-only realm-security-description")
+                .content(description)
+                .semantics(Some(Box::new(glory::render::Semantics {
+                    id: Some(id),
                     ..Default::default()
                 }))),
-                glory::ui::text()
-                    .class("sr-only realm-security-description")
-                    .content(description)
-                    .semantics(Some(Box::new(glory::render::Semantics {
-                        id: Some(id),
-                        ..Default::default()
-                    }))),
-            )),
-        )
-    }
+        )),
+    )
 }
+
 fn realm_rows(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
+    let permission_request = scope.cage(0_u64);
     let source = scope.bond({
         let context = context.clone();
         let ui = ui.clone();
         move || {
+            // Sync revisions can arrive between pointer-down and activation.
+            // Compare the rendered tree so unrelated updates retain its controls.
+            context.state_revision.get();
+            let model = navigation_model(&context, &context.route.get(), &ui.realm_query.get());
+            let items = context.state_store.read(|store| {
+                let remarks = store.realm_remarks();
+                let security = store.realm_security_states();
+                model
+                    .filtered_realm_tree
+                    .into_iter()
+                    .map(|item| {
+                        let remark = remarks.get(&item.node.id).cloned();
+                        let encrypted = security
+                            .get(item.node.projection_realm_id())
+                            .copied()
+                            .flatten();
+                        (item, remark, encrypted)
+                    })
+                    .collect::<Vec<_>>()
+            });
             (
-                context.realm_tree_nodes.get(),
-                context.state_revision.get(),
-                context.route.get(),
-                ui.realm_query.get(),
+                model.active_projection_realm_id,
+                model.collaboration_nodes.is_empty(),
+                items,
                 context.locale.get(),
-                context.selected_realm_id.get(),
             )
         }
     });
-    reactive(source, move |scope, (_, _, route, query, ..)| {
-        let model = navigation_model(&context, &route, &query);
-        let active_realm_id = model.active_projection_realm_id;
-        let nodes = model.collaboration_nodes;
-        let items = model.filtered_realm_tree;
-        let pinned = context.state_store.read(pinned_realm_ids_from_store);
+    reactive_distinct(source, move |scope, projection| {
+        let (active_realm_id, tree_empty, items, _) = projection;
         let mut rows = Vec::new();
-        for item in items {
+        for (item, remark, encrypted) in items {
             let node = item.node;
             let id = node.id.clone();
             let target = node.projection_realm_id().to_owned();
-            let remark = context.state_store.read(|store| store.realm_remark(&id));
             let label = remark
                 .as_ref()
                 .map(|remark| remark.display_name(&node.title).to_owned())
                 .unwrap_or_else(|| node.title.clone());
-            let encrypted = context.state_store.read(|store| {
-                store
-                    .realm_security_states()
-                    .get(&target)
-                    .copied()
-                    .flatten()
-            });
             let icon = if node.kind == crate::models::RealmTreeNodeKind::Space {
                 "folder"
             } else {
@@ -1069,7 +1108,7 @@ fn realm_rows(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> 
                     context.translated(scope, "app.sidebar.remark"),
                 ));
             }
-            if pinned.contains(&id) {
+            if remark.as_ref().is_some_and(|remark| remark.pinned) {
                 badges.push(block(
                     "pill muted xs realm-pin-badge",
                     vec![crate::components::ui_icon("pin")],
@@ -1121,9 +1160,9 @@ fn realm_rows(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> 
                 "realm-security-{}",
                 &hex::encode(sha2::Sha256::digest(id.as_bytes()))[..24]
             );
-            let main = realm_link_security_hint(
+            let main = realm_link_with_description(
                 scope,
-                hint_key,
+                &hint_key,
                 description,
                 internal_link()
                     .class(format!("{class} sidebar-row-depth-{}", item.depth.min(6)))
@@ -1152,54 +1191,64 @@ fn realm_rows(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> 
             let weak = scope.downgrade();
             let show_context = context.clone();
             let show_ui = ui.clone();
-            let key = menu_key.clone();
+            let key = menu_key;
             let realm = target.clone();
-            let toggle = icon_action(
-                "sidebar-row-menu-button",
-                "Realm actions",
-                "more-horizontal",
-                move || {
-                    show_ui.row_menu.revise(|value| {
-                        *value = if value.as_ref() == Some(&key) {
-                            None
-                        } else {
-                            Some(key.clone())
+            let selected = ui.row_menu;
+            let open_key = key.clone();
+            let open = scope.bond(move || selected.get().as_ref() == Some(&open_key));
+            let change_open = move |open: bool| {
+                if !open {
+                    selected.revise(|value| {
+                        if value.as_ref() == Some(&key) {
+                            *value = None;
                         }
                     });
-                    if let Some(scope) = weak.upgrade() {
-                        ensure_sidebar_row_perms(
-                            &scope,
-                            show_context.clone(),
-                            show_context.base_url.get(),
-                            show_context.token.get(),
-                            super::principal_id_owned(show_context.principal_id.get()),
-                            realm.clone(),
-                            show_ui.row_perms,
-                        );
-                    }
-                },
-            );
-            let source = scope.bond({
-                let ui = ui.clone();
-                move || (ui.row_menu.get(), ui.row_perms.get())
-            });
-            let menu_context = context.clone();
-            let menu_ui = ui.clone();
-            let realm_node = node.clone();
-            let menu = reactive(source, move |scope, (open, perms)| {
-                if open.as_deref() != Some(menu_key.as_str()) {
-                    return empty();
+                    return;
                 }
+                selected.revise(|value| *value = Some(key.clone()));
+                if let Some(scope) = weak.upgrade() {
+                    refresh_sidebar_row_perms(
+                        &scope,
+                        show_context.clone(),
+                        realm.clone(),
+                        show_ui.row_perms,
+                        permission_request,
+                    );
+                }
+            };
+            let menu_context = context.clone();
+            let pending_leave = ui.pending_leave;
+            let perms = ui.row_perms;
+            let realm_node = node.clone();
+            let build_menu = move |scope: &Scope| {
                 let mut actions = Vec::new();
+                let link_context = menu_context.clone();
+                let menu_link = move |scope: &Scope, route: Route, label: &str, icon: &str| {
+                    let context = link_context.clone();
+                    let label = context.translated(scope, label);
+                    Box::new(
+                        internal_link()
+                            .target(route.to_string())
+                            .class("sidebar-row-menu-item")
+                            .name(label)
+                            .fill((crate::components::ui_icon(icon), plain(label)))
+                            .on(EventKind::Activate, move |_| {
+                                selected.revise(|value| *value = None);
+                                context.navigate(route.clone());
+                            }),
+                    ) as View
+                };
                 if realm_node.kind == crate::models::RealmTreeNodeKind::Realm {
                     let context = menu_context.clone();
                     let id = id.clone();
                     let existing = remark.clone();
                     let next = !existing.as_ref().is_some_and(|remark| remark.pinned);
-                    actions.push(action(
+                    actions.push(realm_menu_button(
                         "sidebar-row-menu-item",
                         context.translated(scope, if next { "realm.pin" } else { "realm.unpin" }),
+                        "pin",
                         move || {
+                            selected.revise(|value| *value = None);
                             toggle_sidebar_realm_pin(
                                 context.clone(),
                                 id.clone(),
@@ -1212,73 +1261,132 @@ fn realm_rows(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> 
                         },
                     ));
                 }
-                let context = menu_context.clone();
-                let parent = realm_node.id.clone();
-                let home = target.clone();
-                let selected = menu_ui.row_menu;
-                actions.push(action(
-                    "sidebar-row-menu-item",
-                    menu_context.translated(scope, "setup.space.new_space"),
-                    move || {
-                        context
-                            .selected_realm_id
-                            .revise(|value| *value = home.clone());
-                        context
-                            .new_space_context_node
-                            .revise(|value| *value = parent.clone());
-                        selected.revise(|value| *value = None);
-                        context.navigate(Route::SetupSection {
-                            section: "new-space".into(),
-                        });
-                    },
-                ));
-                let permission = perms.get(&target).copied().unwrap_or_default();
-                if permission.can_add_member {
-                    actions.push(nav(
-                        menu_context.clone(),
-                        Route::RealmMembers {
-                            realm_id: target.clone(),
-                        },
-                        "sidebar-row-menu-item",
-                        menu_context.translated(scope, "realm.add_member"),
-                        "users",
-                    ));
-                }
-                if permission.can_settings {
-                    actions.push(nav(
-                        menu_context.clone(),
-                        Route::RealmAdmin {
-                            realm_id: target.clone(),
-                        },
-                        "sidebar-row-menu-item",
-                        menu_context.translated(scope, "realm.settings"),
-                        "settings",
-                    ));
-                }
-                actions.push(nav(
-                    menu_context.clone(),
-                    Route::Circles {
-                        realm_id: target.clone(),
-                    },
-                    "sidebar-row-menu-item",
-                    menu_context.translated(scope, "route.circles"),
-                    "users",
-                ));
                 if realm_node.kind == crate::models::RealmTreeNodeKind::Realm {
-                    let pending = menu_ui.pending_leave;
+                    for (label, icon, route) in [
+                        (
+                            "kanban.ui.new_board",
+                            "board",
+                            Route::KanbanRealm {
+                                realm_id: target.clone(),
+                            },
+                        ),
+                        (
+                            "chat.new_chat",
+                            "message",
+                            Route::Chat {
+                                realm_id: target.clone(),
+                                message: String::new(),
+                            },
+                        ),
+                    ] {
+                        let context = menu_context.clone();
+                        actions.push(realm_menu_button(
+                            "sidebar-row-menu-item",
+                            context.translated(scope, label),
+                            icon,
+                            move || {
+                                selected.revise(|value| *value = None);
+                                context.navigate_to_create(route.clone());
+                            },
+                        ));
+                    }
+                } else {
+                    let context = menu_context.clone();
+                    let parent = realm_node.id.clone();
+                    let home = target.clone();
+                    actions.push(realm_menu_button(
+                        "sidebar-row-menu-item",
+                        menu_context.translated(scope, "setup.space.new_space"),
+                        "folder",
+                        move || {
+                            context
+                                .selected_realm_id
+                                .revise(|value| *value = home.clone());
+                            context
+                                .new_space_context_node
+                                .revise(|value| *value = parent.clone());
+                            selected.revise(|value| *value = None);
+                            context.navigate(Route::SetupSection {
+                                section: "new-space".into(),
+                            });
+                        },
+                    ));
+                }
+                let permission = scope.bond({
+                    let target = target.clone();
+                    move || perms.with(|cache| cache.get(&target).copied().unwrap_or_default())
+                });
+                let realm = target.clone();
+                let permission_link = menu_link.clone();
+                actions.push(reactive_distinct(permission, move |scope, permission| {
+                    let mut links = Vec::new();
+                    if permission.can_add_member {
+                        links.push(permission_link(
+                            scope,
+                            Route::RealmMembers {
+                                realm_id: realm.clone(),
+                            },
+                            "realm.add_member",
+                            "user-plus",
+                        ));
+                    }
+                    Box::new(glory::ui::group().fill(links))
+                }));
+                let realm = target.clone();
+                let settings_link = menu_link.clone();
+                actions.push(reactive_distinct(permission, move |scope, permission| {
+                    if permission.can_settings {
+                        settings_link(
+                            scope,
+                            Route::RealmAdmin {
+                                realm_id: realm.clone(),
+                            },
+                            "realm.settings",
+                            "settings",
+                        )
+                    } else {
+                        empty()
+                    }
+                }));
+                if realm_node.kind == crate::models::RealmTreeNodeKind::Realm {
+                    let pending = pending_leave;
                     let id = target.clone();
                     let name = label.clone();
-                    actions.push(action(
+                    actions.push(realm_menu_button(
                         "sidebar-row-menu-item danger",
                         menu_context.translated(scope, "realm_admin.leave_realm"),
-                        move || pending.revise(|value| *value = Some((id.clone(), name.clone()))),
+                        "log-out",
+                        move || {
+                            selected.revise(|value| *value = None);
+                            pending.revise(|value| *value = Some((id.clone(), name.clone())));
+                        },
                     ));
                 }
-                block("sidebar-row-menu-panel", actions)
-            });
+                block("realm-row-actions-list", actions)
+            };
+            let popover = sapid::popover(format!("{hint_key}-actions"))
+                .unstyled()
+                .class("realm-row-actions-panel")
+                .label(context.translated(scope, "app.sidebar.realm_actions"))
+                .open(open)
+                .on_open_change(change_open)
+                .show_close(false)
+                .width(sapid::PopoverWidth::Px(188.0))
+                .placement(
+                    glory::render::AnchorPlacement::new(
+                        glory::render::AnchorSide::Bottom,
+                        glory::render::AnchorAlign::End,
+                    )
+                    .gap(4.0),
+                )
+                .trigger_content(|| crate::components::ui_icon("more-horizontal"))
+                .content(move || {
+                    let build_menu = build_menu.clone();
+                    glory::ui::widget(move |scope| build_menu(scope).show_in(scope))
+                });
             rows.push(block(
-                "sidebar-row",
-                vec![main, block("sidebar-row-menu-host", vec![toggle, menu])],
+                "sidebar-row realm-action-row",
+                vec![main, block("realm-row-actions", vec![Box::new(popover)])],
             ));
         }
         if rows.is_empty() {
@@ -1288,7 +1396,7 @@ fn realm_rows(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> 
                     crate::components::ui_icon("folder"),
                     plain(context.translated(
                         scope,
-                        if nodes.is_empty() {
+                        if tree_empty {
                             "sidebar.realms_empty"
                         } else {
                             "sidebar.realms_no_results"
@@ -1296,11 +1404,26 @@ fn realm_rows(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> 
                     )),
                 ],
             ));
-            rows.push(paragraph("sidebar-nav-meta", context.connection_status));
         }
         block("realm-tree-list", rows)
     })
 }
+fn realm_menu_button(
+    class: &'static str,
+    label: glory::Bond<String>,
+    icon: &str,
+    handler: impl FnMut() + 'static,
+) -> View {
+    Box::new(
+        sapid::button()
+            .unstyled()
+            .class(class)
+            .name(label)
+            .fill((crate::components::ui_icon(icon), plain(label)))
+            .on_press(handler),
+    )
+}
+
 fn direct_button(
     scope: &Scope,
     context: Rc<InksonContext>,
@@ -1310,7 +1433,7 @@ fn direct_button(
     blob: Option<String>,
     key: String,
     target: super::direct_open::DirectConversationTarget,
-    found: Option<crate::models::DirectConversationSummary>,
+    destination: Option<Route>,
     enabled: bool,
     class: &str,
 ) -> View {
@@ -1487,13 +1610,8 @@ fn direct_button(
                     crate::components::feedback::toast_info("direct.unavailable", vec![]);
                     return;
                 }
-                if let Some(summary) = &found
-                    && summary.state == arkret_sdk::DirectConversationSummaryState::Found
-                {
-                    context.navigate(Route::DirectConversation {
-                        realm_id: summary.realm_id.to_string(),
-                        strand_id: summary.main_strand_id.to_string(),
-                    });
+                if let Some(route) = &destination {
+                    context.navigate(route.clone());
                     return;
                 }
                 if weak.upgrade().is_some() {
@@ -1706,7 +1824,7 @@ fn contacts(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> Vi
                     super::direct_open::DirectConversationTarget::Peer {
                         peer_id: peer.clone(),
                     },
-                    contact.direct_conversation.clone(),
+                    private_chats::summary_route(contact.direct_conversation.as_ref()),
                     can_resolve,
                     if can_resolve {
                         "sidebar-nav-item contact-sidebar-row sidebar-row-main direct-conversation-row"
@@ -1858,7 +1976,7 @@ fn contacts(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> Vi
                                     agent_id: id,
                                     controller: controller.clone(),
                                 },
-                                agent.direct_conversation.clone(),
+                                private_chats::summary_route(agent.direct_conversation.as_ref()),
                                 true,
                                 "sidebar-nav-item contact-sidebar-agent-row",
                             )

@@ -24,7 +24,7 @@
 //! - `invite-policy-panel`
 //! - `invite-policy-kind-{kind}` (checkboxes)
 //! - `invite-policy-explicit-behavior` (select)
-//! - `invite-policy-disclosure-high-trust` (switch)
+//! - `invite-policy-disclosure-high-trust` (checkbox)
 //! - `invite-policy-blocked-row[data-subject]`, `invite-policy-unblock-{subject}`
 //! - `invite-policy-save-button`, `invite-policy-status`
 
@@ -560,7 +560,7 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
                 context.clone(),
                 "invite_policy.disclosure_title",
                 vec![
-                    switch_toggle(
+                    toggle(
                         scope,
                         context.clone(),
                         "invite-policy-disclosure-high-trust",
@@ -583,7 +583,7 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
                             })
                         },
                     ),
-                    switch_toggle(
+                    toggle(
                         scope,
                         context.clone(),
                         "invite-policy-disclosure-discovery-trust",

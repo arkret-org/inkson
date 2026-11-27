@@ -6,7 +6,6 @@ type Context = {
   realmId: string; principalRealmId: string; demo: any;
   nativeFixtures: Map<string, any>; agents: Map<string, any>; pairingBootstraps: Map<string, any>;
   agentProjection: (id: string) => any; agentAxes: (id: string) => any;
-  circle: (id: string) => any | undefined;
   stationAccountData: () => any | null;
   accountDataRules: any[];
   native: (command: string, value: any) => any;
@@ -195,11 +194,6 @@ export function remainingOperationMock(context: Context) {
       return respond({ ...scan, producer_signer_facts });
     }
 
-    if (operation === "ak.self.circle.resource.get.v1") {
-      const id = decodeURIComponent(url.pathname.split("/").at(-1)!);
-      const value = context.circle(id);
-      return value ? respond(value) : fail("not_found", "circle not found");
-    }
     if (operation === "ak.self.blob.resource.head.v1") {
       const reference = url.searchParams.get("blob_ref");
       const encoded = reference ? context.demo.public_blobs?.[reference] : undefined;
@@ -301,7 +295,6 @@ export function remainingOperationMock(context: Context) {
         const target = request.target_scope;
         const fixture = knownRealm(target.realm_id);
         if (!fixture) return fail("not_found", "Realm not found");
-        if (target.kind === "circle" && context.circle(target.circle_id)?.realm_id !== target.realm_id) return fail("not_found", "Circle not found");
         if (target.kind === "strand" && !Object.values(fixture.ids).includes(target.strand_id)) return fail("not_found", "Strand not found");
         const key = canonical(request.target_scope); const current = selections.get(key);
         if (request.expected_version !== (current?.version ?? "0")) return fail("cas_conflict", "Agent participation version changed");

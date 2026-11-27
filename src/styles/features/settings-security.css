@@ -228,7 +228,6 @@
   white-space: nowrap;
   border: none;
   border-radius: 8px;
-  outline: none;
   flex-shrink: 0;
   justify-content: center;
   align-items: center;
@@ -249,8 +248,25 @@
 .storage-action-destructive { background-color: color-mix(in oklab, var(--storage-error) 60%, transparent); color: var(--storage-error-contrast); }
 .storage-action-destructive:not(:disabled):hover { background-color: color-mix(in oklab, var(--storage-error) 90%, transparent); }
 .inkson-theme-light .storage-action-destructive { background-color: var(--storage-error); }
-.storage-action:focus-visible { box-shadow: var(--ring); }
 
 /* Semantic host layout and control integration. */
 /* The public Collapsible trigger replaces the original event-head summary. */
-.key-backup-guidance > .sapid-collapsible-trigger { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; color: var(--text-3); font-size: 11px; font-weight: 650; letter-spacing: .05em; }
+.key-backup-guidance > .sapid-collapsible-trigger {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  width: 100%;
+  min-height: var(--control-md);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+}
+.key-backup-guidance > .sapid-collapsible-trigger:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

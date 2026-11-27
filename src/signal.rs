@@ -555,7 +555,7 @@ pub struct SignalHeader {
     pub sender_actor_id: arkret_sdk::ActorId,
     pub sender_device_id: arkret_sdk::DeviceId,
     pub authority_commit_id: arkret_sdk::RealmCommitId,
-    pub parent_realm_authority_commit_id: Option<arkret_sdk::RealmCommitId>,
+
     pub signal_class: arkret_wire::SignalClass,
     pub sent_at: chrono::DateTime<chrono::Utc>,
     pub expires_at: chrono::DateTime<chrono::Utc>,
@@ -568,7 +568,7 @@ impl SignalHeader {
         sender_actor_id: arkret_sdk::ActorId,
         sender_device_id: arkret_sdk::DeviceId,
         authority_commit_id: arkret_sdk::RealmCommitId,
-        parent_realm_authority_commit_id: Option<arkret_sdk::RealmCommitId>,
+
         signal_class: arkret_wire::SignalClass,
         sent_at: chrono::DateTime<chrono::Utc>,
     ) -> Self {
@@ -577,7 +577,7 @@ impl SignalHeader {
             sender_actor_id,
             sender_device_id,
             authority_commit_id,
-            parent_realm_authority_commit_id,
+
             signal_class,
             sent_at,
             expires_at: sent_at + signal_class.max_ttl(),
@@ -612,7 +612,7 @@ fn sole_active_mls_ciphersuite() -> Option<&'static str> {
     active.next().is_none().then_some(first.canonical_id)
 }
 
-/// Resolve the Signal key material for `(realm_id, circle_id)` from accepted
+/// Resolve the Signal key material for `realm_id` from accepted
 /// local MLS state.
 ///
 /// Fails closed when the scope has no accepted group state: v1 has no
@@ -620,21 +620,18 @@ fn sole_active_mls_ciphersuite() -> Option<&'static str> {
 pub fn key_material_for_scope(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
-    circle_id: Option<&str>,
+
 ) -> Result<SignalKeyMaterial, SignalRailUnavailable> {
     let unavailable = || SignalRailUnavailable {
-        scope: match circle_id {
-            Some(circle_id) => format!("{realm_id}/{circle_id}"),
-            None => realm_id.to_owned(),
-        },
+        scope: realm_id.to_owned(),
     };
     let snapshot = state_store
-        .mls_checkpoint_for_effective_scope(realm_id, circle_id)
+        .mls_checkpoint_for_effective_scope(realm_id)
         .ok_or_else(unavailable)?;
     let group_state_ref = state_store
         .mls_group_state_ref_for_effective_scope(
             realm_id,
-            circle_id,
+
             &snapshot.group_id,
             snapshot.epoch,
         )
@@ -695,20 +692,19 @@ pub fn restore_signal_mls_session(
     if state_store.realm_projection_has_retired_minimal_metadata_marker(realm_id) {
         anyhow::bail!("minimal-metadata endpoints have no registered Signal device carrier");
     }
-    // Realm and Circle groups each carry their own Signal key material;
+    // Realm groups each carry their own Signal key material;
     // Sidecar rides its separate contract and has no Signal carrier here.
     // Whether a new Signal may be sent is the durable send gate's decision
     // (`crate::mls::send_gate`), taken by the sender before sealing; this
     // restore only binds the installed local group to `expected_epoch`.
     if !matches!(
         scope_ref,
-        arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+        arkret_sdk::ScopeRef::Realm { .. }
     ) {
-        anyhow::bail!("Signal requires a Realm or Circle MLS scope");
+        anyhow::bail!("Signal requires an ordinary Realm MLS scope");
     }
-    let circle_id = scope_ref.circle_id().map(arkret_sdk::CircleId::as_str);
     let snapshot = state_store
-        .mls_checkpoint_for_effective_scope(realm_id, circle_id)
+        .mls_checkpoint_for_effective_scope(realm_id)
         .ok_or_else(|| anyhow::anyhow!("no accepted MLS group state for the signal scope"))?;
     if snapshot.epoch != expected_epoch {
         anyhow::bail!(
@@ -836,7 +832,7 @@ fn encrypt_signal_payload_with_reserved_nonce_in_store(
         sender_actor_id: &header.sender_actor_id,
         sender_device_id: Some(&header.sender_device_id),
         authority_commit_id: &header.authority_commit_id,
-        parent_realm_authority_commit_id: header.parent_realm_authority_commit_id.as_ref(),
+
         signal_class: header.signal_class,
         sent_at: header.sent_at,
         expires_at: header.expires_at,
@@ -916,7 +912,7 @@ fn seal_signal_envelope_with_signer(
         sender_actor_id: header.sender_actor_id,
         sender_device_id: Some(header.sender_device_id),
         authority_commit_id: header.authority_commit_id,
-        parent_realm_authority_commit_id: header.parent_realm_authority_commit_id,
+
         signal_class: header.signal_class,
         sent_at: header.sent_at,
         expires_at: header.expires_at,
@@ -992,7 +988,6 @@ pub(crate) mod test_support {
             actor_id.clone(),
             device_id.clone(),
             arkret_sdk::RealmCommitId::from_digest([0xab; 32]),
-            None,
             payload.signal_class(),
             sent_at,
         );
@@ -1270,7 +1265,6 @@ mod tests {
             actor(),
             arkret_sdk::DeviceId::new(device_id).unwrap(),
             arkret_sdk::RealmCommitId::from_digest([0xab; 32]),
-            None,
             arkret_wire::SignalClass::Session,
             crate::clock::now_utc(),
         );
@@ -1334,7 +1328,6 @@ mod tests {
                 arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-a11ce0000001")
                     .unwrap(),
                 arkret_sdk::RealmCommitId::from_digest([0xab; 32]),
-                None,
                 class,
                 sent_at,
             );

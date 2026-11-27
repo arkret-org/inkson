@@ -16,7 +16,7 @@ fn encrypt_reaction_with_device_snapshot(
     at: chrono::DateTime<chrono::Utc>,
     emoji: &str,
 ) -> Result<EncryptedReaction, MlsRuntimeError> {
-    let scope = fixture::content::scope(realm, None, None);
+    let scope = fixture::content::scope(realm, None);
     let reference = state
         .mls_checkpoint_for_scope(&scope)
         .and_then(|s| s.group_state_event_id)

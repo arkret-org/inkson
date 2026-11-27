@@ -636,7 +636,7 @@ pub(crate) async fn ensure_binding(
                 store,
                 secure.as_ref(),
                 realm_id,
-                None,
+
                 &account.authority,
                 &account.device_id,
             )

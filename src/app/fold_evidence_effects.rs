@@ -75,7 +75,7 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
                                 realm_id: realm.clone(),
                             };
                             phase.set("material");
-                            let material = state_store.read(|store| crate::signal::key_material_for_scope(store, realm.as_str(), None))?;
+                            let material = state_store.read(|store| crate::signal::key_material_for_scope(store, realm.as_str()))?;
                             let store =
                                 state_store.handle();
                             phase.set("session");

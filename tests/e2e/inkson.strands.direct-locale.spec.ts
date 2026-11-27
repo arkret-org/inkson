@@ -48,11 +48,11 @@ test("Direct structure local controls preserve action values and refuse writes w
     await byClass(page, "settings-nav-item-theme").click();
     await byClass(page, "settings-language-choice").filter({ hasText: language === "zh" ? "中文" : "English" }).click();
     await expect(page.locator("html")).toHaveAttribute("lang", language);
-    // Navigate through the public contact sidebar. Found supplies coordinates;
+    // Navigate through the private chat list. Found supplies coordinates;
     // this fixture has no complete typed Current or restorable MLS state.
     await gotoAndDismissRecovery(page, "/contacts/manage");
     const shell = page.locator(".shell.app");
-    await shell.getByRole("button", {name: language === "zh" ? "联系人" : "Contacts", exact:true}).click();
+    await shell.getByRole("link", { name: language === "zh" ? "私聊" : "Private chats", exact: true }).click();
     const bobRow = byClass(shell, "direct-conversation-row").filter({ hasText: bobIdentity });
     await expect(bobRow).toHaveAccessibleDescription(bobIdentity);
     await bobRow.click();

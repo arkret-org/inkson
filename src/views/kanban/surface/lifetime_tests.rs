@@ -31,6 +31,25 @@ fn nodes(app: &glory::App, class: &str) -> Vec<glory::render::NodeId> {
     found
 }
 
+fn child_control(app: &glory::App, host: &str, class: &str) -> glory::render::NodeId {
+    let mut pending = nodes(app, host);
+    let tree = app.tree();
+    while let Some(id) = pending.pop() {
+        let node = tree.node(id).unwrap();
+        if node
+            .descriptor
+            .view()
+            .classes
+            .iter()
+            .any(|name| name == class)
+        {
+            return id;
+        }
+        pending.extend(node.children.iter().copied());
+    }
+    panic!("missing {class} in {host}")
+}
+
 fn pump(app: &glory::App, executor: &glory::core::executor::Executor) {
     for _ in 0..32 {
         executor.poll_one();
@@ -117,25 +136,8 @@ async fn accepted_card_updates_keep_the_open_card_composer_and_save_button() {
     }))
     .unwrap();
     pump(&app, &executor);
-    let disclosure = nodes(&app, "board-toolbar-add-list")[0];
-    let trigger = {
-        let tree = app.tree();
-        tree.node(disclosure)
-            .unwrap()
-            .children
-            .iter()
-            .copied()
-            .find(|id| {
-                tree.node(*id)
-                    .unwrap()
-                    .descriptor
-                    .view()
-                    .classes
-                    .iter()
-                    .any(|class| class == "sapid-collapsible-trigger")
-            })
-            .expect("the real List disclosure trigger")
-    };
+    assert!(nodes(&app, "kanban-maintenance").is_empty());
+    let trigger = child_control(&app, "board-toolbar-add-list", "sapid-popover-trigger");
     assert!(
         app.dispatch(trigger, glory::render::Event::Activate)
             .unwrap()
@@ -273,6 +275,34 @@ async fn accepted_card_updates_keep_the_open_card_composer_and_save_button() {
     columns.revise(|value| value[0].state = SpaceContainerLifecycleState::Archived);
     pump(&app, &executor);
     assert!(nodes(&app, "new-card-title-input").is_empty());
+    assert_eq!(nodes(&app, "kanban-archived-lists").len(), 1);
+    assert!(nodes(&app, "list-restore-button").is_empty());
+    app.dispatch(
+        child_control(&app, "kanban-archived-lists", "sapid-collapsible-trigger"),
+        glory::render::Event::Activate,
+    )
+    .unwrap();
+    pump(&app, &executor);
+    assert_eq!(nodes(&app, "list-restore-button").len(), 1);
+    assert!(nodes(&app, "kanban-archived-cards").is_empty());
+    columns.revise(|value| {
+        value[0].state = SpaceContainerLifecycleState::Active;
+        value[0].cards[0].lifecycle = StrandLifecycleState::Archived;
+    });
+    pump(&app, &executor);
+    assert!(nodes(&app, "kanban-archived-lists").is_empty());
+    assert_eq!(nodes(&app, "kanban-archived-cards").len(), 1);
+    assert!(nodes(&app, "card-restore-button").is_empty());
+    app.dispatch(
+        child_control(&app, "kanban-archived-cards", "sapid-collapsible-trigger"),
+        glory::render::Event::Activate,
+    )
+    .unwrap();
+    pump(&app, &executor);
+    assert_eq!(nodes(&app, "card-restore-button").len(), 1);
+    columns.revise(|value| value[0].cards[0].lifecycle = StrandLifecycleState::Active);
+    pump(&app, &executor);
+    assert!(nodes(&app, "kanban-maintenance").is_empty());
     assert!(app.tree().node(input[0]).is_err());
     assert!(app.tree().node(save[0]).is_err());
 }

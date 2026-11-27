@@ -48,7 +48,6 @@ impl Default for RuleDraft {
 #[derive(Clone, Debug)]
 pub(super) struct Draft {
     pub policy_id: String,
-    pub circle: String,
     pub default_effect: String,
     pub default_operations: Vec<String>,
     pub default_approvers: String,
@@ -63,7 +62,6 @@ impl Default for Draft {
     fn default() -> Self {
         Self {
             policy_id: format!("ak:policy:{}", crate::operation::uuid_v7()),
-            circle: String::new(),
             default_effect: "allow".into(),
             default_operations: vec!["join".into()],
             default_approvers: String::new(),
@@ -244,18 +242,6 @@ fn serialized_enum(value: &impl serde::Serialize) -> anyhow::Result<String> {
         .into())
 }
 impl Draft {
-    pub fn scope(&self, realm: &RealmId) -> anyhow::Result<ScopeRef> {
-        if self.circle.trim().is_empty() {
-            Ok(ScopeRef::Realm {
-                realm_id: realm.clone(),
-            })
-        } else {
-            Ok(ScopeRef::Circle {
-                realm_id: realm.clone(),
-                circle_id: arkret_sdk::CircleId::new(self.circle.trim())?,
-            })
-        }
-    }
     pub fn build(
         &self,
         realm: &RealmId,
@@ -330,12 +316,9 @@ impl Draft {
             policy.policy_kind == PolicyKind::Agent,
             "This is not an Agent policy"
         );
+        anyhow::ensure!(matches!(scope, ScopeRef::Realm { .. }), "Agent policy requires a Realm scope");
         let mut form = Self {
             policy_id: policy.id.to_string(),
-            circle: match scope {
-                ScopeRef::Circle { circle_id, .. } => circle_id.to_string(),
-                _ => String::new(),
-            },
             default_effect: serialized_enum(&policy.default_effect)?,
             priority: policy.priority.map(|p| p.to_string()).unwrap_or_default(),
             not_before: policy
@@ -502,17 +485,6 @@ mod tests {
             &p,
             &ScopeRef::Realm { realm_id: realm() }
         ));
-        let circle = arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
-            arkret_sdk::DigestSuite::Sha256,
-            [14; 32],
-        ));
-        assert!(!supported_by_current_backend(
-            &p,
-            &ScopeRef::Circle {
-                realm_id: realm(),
-                circle_id: circle
-            }
-        ));
         draft.rules[0].operations = vec!["publish".into()];
         let publish = draft.build(&realm(), &actor, None, None).unwrap();
         assert!(supported_by_current_backend(
@@ -562,7 +534,7 @@ mod tests {
         assert_eq!(policy.expires_at, updated.expires_at);
     }
     #[test]
-    fn first_write_serializes_explicit_null_and_circle_uses_the_same_registered_matrix() {
+    fn first_write_serializes_explicit_null() {
         let form = Draft::default();
         let payload = form
             .build(&realm(), &account("admin", "home"), None, None)
@@ -575,16 +547,6 @@ mod tests {
                 .contains_key("expected_commit_id")
         );
         assert_eq!(value["expected_commit_id"], serde_json::Value::Null);
-        let circle = arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
-            arkret_sdk::DigestSuite::Sha256,
-            [14; 32],
-        ));
-        assert!(supported_by_current_backend(
-            &payload,
-            &ScopeRef::Circle {
-                realm_id: realm(),
-                circle_id: circle
-            }
-        ));
+        assert!(supported_by_current_backend(&payload, &ScopeRef::Realm { realm_id: realm() }));
     }
 }

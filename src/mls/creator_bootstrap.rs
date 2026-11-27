@@ -108,12 +108,7 @@ pub(crate) fn creator_scope_mls_bootstrap_pending_reason(
     // complete only once the epoch-zero checkpoint names the accepted Genesis
     // Event that materialized it.
     let accepted = store
-        .mls_group_state_ref_for_effective_scope(
-            scope.realm_id().as_str(),
-            scope.circle_id().map(|id| id.as_str()),
-            &snapshot.group_id,
-            0,
-        )
+        .mls_group_state_ref_for_scope(scope, &snapshot.group_id, 0)
         .ok();
     let Some(accepted) = accepted else {
         return Some("Waiting for the accepted encryption state reference.");
@@ -167,7 +162,7 @@ async fn publish_accepted_scope_creator_genesis(
     let barrier = state.write(|store| {
         store.mark_mls_genesis_emitted_for_effective_scope_with_event(
             scope.realm_id().as_str(),
-            scope.circle_id().map(|id| id.as_str()),
+
             accepted_event_id,
         )
     })?;
@@ -441,60 +436,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     .await
 }
 
-/// Circle activation resumes only an explicit, durable, original-device
-/// intent. Parent Realm ownership never grants Circle creator authority.
-pub(crate) async fn ensure_creator_circle_mls_genesis(
-    api: &crate::transport::TransportClient,
-    state_store: &StateStoreHandle,
-    scope: &arkret_sdk::ScopeRef,
-    authority: &arkret_sdk::AccountId,
-    device_id: &arkret_sdk::DeviceId,
-    explicit_retry: bool,
-) -> Result<(), String> {
-    let arkret_sdk::ScopeRef::Circle { circle_id, .. } = scope else {
-        return Err("Circle creator requires an exact Circle scope".into());
-    };
-    let lock = creator_bootstrap_lock(format!(
-        "{}|{}|{}|{}",
-        authority.station_id, authority.principal_id, device_id, circle_id
-    ));
-    let _guard = lock.lock().await;
-    let submitter = api.event_submitter().map_err(|error| error.to_string())?;
-    let record = submitter
-        .creator_bootstrap_record(scope)
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "Circle activation has no durable explicit creator intent".to_owned())?;
-    if record.intent().creator_device_id() != device_id {
-        return Err("Circle creator requires its original device; use Welcome or recovery".into());
-    }
-    if record.quarantine_diagnostic().is_some()
-        || record.superseded_winner().is_some()
-        || (record.rejection().is_some() && !explicit_retry)
-    {
-        return Err("Circle creator attempt is terminal".into());
-    }
-    // Initial membership was frozen with create. Recover those exact bytes
-    // before requiring the Circle's independently authenticated current cut.
-    submitter
-        .drain_outbound()
-        .await
-        .map_err(|error| error.to_string())?;
-    // The original closed creator intent is independently verified by the
-    // durable FSM. A parent detail panel invalidation cannot gate its replay.
-    let submitter = submitter.for_founding_realm(scope.realm_id().clone());
-    crate::runtime::boxed_future_from(|| {
-        resume_durable_scope_creator(
-            api,
-            state_store,
-            &submitter,
-            scope,
-            authority,
-            explicit_retry,
-        )
-    })
-    .await
-}
+
 
 /// A completed creator resumes the accepted current group, never its epoch-zero
 /// installation. Missing current evidence is pending, not private corruption.
@@ -1017,7 +959,7 @@ async fn bootstrap_creator_realm_mls_genesis(
             && store
                 .mls_group_state_ref_for_effective_scope(
                     realm_id,
-                    None,
+
                     &checkpoint.group_id,
                     checkpoint.epoch,
                 )
@@ -1583,7 +1525,7 @@ mod tests {
             arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
                 .unwrap();
         store
-            .mark_mls_genesis_emitted_for_effective_scope_with_event(REALM, None, &stale)
+            .mark_mls_genesis_emitted_for_effective_scope_with_event(REALM,  &stale)
             .unwrap();
 
         store.clear_unaccepted_creator_mls_genesis(REALM).unwrap();

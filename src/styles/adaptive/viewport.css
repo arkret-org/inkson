@@ -319,33 +319,27 @@
     max-width: min(86vw, 340px);
   }
 
-  .board-toolbar-main,
+  .board-toolbar-main {
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .board-toolbar-options .sapid-menu-trigger { width: 44px; height: 44px; }
+
   .board-toolbar-controls {
     align-items: center;
     flex-direction: row;
     flex-wrap: wrap;
-    width: 100%;
+    flex: 1 1 0;
     gap: 8px;
-  }
-
-  .board-list-compose {
-    align-items: stretch;
-    flex-direction: column;
-    width: 100%;
   }
 
   .board-toolbar-controls > .board-select-label { display: none; }
   .board-toolbar-controls > .board-select-menu-host { flex: 1 1 180px; }
-  .board-toolbar-disclosure > .sapid-collapsible-trigger { min-height: 44px; }
-
-  .board-list-compose > * {
-    width: 100%;
-    max-width: 100%;
-  }
+  .board-toolbar-add-list .sapid-popover-trigger { min-height: 44px; }
 
   .board-select-menu-host,
-  .board-select-menu-host .sapid-popover-trigger,
-  .board-list-compose input {
+  .board-select-menu-host .sapid-popover-trigger {
     width: 100%;
     min-width: 0;
     max-width: 100%;

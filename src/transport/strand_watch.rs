@@ -344,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn self_watch_rejects_other_station_actor_and_circle_cut() {
+    fn self_watch_rejects_other_station_actor_and_foreign_realm_cut() {
         let (mut request, current, _) = observation(None);
         let mut account = request.watcher_actor_id.as_account_id().unwrap().clone();
         account.station_id = arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap();
@@ -352,10 +352,9 @@ mod tests {
         assert!(payload_from_current(&request, &current, None).is_err());
         let (request, current, _) = observation(None);
         let mut wire = serde_json::to_value(current).unwrap();
-        wire["stream_head"]["stream_ref"] = json!({"kind":"circle","realm_id":request.realm_id,
-            "circle_id":arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[7;32]))});
-        let circle: StrandWatchCurrentResponseBody = serde_json::from_value(wire).unwrap();
-        assert!(payload_from_current(&request, &circle, None).is_err());
+        wire["stream_head"]["stream_ref"] = json!({"kind":"realm","realm_id":"ak:realm:AQJmSg1s9QyzppFeJL40dN92YVHZeLdBBt3UWHa9XNOD"});
+        let foreign: StrandWatchCurrentResponseBody = serde_json::from_value(wire).unwrap();
+        assert!(payload_from_current(&request, &foreign, None).is_err());
     }
 
     fn cut(bundle: &arkret_sdk::RealmAuthorityBundle) -> arkret_sdk::RealmStateSnapshot {

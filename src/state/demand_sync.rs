@@ -47,7 +47,7 @@ struct BaselineSegmentView {
 ///
 /// `revision` is the account Station's own list revision for this row. It is a
 /// per-row monotone counter on the account list projection, never a Realm
-/// commit position: Realm, Circle and Sidecar streams each have their own
+/// commit position: Realm and Sidecar streams each have their own
 /// position and none of them is exposed here.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RealmRow {

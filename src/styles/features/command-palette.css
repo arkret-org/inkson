@@ -1,9 +1,9 @@
 /* Sapid owns command input, listbox, focus, dismissal, and keyboard selection. */
 .workspace-shell > .command-palette { display: contents; }
 .command-palette > .sapid-command-trigger { display: none !important; }
-.sapid-command-dialog { display: flex; flex-direction: column; gap: 12px; width: min(560px, calc(100vw - 32px)); max-height: 85dvh; padding: 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-solid, var(--surface)); color: var(--text); box-shadow: var(--shadow-lg); overflow-y: auto; }
+.sapid-command-dialog { --command-inset: 18px; display: flex; flex-direction: column; gap: 12px; width: min(560px, calc(100vw - 32px)); max-height: 85dvh; padding: var(--command-inset); border: 1px solid var(--border); border-radius: 12px; background: var(--surface-solid, var(--surface)); color: var(--text); box-shadow: var(--shadow-lg); overflow-y: auto; }
 .sapid-command-search { width: 100%; min-width: 0; min-height: 38px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
-.sapid-command-results { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; }
+.sapid-command-results { display: flex; flex-direction: column; gap: 12px; min-height: 0; margin-inline: calc(-1 * var(--command-inset)); padding-inline: var(--command-inset); overflow-y: auto; }
 .sapid-command-group > [data-gly-kind=text] { color: var(--text-3); font-size: 12px; font-weight: 600; }
 .sapid-command-option { width: 100%; padding: 10px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: start; cursor: pointer; }
 .sapid-command-option:hover, .sapid-command-option[aria-selected=true] { background: var(--accent-soft); color: var(--accent-ink); }

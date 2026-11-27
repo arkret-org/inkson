@@ -16,7 +16,7 @@ use crate::notification_rules::{DndSettings, WatchLevel};
 
 /// Canonical local map key for one independent commit stream.
 ///
-/// Realm, Circle and Sidecar streams are separate linear logs; this key keeps
+/// Realm and Sidecar streams are separate linear logs; this key keeps
 /// them separate in local state so no code path can accidentally merge two
 /// streams into a single cursor.
 pub fn commit_stream_key(stream_ref: &arkret_wire::CommitStreamRef) -> Option<String> {
@@ -24,14 +24,6 @@ pub fn commit_stream_key(stream_ref: &arkret_wire::CommitStreamRef) -> Option<St
         arkret_wire::CommitStreamRef::Realm { realm_id } => {
             Some(format!("realm/{}", realm_id.as_str()))
         }
-        arkret_wire::CommitStreamRef::Circle {
-            realm_id,
-            circle_id,
-        } => Some(format!(
-            "circle/{}/{}",
-            realm_id.as_str(),
-            circle_id.as_str()
-        )),
         arkret_wire::CommitStreamRef::Sidecar {
             realm_id,
             sidecar_id,
@@ -563,7 +555,7 @@ pub struct MoveSubmissionRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     /// Head of the scope's own commit stream observed when the Move was
-    /// submitted, as `"<stream key>@<stream_position>"`. Each Realm, Circle
+    /// submitted, as `"<stream key>@<stream_position>"`. Each Realm
     /// and Sidecar owns an independent stream, so this is never a Realm-global
     /// position. It surfaces in the failure detail so an operator can
     /// correlate a rejected Move to the exact predecessor it raced.
@@ -785,14 +777,12 @@ pub struct MlsGroupStateRefRecord {
 /// One effective scope paused by `encryption-and-audit.md` §2.4.1
 /// `epoch_update_required`.
 ///
-/// The scope is carried in the record rather than only in the map key: the key
-/// is the Circle id for a Circle-scoped group, so a Circle entry alone cannot
-/// name the Realm whose MLS effect has to run the repair.
+/// Old child-scope cache entries carry a legacy tag and are excluded from Realm repair.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MlsCoverageStale {
     pub realm_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub circle_id: Option<String>,
+    #[serde(default, alias = "circle_id", skip_serializing_if = "Option::is_none")]
+    pub(crate) legacy_child: Option<String>,
     /// The receiver's own `mls_governance_binding_stale` message, so the repair
     /// pass and the UI name the governance Seals the epoch has not attested
     /// rather than a generic "send failed".
@@ -1025,7 +1015,7 @@ pub struct ClientLocalState {
     pub read_receipt_strand_display_overrides: imbl::OrdMap<String, bool>,
     /// Per-commit-stream read cursors, keyed by [`commit_stream_key`].
     ///
-    /// A Realm, each Circle and each Sidecar own separate linear streams and
+    /// A Realm, each Sidecar own separate linear streams and
     /// the protocol defines no Realm-global position, so this map is the only
     /// persisted progress model: one `stream_position` per stream, never an
     /// aggregate cursor. Callers drive each stream's tail independently
@@ -1664,6 +1654,16 @@ impl MlsReceiveOverlay {
 mod authority_root_tests {
     use super::*;
     use crate::test_support as fixture;
+
+    #[test]
+    fn legacy_child_coverage_refusal_stays_excluded_after_cache_rewrite() {
+        let old = serde_json::json!({"realm_id":"r","circle_id":"child","reason":"stale"});
+        let saved: MlsCoverageStale = serde_json::from_value(old).unwrap();
+        let rewritten = serde_json::to_value(saved).unwrap();
+        assert!(rewritten.get("circle_id").is_none());
+        let restored: MlsCoverageStale = serde_json::from_value(rewritten).unwrap();
+        assert_eq!(restored.legacy_child.as_deref(), Some("child"));
+    }
 
     #[test]
     fn commit_stream_key_preserves_the_exact_stream_identity() {

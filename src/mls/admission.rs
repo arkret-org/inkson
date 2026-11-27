@@ -222,10 +222,7 @@ pub(crate) fn build_admission_events_with_binding(
     )
     .map_err(|err| err.user_message())?;
 
-    let circle_id = match effective_scope {
-        arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str().to_owned()),
-        _ => None,
-    };
+
     let commit = match pinned_binding {
         Some(binding) => crate::mls::group_events::mls_commit_event_with_binding(
             state_store,
@@ -236,7 +233,7 @@ pub(crate) fn build_admission_events_with_binding(
         None => crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
             state_store,
             realm_id.as_str(),
-            circle_id.as_deref(),
+
             &actor_id,
             &staged,
         )?,

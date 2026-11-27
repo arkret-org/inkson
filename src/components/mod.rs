@@ -11,22 +11,13 @@ pub use icons::ui_icon;
 pub mod agent_identity;
 pub mod agent_runtime_approval_prompt;
 pub mod avatar_uploader;
-/// Generic single-flight / debounce / backoff / digest-dedupe scheduler for
-/// the private-plaintext backup job.
-/// P3B.2 — Circle error queue. Producers push
-/// [`crate::circle::CircleErrorKind`]; the unified `feedback::ToastHost`
-/// drains it and renders the localized user-facing string.
-/// P3B.2 — Circle scope picker + composer banner + confidential-
-/// discussion-of cross-link banner. Shared between the new-Strand form,
-/// the composer header, and the Strand detail view.
-pub mod circle_scope_picker;
 pub mod device_authorization_prompt;
 pub mod did_resolution_health_banner;
 pub mod dismissible_popup;
 pub mod empty_state;
 /// Unified feedback surface (docs/design/unified-feedback-system.md
 /// Wave 0): process-wide toast queue + `ToastHost` (stacked toasts,
-/// drains the policy-deny and circle-error queues too) + `AppBanner`
+/// drains the policy-deny queue too) + `AppBanner`
 /// (single-slot persistent banner, offline state).
 pub mod feedback;
 pub mod generated_avatar;
@@ -62,18 +53,13 @@ pub mod write_state;
 pub use agent_identity::{AgentIdentityProps, agent_identity};
 pub use agent_runtime_approval_prompt::agent_runtime_approval_prompt;
 pub use avatar_uploader::{AvatarUploaderProps, avatar_uploader};
-pub use circle_scope_picker::{
-    CircleComposerBannerProps, CircleIdentityBadgeProps, CircleScopePickerProps,
-    ConfidentialDiscussionOfBannerProps, circle_composer_banner, circle_identity_badge,
-    circle_scope_picker, confidential_discussion_of_banner,
-};
 pub use device_authorization_prompt::device_authorization_prompt;
 pub use did_resolution_health_banner::{DidResolutionHealth, did_resolution_health_banner};
 pub use dismissible_popup::{DismissiblePopupProps, dismissible_popup};
 pub use empty_state::{EmptyStateKind, EmptyStateProps, empty_state};
 pub use feedback::{
     AppBannerKind, FeedbackSeverity, Toast, app_banner, is_policy_deny_code,
-    maybe_dispatch_circle_error, push_policy_deny_toast, push_toast, toast_error, toast_host,
+    push_policy_deny_toast, push_toast, toast_error, toast_host,
     toast_info, toast_success, toast_warning,
 };
 pub use generated_avatar::{

@@ -7,9 +7,7 @@ pub(super) fn plaintext(
 ) {
     let ChatComposerContext {
         sidecar_route_pending,
-        selected_channel_info,
-        circle_display: _,
-        circle_encrypted: _,
+        selected_channel_info: _,
         authority: sidecar_authority,
         did: sidecar_did,
         principal_id,
@@ -37,9 +35,6 @@ pub(super) fn plaintext(
     let messages_snapshot = controller.messages.get_untracked();
     let _messages_for_composer_lookup = &messages_snapshot;
     let _selected_channel_value = controller.selected_channel.get_untracked();
-    let selected_channel_is_circle_scoped = selected_channel_info
-        .as_ref()
-        .is_some_and(|channel| channel.scope_circle.is_some());
     let channels = controller.channels;
     let selected_channel = controller.selected_channel;
     let reply_to_message = controller.reply_to_message;
@@ -56,8 +51,6 @@ pub(super) fn plaintext(
     let _sidecar_send_pending = controller.sidecar_send_pending;
     let composer_scope = if !mentions_enabled {
         arkret_sdk::AgentMentionComposerScope::Direct
-    } else if selected_channel_is_circle_scoped {
-        arkret_sdk::AgentMentionComposerScope::Circle
     } else {
         arkret_sdk::AgentMentionComposerScope::Realm
     };
@@ -111,7 +104,7 @@ pub(super) fn plaintext(
             );
             if route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets {
                 {
-                    let next_value = "Agent modes are unknown or these targets cannot share a scope. Keep the draft and edit the mentions; private Circle requests require a separate Realm draft.".to_owned();
+                    let next_value = "Agent modes are unknown or these targets cannot share a scope. Edit the mentions before sending this draft.".to_owned();
                     status_msg.revise(|value| *value = next_value);
                 };
                 return;
@@ -229,10 +222,7 @@ pub(super) fn plaintext(
                     api_token,
                     wait_for,
                     realm_id: realm,
-                    circle_id: channel
-                        .scope_circle
-                        .as_ref()
-                        .map(|circle| circle.circle_id.clone()),
+
                     strand_id,
                     actor,
                     local_id,
@@ -263,9 +253,7 @@ pub(super) fn secure(
 ) {
     let ChatComposerContext {
         sidecar_route_pending,
-        selected_channel_info,
-        circle_display: _,
-        circle_encrypted: _,
+        selected_channel_info: _,
         authority: sidecar_authority,
         did: sidecar_did,
         principal_id,
@@ -293,9 +281,6 @@ pub(super) fn secure(
     let messages_snapshot = controller.messages.get_untracked();
     let _messages_for_composer_lookup = &messages_snapshot;
     let selected_channel_value = controller.selected_channel.get_untracked();
-    let selected_channel_is_circle_scoped = selected_channel_info
-        .as_ref()
-        .is_some_and(|channel| channel.scope_circle.is_some());
     let channels = controller.channels;
     let _selected_channel = controller.selected_channel;
     let reply_to_message = controller.reply_to_message;
@@ -312,8 +297,6 @@ pub(super) fn secure(
     let sidecar_send_pending = controller.sidecar_send_pending;
     let composer_scope = if !mentions_enabled {
         arkret_sdk::AgentMentionComposerScope::Direct
-    } else if selected_channel_is_circle_scoped {
-        arkret_sdk::AgentMentionComposerScope::Circle
     } else {
         arkret_sdk::AgentMentionComposerScope::Realm
     };
@@ -334,10 +317,7 @@ pub(super) fn secure(
         let realm = selected_realm_id.clone();
         let actor = principal_id.clone();
         let selected_strand = selected_channel_value.clone();
-        let selected_circle = selected_channel_info
-            .as_ref()
-            .and_then(|channel| channel.scope_circle.as_ref())
-            .map(|circle| circle.circle_id.clone());
+
         let pending_mls_binding = selected_realm_pending_mls_binding;
         let sidecar_device_id = device_id.clone();
         let pending_mls_binding_reason = selected_realm_pending_mls_binding_reason.clone();
@@ -380,7 +360,7 @@ pub(super) fn secure(
             );
             if route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets {
                 {
-                    let next_value = "Agent modes are unknown or these targets cannot share a scope. Keep the draft and edit the mentions; private Circle requests require a separate Realm draft.".to_owned();
+                    let next_value = "Agent modes are unknown or these targets cannot share a scope. Edit the mentions before sending this draft.".to_owned();
                     status_msg.revise(|value| *value = next_value);
                 };
                 return;
@@ -552,7 +532,7 @@ pub(super) fn secure(
                     api_token,
                     wait_for,
                     realm_id: realm,
-                    circle_id: selected_circle.clone(),
+
                     strand_id,
                     actor,
                     authority: authority_for_sidecar,
@@ -581,9 +561,7 @@ pub(super) fn poll(
 ) {
     let ChatComposerContext {
         sidecar_route_pending: _,
-        selected_channel_info,
-        circle_display: _,
-        circle_encrypted: _,
+        selected_channel_info: _,
         authority: sidecar_authority,
         did: sidecar_did,
         principal_id,
@@ -611,9 +589,6 @@ pub(super) fn poll(
     let messages_snapshot = controller.messages.get_untracked();
     let _messages_for_composer_lookup = &messages_snapshot;
     let selected_channel_value = controller.selected_channel.get_untracked();
-    let selected_channel_is_circle_scoped = selected_channel_info
-        .as_ref()
-        .is_some_and(|channel| channel.scope_circle.is_some());
     let _channels = controller.channels;
     let _selected_channel = controller.selected_channel;
     let _reply_to_message = controller.reply_to_message;
@@ -630,8 +605,6 @@ pub(super) fn poll(
     let _sidecar_send_pending = controller.sidecar_send_pending;
     let _composer_scope = if !mentions_enabled {
         arkret_sdk::AgentMentionComposerScope::Direct
-    } else if selected_channel_is_circle_scoped {
-        arkret_sdk::AgentMentionComposerScope::Circle
     } else {
         arkret_sdk::AgentMentionComposerScope::Realm
     };
@@ -653,10 +626,7 @@ pub(super) fn poll(
         let protection = super::poll_submission::PollSubmissionContext {
             authority: sidecar_authority.clone(),
             device_id: device_id.clone(),
-            circle_id: selected_channel_info
-                .as_ref()
-                .and_then(|channel| channel.scope_circle.as_ref())
-                .map(|scope| scope.circle_id.clone()),
+
         };
         move || {
             let Some(draft_snapshot) = poll_draft.get().clone() else {
@@ -672,7 +642,7 @@ pub(super) fn poll(
                 &realm,
                 &actor,
                 &selected_strand,
-                protection.circle_id.as_deref(),
+
                 &draft_snapshot,
             ) {
                 Ok(op) => op.with_local_operation_id(

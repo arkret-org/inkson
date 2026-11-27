@@ -30,7 +30,7 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
     let locale = context.locale;
     let source = scope.bond(move || (revision.get(), locale.get()));
     let render = context.clone();
-    reactive(source, move |scope, _| {
+    let diagnostics = reactive(source, move |scope, _| {
         let context = render.clone();
         let state = context.snapshot();
         let total = state.raw_operations.len();
@@ -72,69 +72,87 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
             ],
         )];
         if rows.is_empty() {
-            event_children.push(crate::components::empty_state(
-                scope,
-                context.clone(),
-                crate::components::EmptyStateProps {
-                    title: context.tr("developer.section.events"),
-                    kind: crate::components::EmptyStateKind::Empty,
-                    message: Some("No raw operations recorded yet.".to_owned()),
-                    test_id: Some("developer-raw-events-empty".to_owned()),
-                },
+            event_children.push(paragraph(
+                "muted developer-raw-events-empty",
+                context.translated(scope, "developer.events.empty"),
             ));
         } else {
             event_children.push(paragraph(
                 "muted",
-                format!("Showing {count} of {total} raw operations (newest first)."),
+                context.translated_args(scope, "developer.events.preview", move || {
+                    vec![("count", count.to_string()), ("total", total.to_string())]
+                }),
             ));
             event_children.extend(rows);
         }
-        stack(
-            "timeline developer-tools-panel",
-            vec![
-                stack(
-                    "event",
-                    vec![
-                        line(
-                            "event-head",
-                            vec![
-                                plain(context.translated(scope, "developer.title")),
-                                paragraph("muted", context.translated(scope, "developer.subtitle")),
-                                crate::components::help_tip(
-                                    scope,
-                                    context.clone(),
-                                    crate::components::HelpTipProps {
-                                        text: context.tr("developer.hint"),
-                                    },
-                                ),
-                            ],
-                        ),
-                        paragraph("muted", context.translated(scope, "developer.hint")),
-                    ],
-                ),
-                stack(
-                    "event developer-protocol-version",
-                    vec![
-                        line(
-                            "event-head",
-                            vec![
-                                plain(
-                                    context.translated(scope, "developer.section.protocol_version"),
-                                ),
-                                paragraph("badge", PROTOCOL_VERSION),
-                            ],
-                        ),
-                        paragraph(
-                            "muted",
-                            "Negotiated protocol version reported to /server/describe.",
-                        ),
-                    ],
-                ),
-                stack("event developer-raw-events", event_children),
-            ],
-        )
-    })
+        Box::new(glory::ui::fragment(vec![
+            paragraph(
+                "muted developer-diagnostics-intro",
+                context.translated(scope, "developer.diagnostics_intro"),
+            ),
+            stack(
+                "event developer-protocol-version",
+                vec![
+                    line(
+                        "event-head",
+                        vec![
+                            plain(context.translated(scope, "developer.section.protocol_version")),
+                            paragraph("badge", PROTOCOL_VERSION),
+                        ],
+                    ),
+                    paragraph(
+                        "muted",
+                        context.translated(scope, "developer.protocol_version.description"),
+                    ),
+                ],
+            ),
+            stack("event developer-raw-events", event_children),
+            session_diagnostics(scope, &context),
+        ])) as View
+    });
+    stack(
+        "timeline developer-tools-panel",
+        vec![diagnostics, super::dashboard::client_status(scope, context)],
+    )
 }
+
+fn session_diagnostics(scope: &Scope, context: &InksonContext) -> View {
+    let signer = crate::event_signer::signer_status()
+        .map(|status| status.signer_did)
+        .unwrap_or_else(|| "—".into());
+    stack(
+        "event settings-session-diagnostics",
+        vec![
+            line(
+                "event-head",
+                vec![plain(
+                    context.translated(scope, "settings.session_diagnostics.title"),
+                )],
+            ),
+            stack(
+                "metric-grid",
+                vec![
+                    stack(
+                        "metric settings-proof-mode",
+                        vec![
+                            plain(context.translated(scope, "settings.proof_mode.label")),
+                            plain(crate::operation::current_proof_mode().label_en()),
+                        ],
+                    ),
+                    stack(
+                        "metric settings-signer-info",
+                        vec![
+                            plain(context.translated(scope, "settings.signer.label")),
+                            paragraph("settings-signer-did", short_protocol_id(&signer)),
+                            paragraph("sr-only settings-signer-identity", signer),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::RAW_EVENT_PREVIEW_LIMIT;

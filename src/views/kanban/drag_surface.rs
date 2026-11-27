@@ -5,11 +5,16 @@ use glory::render::{DragPhase, Event, NodeId, Query, QueryValue, Rect};
 use super::*;
 #[derive(Clone)]
 pub(super) enum DragSubject {
+    Board(arkret_sdk::SpaceId),
     Card(DraggedCard),
     Column(DraggedColumn),
 }
 #[derive(Clone)]
 enum Landing {
+    Board {
+        id: arkret_sdk::SpaceId,
+        after: bool,
+    },
     Column {
         column: String,
         tail: Option<String>,
@@ -31,6 +36,7 @@ pub(super) struct BoardDrag {
     targets: RefCell<Vec<std::rc::Weak<Target>>>,
     rects: RefCell<Vec<(Landing, Rect)>>,
     subject: RefCell<Option<(DragSubject, Option<arkret_sdk::SpaceId>)>>,
+    pub(super) board_target: Cage<Option<(arkret_sdk::SpaceId, bool)>>,
     remaining: Cell<usize>,
     ticket: Cell<u64>,
     pending_drop: Cell<Option<(f64, f64)>>,
@@ -43,6 +49,7 @@ impl BoardDrag {
             targets: RefCell::new(vec![]),
             rects: RefCell::new(vec![]),
             subject: RefCell::new(None),
+            board_target: scope.cage(None),
             remaining: Cell::new(0),
             ticket: Cell::new(0),
             pending_drop: Cell::new(None),
@@ -69,6 +76,20 @@ impl BoardDrag {
                 }
             }
         });
+    }
+    pub(super) fn board_row(
+        self: &Rc<Self>,
+        scope: &Scope,
+        node: Cage<Option<NodeId>>,
+        id: arkret_sdk::SpaceId,
+    ) {
+        self.register(
+            scope,
+            Target {
+                node,
+                landing: Landing::Board { id, after: false },
+            },
+        );
     }
     pub(super) fn column(
         self: &Rc<Self>,
@@ -119,13 +140,22 @@ impl BoardDrag {
                 x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height
             })
             .min_by_key(|(target, _)| match target {
-                Landing::Card { .. } => 0,
+                Landing::Board { .. } | Landing::Card { .. } => 0,
                 Landing::Column { .. } => 1,
             })
-            .map(|(target, _)| target.clone())
+            .map(|(target, rect)| match target {
+                Landing::Board { id, .. } => Landing::Board {
+                    id: id.clone(),
+                    after: y >= rect.y + rect.height / 2.0,
+                },
+                other => other.clone(),
+            })
     }
     fn clear(&self) {
         self.subject.borrow_mut().take();
+        if self.board_target.is_alive() && self.board_target.get_untracked().is_some() {
+            self.board_target.revise(|target| *target = None);
+        }
         self.pending_drop.set(None);
         let c = self.board.controller;
         c.dragging_card.revise(|v| *v = None);
@@ -144,18 +174,23 @@ impl BoardDrag {
             self.clear();
             return;
         }
-        let Some(board_id) = board_id else {
-            self.clear();
-            return;
-        };
         let target = self.hit(x, y);
         self.clear();
         let Some(target) = target else {
             return;
         };
         match subject {
+            DragSubject::Board(id) => {
+                if let Landing::Board { id: target, after } = target {
+                    self.board.move_board(&id, &target, after);
+                }
+            }
             DragSubject::Card(card) => {
+                let Some(board_id) = board_id else {
+                    return;
+                };
                 let (column, neighbours) = match target {
+                    Landing::Board { .. } => return,
                     Landing::Card {
                         column,
                         previous,
@@ -191,6 +226,7 @@ impl BoardDrag {
             }
             DragSubject::Column(column) => {
                 let target = match target {
+                    Landing::Board { .. } => return,
                     Landing::Card { column, .. } | Landing::Column { column, .. } => column,
                 };
                 let mut columns = self.board.columns.get_untracked();
@@ -228,6 +264,7 @@ impl BoardDrag {
                     self.board.controller.selected_board.get_untracked(),
                 ));
                 match subject {
+                    DragSubject::Board(_) => {}
                     DragSubject::Card(card) => self
                         .board
                         .controller
@@ -274,8 +311,20 @@ impl BoardDrag {
                 }
             }
             DragPhase::Move => {
-                let column = self.hit(x, y).map(|target| match target {
-                    Landing::Card { column, .. } | Landing::Column { column, .. } => column,
+                let landing = self.hit(x, y);
+                if matches!(subject, DragSubject::Board(_)) {
+                    let target = landing.and_then(|landing| match landing {
+                        Landing::Board { id, after } => Some((id, after)),
+                        _ => None,
+                    });
+                    if target != self.board_target.get_untracked() {
+                        self.board_target.revise(|value| *value = target);
+                    }
+                    return;
+                }
+                let column = landing.and_then(|target| match target {
+                    Landing::Board { .. } => None,
+                    Landing::Card { column, .. } | Landing::Column { column, .. } => Some(column),
                 });
                 if self.board.controller.drop_target_column.get_untracked() != column {
                     self.board

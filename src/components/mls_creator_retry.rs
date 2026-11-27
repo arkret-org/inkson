@@ -12,7 +12,6 @@ struct RetryKey {
     generation: u64,
     holder: Option<(String, arkret_sdk::AccountId, arkret_sdk::DeviceId, String)>,
     realm: String,
-    circle: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -69,7 +68,7 @@ impl CreatorRetryState {
     }
 }
 
-fn retry_key(context: &InksonContext, realm: String, circle: Option<String>) -> RetryKey {
+fn retry_key(context: &InksonContext, realm: String) -> RetryKey {
     RetryKey {
         generation: context.session_generation.get(),
         holder: context.active_account.get().map(|account| {
@@ -81,24 +80,16 @@ fn retry_key(context: &InksonContext, realm: String, circle: Option<String>) -> 
             )
         }),
         realm,
-        circle,
     }
 }
 
-fn creator_scope(realm: String, circle: Option<String>) -> anyhow::Result<arkret_sdk::ScopeRef> {
+fn creator_scope(realm: String) -> anyhow::Result<arkret_sdk::ScopeRef> {
     let realm_id = arkret_sdk::RealmId::new(realm)?;
-    Ok(match circle {
-        Some(circle) => arkret_sdk::ScopeRef::Circle {
-            realm_id,
-            circle_id: arkret_sdk::CircleId::new(circle)?,
-        },
-        None => arkret_sdk::ScopeRef::Realm { realm_id },
-    })
+    Ok(arkret_sdk::ScopeRef::Realm { realm_id })
 }
 
 pub(crate) struct CreatorMlsRetryProps {
     pub realm_id: Vary<String>,
-    pub circle_id: Option<String>,
     pub refresh_hint: Vary<String>,
     pub token: Cage<String>,
 }
@@ -121,25 +112,21 @@ pub(crate) fn creator_mls_retry(
         }
     });
     let realm_id = props.realm_id;
-    let circle_id = props.circle_id;
     let refresh = props.refresh_hint;
     let token = props.token;
     let feedback = scope.bond({
         let context = context.clone();
         let realm = realm_id.clone();
-        let circle = circle_id.clone();
         move || {
-            let key = retry_key(&context, realm.get(), circle.clone());
+            let key = retry_key(&context, realm.get());
             let state = context.creator_retry_state.read(&key);
             (key, state)
         }
     });
     let ctx = context.clone();
     let realm = realm_id.clone();
-    let circle = circle_id.clone();
     let recovery = resource(scope, move || {
         let realm = realm.get();
-        let circle = circle.clone();
         let _ = refresh.get();
         let _ = revision.get();
         let _ = feedback.get().1.revision;
@@ -151,7 +138,7 @@ pub(crate) fn creator_mls_retry(
             let Some(account) = account else {
                 return Ok((false, false));
             };
-            let Ok(scope) = creator_scope(realm, circle) else {
+            let Ok(scope) = creator_scope(realm) else {
                 return Ok((false, false));
             };
             let Ok(api) = crate::transport::auth::authed_api_ready(&base, credential).await else {
@@ -194,7 +181,6 @@ pub(crate) fn creator_mls_retry(
         if retryable || current.busy {
             let ctx = context.clone();
             let realm_id = realm_id.clone();
-            let circle = circle_id.clone();
             let owner = component_owner.clone();
             let label = context.translated(scope, "setup.action.retry_mls");
             children.push(Box::new(
@@ -206,7 +192,7 @@ pub(crate) fn creator_mls_retry(
                     .on_press(move || {
                         let Some(_scope) = owner.upgrade() else { return };
                         let realm = realm_id.get();
-                        if retry_key(&ctx, realm.clone(), circle.clone()) != key {
+                        if retry_key(&ctx, realm.clone()) != key {
                             return;
                         }
                         let Some(account) = ctx.active_account.get() else { return };
@@ -219,7 +205,6 @@ pub(crate) fn creator_mls_retry(
                         let credential = token.get();
                         let state_store = ctx.state_store.handle();
                         let context = ctx.clone();
-                        let circle = circle.clone();
                         let key = key.clone();
                         let fence = crate::transport::auth::AuthoringSessionFence::capture();
                         let task_owner = context.clone();
@@ -227,7 +212,7 @@ pub(crate) fn creator_mls_retry(
                             let result = async {
                                 let fence = fence?;
                                 fence.check()?;
-                                let scope = creator_scope(realm.clone(), circle)?;
+                                let scope = creator_scope(realm.clone())?;
                                 let api = crate::transport::auth::authed_api_ready(&base, credential).await?;
                                 fence.check()?;
                                 anyhow::ensure!(context.session_matches(generation, &active), "creator retry account session changed");
@@ -239,11 +224,7 @@ pub(crate) fn creator_mls_retry(
                                 anyhow::ensure!(record.rejection().is_some(), "creator attempt is no longer rejected");
                                 anyhow::ensure!(record.intent().creator_device_id() == &account.device_id,
                                     "creator retry requires the original device");
-                                if matches!(scope, arkret_sdk::ScopeRef::Circle { .. }) {
-                                    crate::mls::creator_bootstrap::ensure_creator_circle_mls_genesis(
-                                        &api, &state_store, &scope, &account.authority, &account.device_id, true,
-                                    ).await.map_err(anyhow::Error::msg)
-                                } else {
+                                {
                                     crate::mls::creator_bootstrap::retry_creator_realm_mls_genesis(
                                         &api, &state_store, &realm, &account.authority, &account.device_id,
                                     ).await.map_err(anyhow::Error::msg)
@@ -303,7 +284,7 @@ mod tests {
             [71; 32],
         ))
         .to_string();
-        let key = retry_key(&context, realm.clone(), None);
+        let key = retry_key(&context, realm.clone());
         assert!(
             context
                 .creator_retry_state
@@ -319,7 +300,6 @@ mod tests {
                     context.clone(),
                     CreatorMlsRetryProps {
                         realm_id: realm.clone().into(),
-                        circle_id: None,
                         refresh_hint: String::new().into(),
                         token: context.token,
                     },
@@ -344,7 +324,7 @@ mod tests {
             !second.1,
             "a replacement cannot enable another concurrent retry"
         );
-        assert_eq!(retry_key(&context, realm.clone(), None), key);
+        assert_eq!(retry_key(&context, realm.clone()), key);
         assert_eq!(
             context.creator_retry_state.read(&key).status,
             "finishing the original attempt"
@@ -359,7 +339,7 @@ mod tests {
         context
             .session_generation
             .revise(|generation| *generation += 1);
-        let next = retry_key(&context, realm.clone(), None);
+        let next = retry_key(&context, realm.clone());
         assert_ne!(next, key);
         assert!(!context.creator_retry_state.read(&next).busy);
         assert!(context.creator_retry_state.read(&next).status.is_empty());
@@ -368,6 +348,6 @@ mod tests {
                 .parse()
                 .unwrap();
         });
-        assert_ne!(retry_key(&context, realm, None), next);
+        assert_ne!(retry_key(&context, realm), next);
     }
 }

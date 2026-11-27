@@ -241,8 +241,3 @@ html[data-inkson-app-shell] #app {
 
 /* The original Presence name was an inline span, with status in the same row. */
 .presence-row .presence-name { display: inline; }
-
-/* A Realm's passive security hint must not intercept the adjacent Realm link. */
-.sidebar-row:has(> a.realm-tree-item) > .sapid-tooltip[role="tooltip"] {
-  pointer-events: none;
-}

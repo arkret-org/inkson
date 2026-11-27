@@ -1515,7 +1515,7 @@ impl CurrentIndex {
         anyhow::ensure!(
             matches!(
                 scope,
-                arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+                arkret_sdk::ScopeRef::Realm { .. }
             ),
             "unsupported receipt scope"
         );
@@ -1546,9 +1546,7 @@ impl CurrentIndex {
                 .any(|head| head.stream_ref.scope_ref() == *scope)),
             "receipt policy scope is not covered by this authorized cut"
         );
-        let selector = CurrentSelector::ScopeReadReceiptPolicy {
-            scope_ref: scope.clone(),
-        };
+        let selector = CurrentSelector::ScopeReadReceiptPolicy;
         let row = self
             .ready_selector(realm.as_str(), &selector, generation)
             .await?;
@@ -1746,7 +1744,6 @@ impl CurrentIndex {
     pub(crate) async fn read_mls_group_ready(
         &self,
         scope_ref: &arkret_sdk::ScopeRef,
-        actor: &arkret_sdk::ActorId,
     ) -> anyhow::Result<Option<arkret_wire::MlsGroupValue>> {
         let realm_id = scope_ref
             .realm_id_opt()
@@ -1766,62 +1763,7 @@ impl CurrentIndex {
             progress_is_complete_cut(&progress, realm_id),
             "MLS current read requires complete authorized-stream coverage"
         );
-        if let arkret_sdk::ScopeRef::Circle { circle_id, .. } = scope_ref {
-            let parent = self
-                .ready_selector(
-                    realm_id.as_str(),
-                    &CurrentSelector::MemberState {
-                        actor_id: actor.clone(),
-                    },
-                    generation,
-                )
-                .await?
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Circle send requires a verified parent member current")
-                })?;
-            let parent_revision = parent
-                .parent_membership_revision(realm_id, actor)
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Circle send requires an effective parent Realm join")
-                })?;
-            let CurrentState::Value {
-                source_stream_ref: parent_source,
-                ..
-            } = &parent;
-            let circle_selector = CurrentSelector::CircleMemberState {
-                circle_id: circle_id.clone(),
-                member_actor_id: actor.clone(),
-            };
-            let circle = self
-                .ready_selector(realm_id.as_str(), &circle_selector, generation)
-                .await?
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Circle send requires a verified Circle member current")
-                })?;
-            let CurrentState::Value {
-                source_stream_ref,
-                value,
-                ..
-            } = circle;
-            anyhow::ensure!(
-                source_stream_ref
-                    == arkret_wire::CommitStreamRef::Circle {
-                        realm_id: realm_id.clone(),
-                        circle_id: circle_id.clone(),
-                    },
-                "Circle member current belongs to another stream"
-            );
-            let membership: arkret_wire::CircleMemberStateValue = serde_json::from_value(value)?;
-            anyhow::ensure!(
-                membership.is_effective_under_parent(
-                    realm_id,
-                    parent_source,
-                    &parent_revision,
-                    arkret_sdk::MembershipState::Join,
-                ),
-                "Circle join no longer binds the current parent Realm membership"
-            );
-        }
+
         let selector = CurrentSelector::MlsGroup {
             scope_ref: scope_ref.clone(),
         };
@@ -1845,7 +1787,7 @@ impl CurrentIndex {
             Some(_) => anyhow::bail!("MLS current selector returned a mismatched result"),
         }
     }
-    /// Circle join authoring uses a parent row at one complete durable cut.
+    /// Member authoring reads a joined Realm member at a complete durable cut.
     #[cfg(test)]
     pub(crate) async fn read_parent_membership_revision_ready(
         &self,
@@ -1855,7 +1797,7 @@ impl CurrentIndex {
         self.read_parent_membership_revision_at_complete_cut(realm, member)
             .await?
             .ok_or_else(|| {
-                anyhow::anyhow!("Circle join requires a complete verified parent Realm cut")
+                anyhow::anyhow!("membership requires a complete verified Realm cut")
             })
     }
 
@@ -1879,15 +1821,15 @@ impl CurrentIndex {
         };
         self.ready_selector(realm.as_str(), &selector, generation)
             .await?
-            .and_then(|entry| entry.parent_membership_revision(realm, member))
+            .and_then(|entry| entry.active_realm_member_revision(realm, member))
             .map(Some)
             .ok_or_else(|| {
-                anyhow::anyhow!("the Circle join target has no verified current parent Realm join")
+                anyhow::anyhow!("the target has no verified current Realm join")
             })
     }
 
     /// The installed complete verified cut, not a cached projection, binds a
-    /// decrypted Signal's Strand to its current Realm/Circle security scope.
+    /// decrypted Signal's Strand to its current Realm.
     pub(crate) async fn read_strand_ready(
         &self,
         realm: &arkret_sdk::RealmId,
@@ -1935,15 +1877,9 @@ impl CurrentIndex {
                         && current.schema == arkret_wire::SchemaId::STRAND_V1,
                     "Strand current differs from its selected subject"
                 );
-                let expected_stream = match &current.scope_circle_id {
-                    Some(circle_id) => arkret_sdk::CommitStreamRef::Circle {
+                let expected_stream = arkret_sdk::CommitStreamRef::Realm {
                         realm_id: current.realm_id.clone(),
-                        circle_id: circle_id.clone(),
-                    },
-                    None => arkret_sdk::CommitStreamRef::Realm {
-                        realm_id: current.realm_id.clone(),
-                    },
-                };
+                    };
                 anyhow::ensure!(
                     source_stream_ref == expected_stream,
                     "Strand current source stream differs from its security scope"
@@ -1993,49 +1929,8 @@ impl CurrentIndex {
             else {
                 return Ok(None);
             };
-            let Some(parent_revision) = parent.parent_membership_revision(realm, actor) else {
+            if parent.active_realm_member_revision(realm, actor).is_none() {
                 return Ok(None);
-            };
-            if let arkret_sdk::ScopeRef::Circle { circle_id, .. } = scope {
-                let Some(CurrentState::Value {
-                    source_stream_ref,
-                    value,
-                    ..
-                }) = self
-                    .ready_selector(
-                        realm.as_str(),
-                        &CurrentSelector::CircleMemberState {
-                            circle_id: circle_id.clone(),
-                            member_actor_id: actor.clone(),
-                        },
-                        generation,
-                    )
-                    .await?
-                else {
-                    return Ok(None);
-                };
-                anyhow::ensure!(
-                    source_stream_ref
-                        == arkret_sdk::CommitStreamRef::Circle {
-                            realm_id: realm.clone(),
-                            circle_id: circle_id.clone(),
-                        },
-                    "Typing Circle member belongs to another stream"
-                );
-                let membership: arkret_wire::CircleMemberStateValue =
-                    serde_json::from_value(value)?;
-                let CurrentState::Value {
-                    source_stream_ref: parent_stream,
-                    ..
-                } = &parent;
-                if !membership.is_effective_under_parent(
-                    realm,
-                    parent_stream,
-                    &parent_revision,
-                    arkret_sdk::MembershipState::Join,
-                ) {
-                    return Ok(None);
-                }
             }
         }
         let current = self
@@ -3885,8 +3780,8 @@ mod tests {
         let forged_store = index(&forged_path, 0).await;
         let mut forged_row = make_row(1);
         let CurrentState::Value { value, .. } = &mut forged_row;
-        value["scope_circle_id"] = json!(arkret_sdk::CircleId::from_event_id(&event));
-        // A Realm source cannot assert a Circle-bound Strand, even at a
+        value["realm_id"] = json!(arkret_sdk::RealmId::from_event_id(&event));
+        // A Realm source cannot assert a Strand in a different Realm, even at a
         // complete cut. This trusted-storage fixture claims no native signature.
         forged_store
             .stage_frame(
@@ -3917,7 +3812,7 @@ mod tests {
         };
         let material = arkret_sdk::SignalProductAuthority {
             authority_commit_id: head.commit_id.clone(),
-            parent_realm_authority_commit_id: None,
+
             current_realm_head: head.clone(),
             current_scope_head: head,
             sent_at: chrono::Utc::now(),
@@ -3973,8 +3868,6 @@ mod tests {
             "other_station",
             "missing_track",
             "disabled_track",
-            "circle_valid",
-            "circle_rejoin",
         ] {
             let storage_path = path();
             let store = index(&storage_path, 0).await;
@@ -4031,48 +3924,7 @@ mod tests {
                 strand.tracks.get_mut("discussion").unwrap().is_primary = None;
             }
             let mut coverage = baseline(CURSORS[0], 1, true);
-            let scope = if scenario.starts_with("circle_") {
-                let circle_id = arkret_sdk::CircleId::from_event_id(
-                    &arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [32; 32]),
-                );
-                let stream = arkret_sdk::CommitStreamRef::Circle {
-                    realm_id: realm.clone(),
-                    circle_id: circle_id.clone(),
-                };
-                let revision = arkret_wire::CurrentRevision {
-                    commit_id: arkret_sdk::RealmCommitId::from_digest([42; 32]),
-                    stream_position: 1,
-                };
-                coverage["coverage"]["stream_heads"].as_array_mut().unwrap().push(json!({"stream_ref":stream, "stream_position":1, "commit_id":revision.commit_id}));
-                for member in [&sender, &recipient] {
-                    let parent_revision = arkret_wire::CurrentRevision {
-                        commit_id: if scenario == "circle_rejoin" && member == &sender {
-                            arkret_sdk::RealmCommitId::from_digest([43; 32])
-                        } else {
-                            COMMIT.parse().unwrap()
-                        },
-                        stream_position: 1,
-                    };
-                    rows.push(CurrentState::Value {
-                        selector: CurrentSelector::CircleMemberState { circle_id: circle_id.clone(), member_actor_id: member.clone() },
-                        source_stream_ref: stream.clone(), revision: revision.clone(),
-                        value: json!({"membership":"join", "parent_membership_revision":parent_revision, "effective_at":"2026-09-30T00:00:00.000Z"}),
-                    });
-                }
-                strand.scope_circle_id = Some(circle_id.clone());
-                rows.push(CurrentState::Value {
-                    selector: CurrentSelector::Strand {
-                        strand_id: strand_id.clone(),
-                    },
-                    source_stream_ref: stream,
-                    revision,
-                    value: serde_json::to_value(strand).unwrap(),
-                });
-                arkret_sdk::ScopeRef::Circle {
-                    realm_id: realm.clone(),
-                    circle_id,
-                }
-            } else {
+            let scope = {
                 rows.push(CurrentState::Value {
                     selector: CurrentSelector::Strand {
                         strand_id: strand_id.clone(),
@@ -4102,7 +3954,7 @@ mod tests {
                 .is_some();
             assert_eq!(
                 visible,
-                matches!(scenario, "valid" | "circle_valid"),
+                matches!(scenario, "valid"),
                 "{scenario}"
             );
         }
@@ -4145,12 +3997,6 @@ mod tests {
     static NEXT_TEST_PATH: AtomicU64 = AtomicU64::new(0);
     const REALM: &str = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";
     const COMMIT: &str = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq";
-    fn mls_gate_actor() -> arkret_sdk::ActorId {
-        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-            "ak:did_core:web:member.example".parse().unwrap(),
-            "ak:did_core:web:station.example".parse().unwrap(),
-        ))
-    }
     #[test]
     fn exact_current_generation_accepts_signed_snapshot_and_preserves_invalidation_guards() {
         let realm: arkret_sdk::RealmId = REALM.parse().unwrap();
@@ -4674,7 +4520,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn circle_parent_revision_requires_complete_durable_cut_and_current_join() {
+    async fn membership_revision_requires_complete_durable_cut_and_current_join() {
         let path = path();
         let index = index(&path, 0).await;
         let realm = arkret_sdk::RealmId::new(REALM).unwrap();
@@ -4749,144 +4595,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn circle_send_gate_rejects_parent_leave_ban_and_rejoin_without_new_circle_join() {
-        let path = path();
-        let index = index(&path, 0).await;
-        let realm = arkret_sdk::RealmId::new(REALM).unwrap();
-        let circle_id = arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
-            arkret_sdk::DigestSuite::Sha256,
-            [9; 32],
-        ));
-        let scope = arkret_sdk::ScopeRef::Circle {
-            realm_id: realm.clone(),
-            circle_id: circle_id.clone(),
-        };
-        let circle_stream = arkret_wire::CommitStreamRef::Circle {
-            realm_id: realm.clone(),
-            circle_id: circle_id.clone(),
-        };
-        let mut parent = member_row(REALM, "ak:did_core:web:member.example", 1);
-        let member = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-            "ak:did_core:web:member.example".parse().unwrap(),
-            "ak:did_core:web:station.example".parse().unwrap(),
-        ));
-        let CurrentState::Value {
-            selector,
-            revision: parent_revision,
-            ..
-        } = &mut parent;
-        *selector = CurrentSelector::MemberState {
-            actor_id: member.clone(),
-        };
-        let parent_revision = parent_revision.clone();
-        let circle_revision = arkret_wire::CurrentRevision {
-            commit_id: arkret_sdk::RealmCommitId::from_digest([8; 32]),
-            stream_position: 1,
-        };
-        let circle_member = CurrentState::Value {
-            selector: CurrentSelector::CircleMemberState {
-                circle_id,
-                member_actor_id: member.clone(),
-            },
-            source_stream_ref: circle_stream.clone(),
-            revision: circle_revision.clone(),
-            value: json!({"membership":"join", "parent_membership_revision":parent_revision, "effective_at":"2026-09-30T00:00:00.000Z"}),
-        };
-        let mut group = mls_group_row(REALM, 1);
-        let CurrentState::Value {
-            selector,
-            source_stream_ref,
-            revision,
-            value,
-        } = &mut group;
-        *selector = CurrentSelector::MlsGroup {
-            scope_ref: scope.clone(),
-        };
-        *source_stream_ref = circle_stream.clone();
-        *revision = circle_revision.clone();
-        value["effective_scope"] = serde_json::to_value(&scope).unwrap();
-        let mut coverage = baseline(CURSORS[0], 1, true);
-        coverage["coverage"]["stream_heads"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({
-                "stream_ref":circle_stream,
-                "stream_position":circle_revision.stream_position,
-                "commit_id":circle_revision.commit_id,
-            }));
-        index
-            .stage_frame(
-                0,
-                &frame(
-                    vec![parent.clone(), circle_member.clone(), group.clone()],
-                    Some(coverage),
-                ),
-            )
-            .await
-            .unwrap()
-            .finish();
-        assert!(
-            index
-                .read_mls_group_ready(&scope, &mls_gate_actor())
-                .await
-                .unwrap()
-                .is_some()
-        );
-        for (generation, membership) in [(1, "leave"), (2, "ban"), (3, "join")] {
-            let mut changed_parent = parent.clone();
-            let CurrentState::Value {
-                revision, value, ..
-            } = &mut changed_parent;
-            revision.commit_id =
-                arkret_sdk::RealmCommitId::from_digest([generation as u8 + 10; 32]);
-            revision.stream_position = generation + 1;
-            *value = json!({"membership":membership});
-            index
-                .stage_frame(generation, &frame(vec![changed_parent], None))
-                .await
-                .unwrap()
-                .finish();
-            assert!(
-                index
-                    .read_mls_group_ready(&scope, &mls_gate_actor())
-                    .await
-                    .is_err(),
-                "old Circle join must not authorize sends after parent {membership}"
-            );
-            assert_eq!(
-                index
-                    .read_selector(REALM, &selector_of(&circle_member))
-                    .await
-                    .unwrap(),
-                Some(circle_member.clone())
-            );
-        }
-        let mut renewed = circle_member.clone();
-        let CurrentState::Value {
-            revision, value, ..
-        } = &mut renewed;
-        revision.commit_id = arkret_sdk::RealmCommitId::from_digest([20; 32]);
-        revision.stream_position = 2;
-        value["parent_membership_revision"] = serde_json::to_value(arkret_wire::CurrentRevision {
-            commit_id: arkret_sdk::RealmCommitId::from_digest([13; 32]),
-            stream_position: 4,
-        })
-        .unwrap();
-        index
-            .stage_frame(4, &frame(vec![renewed], None))
-            .await
-            .unwrap()
-            .finish();
-        assert!(
-            index
-                .read_mls_group_ready(&scope, &member)
-                .await
-                .unwrap()
-                .is_some(),
-            "only an explicit new Circle join can restore qualification"
-        );
-    }
+
 
     #[tokio::test]
     async fn mls_group_reader_requires_complete_coverage_and_exact_scope() {
@@ -4897,7 +4606,7 @@ mod tests {
         };
         assert!(
             index
-                .read_mls_group_ready(&scope, &mls_gate_actor())
+                .read_mls_group_ready(&scope)
                 .await
                 .is_err()
         );
@@ -4913,25 +4622,22 @@ mod tests {
             .unwrap()
             .finish();
         let current = index
-            .read_mls_group_ready(&scope, &mls_gate_actor())
+            .read_mls_group_ready(&scope)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(current.effective_scope, scope);
         assert_eq!(current.epoch, 1);
-        let circle_scope = arkret_sdk::ScopeRef::Circle {
-            realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
-            circle_id: arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
+        let other_realm_scope = arkret_sdk::ScopeRef::Realm { realm_id: arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
                 arkret_sdk::DigestSuite::Sha256,
                 [9; 32],
-            )),
-        };
+            )) };
         assert!(
             index
-                .read_mls_group_ready(&circle_scope, &mls_gate_actor())
+                .read_mls_group_ready(&other_realm_scope)
                 .await
                 .is_err(),
-            "a Realm group cannot authorize a nonmember's sibling Circle"
+            "a group from one Realm cannot authorize a different Realm"
         );
 
         let other_scope = arkret_sdk::ScopeRef::Realm {
@@ -4939,7 +4645,7 @@ mod tests {
         };
         assert!(
             index
-                .read_mls_group_ready(&other_scope, &mls_gate_actor())
+                .read_mls_group_ready(&other_scope)
                 .await
                 .is_err()
         );
@@ -4953,7 +4659,7 @@ mod tests {
             .finish();
         assert!(
             index
-                .read_mls_group_ready(&other_scope, &mls_gate_actor())
+                .read_mls_group_ready(&other_scope)
                 .await
                 .unwrap()
                 .is_none()
@@ -5178,7 +4884,7 @@ mod tests {
             .finish();
         assert!(
             index
-                .read_mls_group_ready(&scope, &mls_gate_actor())
+                .read_mls_group_ready(&scope)
                 .await
                 .is_err()
         );
@@ -5211,7 +4917,7 @@ mod tests {
             .finish();
         assert!(
             index
-                .read_mls_group_ready(&scope, &mls_gate_actor())
+                .read_mls_group_ready(&scope)
                 .await
                 .unwrap()
                 .is_some()
@@ -5239,7 +4945,7 @@ mod tests {
         index.stage_frame(2, &reset).await.unwrap().finish();
         assert!(
             index
-                .read_mls_group_ready(&scope, &mls_gate_actor())
+                .read_mls_group_ready(&scope)
                 .await
                 .is_err()
         );
@@ -5271,7 +4977,7 @@ mod tests {
             .finish();
         assert!(
             index
-                .read_mls_group_ready(&scope, &mls_gate_actor())
+                .read_mls_group_ready(&scope)
                 .await
                 .is_err()
         );

@@ -660,6 +660,7 @@ fn agent_reply_preference(
             paragraph("", hint),
             sapid::button()
                 .unstyled()
+                .class("secondary")
                 .label(label)
                 .enabled(scope.bond(move || !pending.get()))
                 .on_press(move || {
@@ -1020,6 +1021,7 @@ fn structure_surface(
     children.push(Box::new(
         sapid::button()
             .unstyled()
+            .class("secondary")
             .label(context.translated(scope, "chat.direct_structure.manage"))
             .on_press(move || expanded.revise(|value| *value = !*value)),
     ));
@@ -1161,6 +1163,7 @@ fn structure_surface(
         children.push(Box::new(
             sapid::button()
                 .unstyled()
+                .class("primary")
                 .label(context.translated(scope, "common.save"))
                 .enabled(enabled)
                 .on_press(move || {

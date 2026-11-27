@@ -89,8 +89,8 @@ pub struct AdmittedSignal {
     pub product_authority: Option<Box<arkret_sdk::SignalProductAuthority>>,
     pub call_invitation: Option<Box<arkret_sdk::CallInvitationDeliveryView>>,
     pub authority_commit_id: arkret_sdk::RealmCommitId,
-    /// Circle authorization separately binds its parent Realm basis.
-    pub parent_realm_authority_commit_id: Option<arkret_sdk::RealmCommitId>,
+    /// Each stream binds its own authority cut.
+
     /// The registered closed profile this plaintext parsed as. Consumers match
     /// this union; hand-parsing a Signal body by field name is forbidden.
     pub payload: arkret_sdk::SignalPlaintext,

@@ -1077,6 +1077,43 @@ impl Builder {
                     policy,
                 )?;
             }
+            EventKind::SpaceUpdate => {
+                let update = full.event.typed_payload::<event_spec::SpaceUpdate>()?;
+                if let Some(patch) = &update.patch {
+                    let selector = CurrentSelector::Space {
+                        space_id: update.space_id.clone(),
+                    };
+                    let prior = self
+                        .rows
+                        .iter()
+                        .find_map(|row| match row {
+                            CurrentState::Value {
+                                selector: key,
+                                value,
+                                ..
+                            } if key == &selector => Some(value),
+                            _ => None,
+                        })
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("fixture Space update requires its current value")
+                        })?;
+                    let mut post = patch.apply_for_typed_target(prior, update.space_id.as_str())?;
+                    post["updated_by"] = serde_json::to_value(&full.event.actor_id)?;
+                    post["updated_at"] = json!(arkret_sdk::canonical::format_timestamp_canonical(
+                        full.event.created_at.max(full.commit.committed_at),
+                    ));
+                    self.row(full, selector, serde_json::from_value::<Space>(post)?)?;
+                }
+                if let Some(policy) = &update.child_scope_policy {
+                    self.row(
+                        full,
+                        CurrentSelector::SpaceChildScopePolicy {
+                            space_id: update.space_id.clone(),
+                        },
+                        policy,
+                    )?;
+                }
+            }
             EventKind::StrandCreate => {
                 let payload: StrandCreatePayload = serde_json::from_value(payload)?;
                 let mut strand = payload.object;

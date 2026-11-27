@@ -11,11 +11,13 @@
 
 use std::rc::Rc;
 
+use arkret_sdk::ActorId;
 use glory::prelude::*;
 
 use super::widgets::{input, *};
+use crate::account_data::BlocklistUiTargetKind;
 use crate::presentation::{InksonContext, View};
-use crate::views::helpers::{actor_display_label, short_protocol_id};
+use crate::views::helpers::{account_display_label, actor_display_label, short_protocol_id};
 
 /// `reason_code` options offered for a personal block. Mirrors the report
 /// reason enum in `governance/content-moderation.md` §3.2 (`spam`,
@@ -29,18 +31,6 @@ const BLOCK_REASON_CODES: &[&str] = &[
     "misinformation",
     "other",
 ];
-
-/// Translation key for a `target.kind` value.
-fn target_kind_label_key(kind: crate::account_data::BlocklistUiTargetKind) -> &'static str {
-    match kind {
-        crate::account_data::BlocklistUiTargetKind::Domain => {
-            "settings.privacy.blocklist.kind.domain"
-        }
-        crate::account_data::BlocklistUiTargetKind::Actor => {
-            "settings.privacy.blocklist.kind.actor"
-        }
-    }
-}
 
 fn surface_label_key(
     surface: arkret_models_collaboration::objects::productivity::AccountBlocklistSurface,
@@ -61,13 +51,56 @@ fn surface_label_key(
     }
 }
 
-/// Placeholder hint for the stable identifier input, by target kind.
-fn target_kind_placeholder(kind: crate::account_data::BlocklistUiTargetKind) -> &'static str {
-    match kind {
-        crate::account_data::BlocklistUiTargetKind::Domain => "example.com",
-        crate::account_data::BlocklistUiTargetKind::Actor => {
-            r#"{"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:station.example"}}"#
-        }
+/// Split a complete actor identity into the same fields used for manual entry.
+fn actor_fields(actor: &ActorId) -> (&'static str, &str, &str) {
+    match actor {
+        ActorId::Account { account_id } => (
+            "actor",
+            account_id.principal_id.as_str(),
+            account_id.station_id.as_str(),
+        ),
+        ActorId::Service { service_id } => ("service", service_id.as_str(), ""),
+        ActorId::Realm { realm_actor_id } => (
+            "realm",
+            realm_actor_id.principal_id.as_str(),
+            realm_actor_id.realm_id.as_str(),
+        ),
+    }
+}
+
+fn form_target(
+    kind: &str,
+    identity: &str,
+    location: &str,
+) -> Option<(BlocklistUiTargetKind, String)> {
+    let identity = identity.trim();
+    let location = location.trim();
+    if kind == "domain" {
+        return super::is_likely_valid_domain(identity)
+            .then(|| (BlocklistUiTargetKind::Domain, identity.to_owned()));
+    }
+    let principal = crate::mls_api_helpers::principal_core_id(identity).ok()?;
+    let actor = match kind {
+        "actor" => ActorId::account(arkret_sdk::AccountId::new(
+            principal,
+            crate::mls_api_helpers::principal_core_id(location).ok()?,
+        )),
+        "service" => ActorId::service(principal),
+        "realm" => ActorId::realm(arkret_wire::RealmActorId::new(
+            location.parse().ok()?,
+            principal,
+        )),
+        _ => return None,
+    };
+    actor.validate().ok()?;
+    Some((BlocklistUiTargetKind::Actor, actor.to_string()))
+}
+
+fn identity_text(identity: &str, location: &str) -> String {
+    if location.is_empty() {
+        identity.to_owned()
+    } else {
+        format!("{identity} @ {location}")
     }
 }
 
@@ -83,20 +116,10 @@ fn expiry_choice_to_rfc3339(choice: &str) -> Option<chrono::DateTime<chrono::Utc
     Some(chrono::Utc::now() + duration)
 }
 
-fn is_valid_identity_id(kind: crate::account_data::BlocklistUiTargetKind, input: &str) -> bool {
-    match kind {
-        crate::account_data::BlocklistUiTargetKind::Actor => {
-            serde_json::from_str::<arkret_sdk::ActorId>(input).is_ok()
-        }
-        crate::account_data::BlocklistUiTargetKind::Domain => !input.trim().is_empty(),
-    }
-}
-
 pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
-    use crate::account_data::BlocklistUiTargetKind as Kind;
     let entries = scope.cage(context.state_store.read(|store| store.client_blocklist()));
-    let target_kind = scope.cage(Kind::Actor);
-    let target_type = scope.cage(Kind::Actor.ui_value().to_owned());
+    let target_type = scope.cage("actor".to_owned());
+    let location = scope.cage(String::new());
     let target = scope.cage(String::new());
     let reason = scope.cage(String::new());
     let expiry = scope.cage("never".to_owned());
@@ -106,17 +129,14 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
         let context = context.clone();
         scope.bond(move || !context.token.get().trim().is_empty())
     };
+    let selected_target =
+        scope.bond(move || form_target(&target_type.get(), &target.get(), &location.get()));
     let can_block = {
         let context = context.clone();
         scope.bond(move || {
-            let value = target.get();
-            let kind = target_kind.get();
-            let valid = if kind == Kind::Actor {
-                is_valid_identity_id(kind, value.trim())
-            } else {
-                super::is_likely_valid_domain(value.trim())
-            };
-            valid && !applies_to.get().is_empty() && !context.token.get().trim().is_empty()
+            selected_target.get().is_some()
+                && !applies_to.get().is_empty()
+                && !context.token.get().trim().is_empty()
         })
     };
     let list_context = context.clone();
@@ -124,20 +144,26 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
         let context = list_context.clone();
         if list_entries.is_empty() {
             return paragraph(
-                "empty-state",
+                "muted blocklist-empty",
                 context.translated(scope, "settings.privacy.blocklist.empty_title"),
             );
         }
         let mut children = Vec::new();
         for entry in list_entries {
-            let raw = crate::account_data::blocklist_target_value(&entry.target);
-            let label = context.state_store.read(|store| {
-                if crate::account_data::target_is_actor(&entry.target) {
-                    actor_display_label(store, &raw)
-                } else {
-                    short_protocol_id(&raw)
+            let (label, identity) = match &entry.target {
+                arkret_models_collaboration::objects::productivity::AccountBlocklistTarget::Actor(target) => {
+                    let (_, principal, location) = actor_fields(&target.actor_id);
+                    let label = context.state_store.read(|store| match &target.actor_id {
+                        ActorId::Account { account_id } => account_display_label(store, account_id),
+                        _ => actor_display_label(store, principal),
+                    });
+                    (label, identity_text(principal, location))
                 }
-            });
+                target => {
+                    let value = crate::account_data::blocklist_target_value(target);
+                    (short_protocol_id(&value), value)
+                }
+            };
             let target = entry.target.clone();
             let remove_context = context.clone();
             let surfaces = entry
@@ -151,16 +177,13 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
                 vec![
                     line(
                         "event-head",
-                        vec![
-                            plain(label),
-                            Box::new(
-                                glory::ui::text()
-                                    .class("sr-only blocked-actor-identity")
-                                    .content(raw),
-                            ),
-                            plain(entry.created_at.to_string()),
-                        ],
+                        vec![plain(label.clone()), plain(entry.created_at.to_string())],
                     ),
+                    if identity == label {
+                        empty()
+                    } else {
+                        paragraph("muted blocked-actor-identity", identity)
+                    },
                     paragraph(
                         "muted",
                         crate::i18n::tr_args(
@@ -201,8 +224,10 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
                             });
                             if changed {
                                 feedback.revise(|value| {
-                                    *value = remove_context
-                                        .tr("settings.privacy.blocklist.status.unblocked")
+                                    *value = crate::i18n::tr_args(
+                                        "settings.privacy.blocklist.status.unblocked",
+                                        &[("target", label.clone())],
+                                    )
                                 });
                                 if let Some(account) = remove_context.active_account.get() {
                                     super::push_blocklist_account_data(
@@ -267,10 +292,8 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
         "settings.privacy.blocklist.title",
         vec![
             list,
-            card(
-                scope,
-                context.clone(),
-                "settings.privacy.blocklist.target_type",
+            stack(
+                "blocklist-form",
                 vec![
                     choice(
                         scope,
@@ -278,77 +301,133 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
                         "block-target-kind",
                         "settings.privacy.blocklist.target_type",
                         target_type,
-                        Kind::ALL
-                            .iter()
-                            .copied()
+                        ["actor", "service", "realm", "domain"]
+                            .into_iter()
                             .map(|kind| {
                                 (
-                                    kind.ui_value().to_owned(),
-                                    context.tr(target_kind_label_key(kind)),
+                                    kind.to_owned(),
+                                    context.tr(&format!("settings.privacy.blocklist.kind.{kind}")),
                                 )
                             })
                             .collect(),
                         true,
                         move |next| {
-                            if let Some(kind) = Kind::from_ui_value(&next) {
-                                target_kind.revise(|value| {
-                                    *value = kind;
-                                });
-                                target_type.revise(|value| {
-                                    *value = next;
-                                });
+                            if target_type.get() != next {
+                                target.revise(String::clear);
+                                location.revise(String::clear);
+                                target_type.revise(|value| *value = next);
                             }
                         },
                     ),
-                    input(
-                        scope,
-                        context.clone(),
-                        "block-target-input",
-                        "settings.privacy.blocklist.target.actor",
-                        target,
-                        true,
-                    ),
-                    paragraph(
-                        "muted block-target-hint",
-                        scope.bond(move || target_kind_placeholder(target_kind.get()).to_owned()),
-                    ),
-                    stack("settings-grid compact", surfaces),
-                    choice(
-                        scope,
-                        context.clone(),
-                        "block-reason",
-                        "settings.privacy.blocklist.reason_optional",
-                        reason,
-                        reasons,
-                        true,
-                        move |next| {
-                            reason.revise(|value| {
-                                *value = next;
-                            })
-                        },
-                    ),
-                    choice(
-                        scope,
-                        context.clone(),
-                        "block-expiry",
-                        "settings.privacy.blocklist.expires",
-                        expiry,
-                        ["never", "1d", "7d", "30d"]
-                            .into_iter()
-                            .map(|value| {
-                                (
-                                    value.to_owned(),
+                    reactive(target_type, {
+                        let context = context.clone();
+                        move |scope, kind| {
+                            let is_domain = kind == "domain";
+                            let label = match kind.as_str() {
+                                "actor" => "settings.privacy.blocklist.target.actor",
+                                "service" => "settings.privacy.blocklist.target.service",
+                                "realm" => "settings.privacy.blocklist.target.realm_actor",
+                                _ => "settings.privacy.blocklist.target.domain",
+                            };
+                            let mut fields = vec![field(
+                                scope,
+                                context.clone(),
+                                "block-target-input",
+                                label,
+                                target,
+                                true,
+                                false,
+                                move |next| {
+                                    if !is_domain
+                                        && let Ok(actor) =
+                                            serde_json::from_str::<ActorId>(next.trim())
+                                    {
+                                        let (kind, principal, qualifier) = actor_fields(&actor);
+                                        target.revise(|value| *value = principal.to_owned());
+                                        location.revise(|value| *value = qualifier.to_owned());
+                                        if target_type.get() != kind {
+                                            target_type.revise(|value| *value = kind.to_owned());
+                                        }
+                                    } else {
+                                        target.revise(|value| *value = next);
+                                    }
+                                },
+                            )];
+                            if kind == "actor" || kind == "realm" {
+                                fields.push(input(
+                                    scope,
+                                    context.clone(),
+                                    "block-target-location",
+                                    if kind == "actor" {
+                                        "settings.privacy.blocklist.target.station"
+                                    } else {
+                                        "settings.privacy.blocklist.target.realm"
+                                    },
+                                    location,
+                                    true,
+                                ));
+                            }
+                            stack("blocklist-target", fields)
+                        }
+                    }),
+                    Box::new(
+                        glory::ui::view()
+                            .class("blocklist-scopes")
+                            .role(glory::render::Role::Group)
+                            .name(
+                                context.translated(scope, "settings.privacy.blocklist.applies_to"),
+                            )
+                            .fill(vec![
+                                paragraph(
+                                    "blocklist-scopes-label",
                                     context
-                                        .tr(&format!("settings.privacy.blocklist.expiry.{value}")),
-                                )
-                            })
-                            .collect(),
-                        true,
-                        move |next| {
-                            expiry.revise(|value| {
-                                *value = next;
-                            })
-                        },
+                                        .translated(scope, "settings.privacy.blocklist.applies_to"),
+                                ),
+                                stack("blocklist-applies-grid", surfaces),
+                            ]),
+                    ),
+                    stack(
+                        "blocklist-options",
+                        vec![
+                            choice(
+                                scope,
+                                context.clone(),
+                                "block-reason",
+                                "settings.privacy.blocklist.reason_optional",
+                                reason,
+                                reasons,
+                                true,
+                                move |next| {
+                                    reason.revise(|value| {
+                                        *value = next;
+                                    })
+                                },
+                            ),
+                            choice(
+                                scope,
+                                context.clone(),
+                                "block-expiry",
+                                "settings.privacy.blocklist.expires",
+                                expiry,
+                                ["never", "1d", "7d", "30d"]
+                                    .into_iter()
+                                    .map(|value| {
+                                        (
+                                            value.to_owned(),
+                                            context.tr(&format!(
+                                                "settings.privacy.blocklist.expiry.{value}"
+                                            )),
+                                        )
+                                    })
+                                    .collect(),
+                                true,
+                                move |next| {
+                                    expiry.revise(|value| {
+                                        *value = next;
+                                    })
+                                },
+                            ),
+                        ],
                     ),
                     action(
                         scope,
@@ -358,16 +437,14 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
                         "primary",
                         can_block,
                         move || {
-                            let kind = target_kind.get();
-                            let raw = target.get().trim().to_owned();
-                            let valid = if kind == Kind::Actor {
-                                is_valid_identity_id(kind, &raw)
-                            } else {
-                                super::is_likely_valid_domain(&raw)
+                            let Some((kind, raw)) = selected_target.get() else {
+                                return;
                             };
-                            if !valid || applies_to.get().is_empty() {
+                            if applies_to.get().is_empty() {
                                 return;
                             }
+                            let description =
+                                identity_text(target.get().trim(), location.get().trim());
                             let code = reason.get().trim().to_owned();
                             let changed = add_context.state_store.write(|store| {
                                 store.block_target(
@@ -385,14 +462,16 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
                                 *value = next.clone();
                             });
                             feedback.revise(|value| {
-                                *value = add_context.tr(if changed {
+                                let key = if changed {
                                     "settings.privacy.blocklist.status.added"
                                 } else {
                                     "settings.privacy.blocklist.status.duplicate"
-                                })
+                                };
+                                *value = crate::i18n::tr_args(key, &[("target", description)]);
                             });
                             if changed {
-                                target.revise(|value| value.clear());
+                                target.revise(String::clear);
+                                location.revise(String::clear);
                                 if let Some(account) = add_context.active_account.get() {
                                     super::push_blocklist_account_data(
                                         add_context.clone(),
@@ -414,26 +493,15 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
 }
 #[cfg(test)]
 mod tests {
-    use super::is_valid_identity_id;
-
     #[test]
-    fn actor_block_target_requires_full_actor_id() {
-        use crate::account_data::BlocklistUiTargetKind as Kind;
-        let actor = account_actor("ak:did_core:web:station.example");
-        assert!(is_valid_identity_id(Kind::Actor, &actor));
-        assert!(!is_valid_identity_id(
-            Kind::Actor,
-            "ak:did_core:web:bob.example"
-        ));
-        assert!(!is_valid_identity_id(
-            Kind::Actor,
-            r#"{"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example"}}"#
-        ));
-        let service = arkret_sdk::ActorId::service(
-            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
-        )
-        .to_string();
-        assert!(is_valid_identity_id(Kind::Actor, &service));
+    fn account_fields_require_the_home_station() {
+        let identity = "ak:did_core:web:bob.example";
+        let station = "ak:did_core:web:station.example";
+        assert!(super::form_target("actor", identity, "").is_none());
+        assert_eq!(
+            super::form_target("actor", identity, station).unwrap().1,
+            account_actor(station)
+        );
     }
 
     fn account_actor(station: &str) -> String {

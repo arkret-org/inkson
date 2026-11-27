@@ -729,9 +729,6 @@ export function registerStrandsBeforeEach(apiOptions: Parameters<typeof mockArkr
       )
         ? "2000-01-01T00:00:00.000Z"
         : undefined,
-      includeSidecarInCircleList: testInfo.title.startsWith(
-        "ordinary Circle list",
-      ),
       includePrincipalControlRealm: testInfo.title.startsWith(
         "PCR stays out of product navigation",
       ),

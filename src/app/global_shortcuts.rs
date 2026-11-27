@@ -62,20 +62,20 @@ pub(super) fn install(
             return;
         }
         let Some(scope) = weak.upgrade() else { return };
-        let editable = event
+        let target = event
             .target()
-            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-            .is_some_and(|element| {
-                matches!(element.tag_name().as_str(), "INPUT" | "TEXTAREA" | "SELECT")
-                    || element
-                        .dyn_ref::<web_sys::HtmlElement>()
-                        .is_some_and(web_sys::HtmlElement::is_content_editable)
-                    || element
-                        .closest("[contenteditable=\"true\"], [role=\"textbox\"]")
-                        .ok()
-                        .flatten()
-                        .is_some()
-            });
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok());
+        let editable = target.as_ref().is_some_and(|element| {
+            matches!(element.tag_name().as_str(), "INPUT" | "TEXTAREA" | "SELECT")
+                || element
+                    .dyn_ref::<web_sys::HtmlElement>()
+                    .is_some_and(web_sys::HtmlElement::is_content_editable)
+                || element
+                    .closest("[contenteditable=\"true\"], [role=\"textbox\"]")
+                    .ok()
+                    .flatten()
+                    .is_some()
+        });
         let key = event.key();
         let input = KeyboardInput {
             key: &key,
@@ -94,6 +94,18 @@ pub(super) fn install(
         ) else {
             return;
         };
+        if matches!(
+            action,
+            ShortcutAction::Search | ShortcutAction::Palette | ShortcutAction::Help
+        ) && target.is_some_and(|element| {
+            element
+                .closest("dialog[open], [role=dialog], [role=alertdialog], [aria-modal=true]")
+                .ok()
+                .flatten()
+                .is_some()
+        }) {
+            return;
+        }
         let context = context.clone();
         let ui = ui.clone();
         // The web Host polls owned tasks in a microtask after this DOM event.

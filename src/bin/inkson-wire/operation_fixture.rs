@@ -2,10 +2,6 @@ use anyhow::{Result, bail, ensure};
 use arkret_models_collaboration::agent_operations::{
     AgentDeactivateRequestBody, AgentPauseRequestBody, AgentResumeRequestBody,
 };
-use arkret_models_collaboration::events_payloads::circle::CircleMemberStatePayload;
-use arkret_models_collaboration::governance::circle::{
-    CircleMemberDeleteRequestBody, CircleMemberRequestBody, CircleMembership,
-};
 use arkret_sdk::{AccountId, ActorId, Did, DidUrl, EventAdmissionSubmission, RealmId, ScopeRef};
 use serde::Deserialize;
 use serde_json::Value;
@@ -13,14 +9,6 @@ use serde_json::Value;
 #[derive(Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 enum Input {
-    CircleMember {
-        realm_id: RealmId,
-        controller_account_id: AccountId,
-        controller_did: Did,
-        payload: CircleMemberStatePayload,
-        #[serde(default)]
-        delete: bool,
-    },
     AccountData {
         realm_id: RealmId,
         controller_account_id: AccountId,
@@ -50,44 +38,6 @@ pub(super) fn build(value: Value) -> Result<Value> {
     let input: Input = serde_json::from_value(value)?;
     let at = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
     let (mut event, controller_account_id, controller_did, action, reason) = match input {
-        Input::CircleMember {
-            realm_id,
-            controller_account_id,
-            controller_did,
-            payload,
-            delete,
-        } => {
-            payload.validate()?;
-            if delete {
-                ensure!(
-                    payload.membership == CircleMembership::Leave,
-                    "DELETE requires a leave transition"
-                );
-            }
-            let event = arkret_event_draft::TypedEventDraft::<
-                arkret_sdk::event_spec::CircleMemberState,
-            >::new(
-                ScopeRef::Circle {
-                    realm_id,
-                    circle_id: payload.circle_id.clone(),
-                },
-                ActorId::account(controller_account_id.clone()),
-                payload,
-            )?
-            .author_with_digest_suite(at, arkret_sdk::DigestSuite::Sha256)?;
-            (
-                event,
-                controller_account_id,
-                controller_did,
-                if delete {
-                    "circle_delete"
-                } else {
-                    "circle_add"
-                }
-                .to_owned(),
-                None,
-            )
-        }
         Input::AccountData {
             realm_id,
             controller_account_id,
@@ -228,12 +178,6 @@ pub(super) fn build(value: Value) -> Result<Value> {
     )?;
     let submission = EventAdmissionSubmission::new(event.into_event());
     match action.as_str() {
-        "circle_delete" => Ok(serde_json::to_value(CircleMemberDeleteRequestBody {
-            member_event: submission,
-        })?),
-        "circle_add" => Ok(serde_json::to_value(CircleMemberRequestBody {
-            member_event: submission,
-        })?),
         "account_data_replace" => Ok(serde_json::to_value(
             arkret_models_identity::account::AccountDataReplaceRequestBody {
                 set_event: submission,

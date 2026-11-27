@@ -1,7 +1,7 @@
-//! Discussion Strand / Circle builders.
+//! Discussion Strand builders.
 
 use super::{
-    TypedOperationBuilder, circle_id_value, realm_id_value, strand_create_operation, trim_realm_id,
+    TypedOperationBuilder, strand_create_operation, trim_realm_id,
 };
 
 /// Build a canonical `ak.strand.create` discussion operation with the full
@@ -28,7 +28,6 @@ pub fn discussion_strand_create(
     title: &str,
     category: &str,
     summary: Option<&str>,
-    scope_circle_id: Option<&str>,
     with_synthesis: bool,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
@@ -54,20 +53,7 @@ pub fn discussion_strand_create(
     if let Some(summary) = summary.map(str::trim).filter(|value| !value.is_empty()) {
         strand = strand.with_metadata_summary(summary);
     }
-    let circle_id = scope_circle_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    if let Some(circle_id) = circle_id {
-        strand = strand.with_scope_circle_id(
-            arkret_sdk::CircleId::new(circle_id.to_owned())
-                .map_err(|e| anyhow::anyhow!("invalid scope circle_id: {e:?}"))?,
-        );
-    }
-    let builder = strand_create_operation(realm_id, actor, strand)?;
-    Ok(match circle_id {
-        Some(circle_id) => builder.circle_id(circle_id),
-        None => builder,
-    })
+    strand_create_operation(realm_id, actor, strand)
 }
 
 /// Build the metadata-free discussion Strand used as a newly-created Realm's
@@ -102,54 +88,4 @@ pub fn realm_set_default_strand(
         actor,
         arkret_sdk::RealmSetDefaultStrandPayload::new(realm_id_value, strand_id_value),
     ))
-}
-
-/// Build a canonical `ak.circle.create` operation for a private
-/// discussion scope inside `realm_id`.
-pub fn discussion_circle_create(
-    realm_id: &str,
-    actor: &str,
-    title: &str,
-) -> anyhow::Result<TypedOperationBuilder> {
-    let display = arkret_sdk::CircleDisplay {
-        short_name: title.trim().chars().take(16).collect::<String>(),
-        color_token: arkret_sdk::CircleColorToken::Indigo,
-        symbol: arkret_sdk::CircleSymbol::Glyph {
-            glyph: arkret_sdk::CircleGlyph::Lock,
-        },
-    };
-    let circle = arkret_sdk::Circle::create_object(
-        realm_id_value(&trim_realm_id(realm_id))?,
-        title.trim(),
-        display,
-        crate::mls_api_helpers::local_account_actor_id(actor)?,
-    );
-    let created_at = circle.created_at;
-    Ok(
-        TypedOperationBuilder::new::<arkret_sdk::event_spec::CircleCreate>(
-            realm_id,
-            actor,
-            arkret_sdk::CircleCreatePayload { object: circle },
-        )
-        .created_at(created_at),
-    )
-}
-
-/// Build a `ak.strand.create` operation whose full Strand scope is a
-/// private discussion Circle.
-pub fn scoped_discussion_strand_create(
-    realm_id: &str,
-    actor: &str,
-    circle_id: &str,
-    title: &str,
-) -> anyhow::Result<TypedOperationBuilder> {
-    let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
-        .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
-    let actor_id = crate::mls_api_helpers::local_account_actor_id(actor)
-        .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
-    let mut strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, actor_id)
-        .with_metadata_title(title)
-        .with_track("discussion", arkret_sdk::StrandTrack::discussion_primary());
-    strand.scope_circle_id = Some(circle_id_value(circle_id)?);
-    Ok(strand_create_operation(realm_id, actor, strand)?.circle_id(circle_id))
 }

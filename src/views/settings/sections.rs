@@ -26,13 +26,13 @@ pub(super) enum SettingsSection {
     /// G3.Y3 — capability authority viewer (`/settings/capabilities`).
     Capabilities,
     Theme,
-    Release,
     /// Read-only audit-event inspector (`/audit`), promoted from the
     /// Release diagnostics sub-tab to a first-class section.
     Audit,
     /// Developer tools / protocol diagnostics (`/developer`), promoted
     /// from the Release diagnostics sub-tab to a first-class section.
     Developer,
+    About,
 }
 
 impl SettingsSection {
@@ -53,8 +53,8 @@ impl SettingsSection {
             "blocklist" | "blocked-users" => Self::Blocklist,
             "capabilities" => Self::Capabilities,
             "audit" | "audit-log" => Self::Audit,
-            "developer" | "developer-tools" => Self::Developer,
-            "release" => Self::Release,
+            "developer" | "developer-tools" | "release" => Self::Developer,
+            "about" => Self::About,
             "theme" => Self::Theme,
             _ => Self::Server,
         }
@@ -78,9 +78,9 @@ impl SettingsSection {
             Self::Blocklist => "blocklist",
             Self::Capabilities => "capabilities",
             Self::Theme => "theme",
-            Self::Release => "release",
             Self::Audit => "audit",
             Self::Developer => "developer",
+            Self::About => "about",
         }
     }
 
@@ -106,9 +106,9 @@ impl SettingsSection {
             Self::Blocklist => "settings.section.blocklist",
             Self::Capabilities => "settings.section.capabilities",
             Self::Theme => "settings.section.theme",
-            Self::Release => "settings.section.release",
             Self::Audit => "settings.section.audit",
             Self::Developer => "settings.section.developer",
+            Self::About => "settings.section.about",
         }
     }
 
@@ -151,6 +151,21 @@ impl SettingsSection {
                 "settings.theme.night",
                 "settings.theme.system",
             ],
+            Self::About => &[
+                "settings.about.client_version",
+                "settings.about.spec_version",
+                "settings.about.release_date",
+                "settings.about.build",
+                "developer.section.protocol_version",
+            ],
+            Self::Developer => &[
+                "settings.section.release",
+                "settings.session_diagnostics.title",
+                "settings.proof_mode.label",
+                "settings.signer.label",
+                "developer.section.events",
+                "developer.section.protocol_version",
+            ],
             Self::Storage => &[
                 "settings.storage.quota_title",
                 "settings.storage.clear_realm",
@@ -174,10 +189,7 @@ impl SettingsSection {
     }
 }
 
-// Six-group taxonomy (design/settings-ia-reorg.md §3.1): 账号 / 设备与安全 /
-// 隐私 / 通知 / 外观与语言 / 高级. `Mimi` is intentionally absent from every
-// group — the MIMI interop test surface stays reachable only by direct route
-// so it does not leak into normal settings navigation (design §3.3).
+// The MIMI interop surface remains available only by direct route.
 pub(super) const SETTINGS_ACCOUNT_GROUP: &[SettingsSection] =
     &[SettingsSection::Account, SettingsSection::Server];
 pub(super) const SETTINGS_SECURITY_GROUP: &[SettingsSection] = &[
@@ -199,14 +211,13 @@ pub(super) const SETTINGS_PRIVACY_GROUP: &[SettingsSection] = &[
     // Holder-private consent decisions (spec identity/consent-model.md §2).
     SettingsSection::Consent,
 ];
-pub(super) const SETTINGS_NOTIFICATIONS_GROUP: &[SettingsSection] =
-    &[SettingsSection::Notifications];
-pub(super) const SETTINGS_APPEARANCE_GROUP: &[SettingsSection] = &[SettingsSection::Theme];
+pub(super) const SETTINGS_PREFERENCES_GROUP: &[SettingsSection] =
+    &[SettingsSection::Notifications, SettingsSection::Theme];
 pub(super) const SETTINGS_ADVANCED_GROUP: &[SettingsSection] = &[
     SettingsSection::Storage,
-    SettingsSection::Release,
     SettingsSection::Audit,
     SettingsSection::Developer,
+    SettingsSection::About,
 ];
 /// `(group_label_key, group_hint_key, sections)`. Both text slots are i18n
 /// keys resolved through [`crate::i18n::tr`] at render time.
@@ -227,14 +238,9 @@ pub(super) const SETTINGS_NAV_GROUPS: &[(&str, &str, &[SettingsSection])] = &[
         SETTINGS_PRIVACY_GROUP,
     ),
     (
-        "settings.group.notifications",
-        "settings.group.notifications.hint",
-        SETTINGS_NOTIFICATIONS_GROUP,
-    ),
-    (
-        "settings.group.appearance",
-        "settings.group.appearance.hint",
-        SETTINGS_APPEARANCE_GROUP,
+        "settings.group.preferences",
+        "settings.group.preferences.hint",
+        SETTINGS_PREFERENCES_GROUP,
     ),
     (
         "settings.group.advanced",

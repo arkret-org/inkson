@@ -1062,7 +1062,6 @@ pub(crate) fn decrypt_rsvp_winner_with_secure_store(
         serde_json::from_value(strand_value.clone()).ok()?;
     if current_strand.id.as_ref() != Some(&strand)
         || current_strand.realm_id.as_str() != ctx.realm_id
-        || current_strand.scope_circle_id.is_some()
     {
         return None;
     }

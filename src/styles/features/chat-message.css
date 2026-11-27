@@ -91,7 +91,6 @@
 .message-context-menu .message-context-menu-item[data-style]:focus-visible {
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
-  outline: none;
 }
 
 .message-context-menu .message-context-menu-item.danger[data-style] {

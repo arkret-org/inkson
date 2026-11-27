@@ -2,20 +2,7 @@
 
 use super::*;
 
-#[test]
-fn circle_scope_request_is_single_flight_and_semantically_deduplicated() {
-    let key = "https://example.test\u{1f}ak:did_core:web:alice\u{1f}ak:realm:one";
-    assert!(!should_start_circle_scope_request("", "", false, key));
-    assert!(should_start_circle_scope_request("grant", "", false, key));
-    assert!(!should_start_circle_scope_request("grant", key, false, key));
-    assert!(!should_start_circle_scope_request("grant", "", true, key));
-    assert!(should_start_circle_scope_request(
-        "grant",
-        key,
-        false,
-        "https://example.test\u{1f}ak:did_core:web:alice\u{1f}ak:realm:two",
-    ));
-}
+
 
 #[test]
 fn pending_display_joins_history_without_reordering_accepted_rows() {

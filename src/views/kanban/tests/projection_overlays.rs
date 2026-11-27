@@ -727,6 +727,7 @@ fn space_create_without_its_own_realm_cannot_borrow_the_page_realm() {
 fn historical_create_or_restore_cannot_reactivate_a_terminal_board() {
     let raw = vec![accepted_board_create_record()];
     let terminal = BoardSpaceOption {
+        rank: None,
         id: arkret_sdk::SpaceId::new(PENDING_TEST_SPACE).unwrap(),
         title: "Terminal board".to_owned(),
         state: SpaceContainerLifecycleState::Tombstoned,

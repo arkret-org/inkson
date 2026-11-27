@@ -11,7 +11,7 @@ registerStrandsBeforeEach();
 
 async function openHome(page: Page) {
   await dismissBlockingRecoveryModal(page);
-  await page.locator('[class~="sidebar"] a.sidebar-nav-item[href="/"]').click();
+  await byClass(page, "rail-brand").click();
   await expect(byClass(page, "dashboard-panel")).toBeVisible();
 }
 
@@ -38,8 +38,7 @@ test("dashboard operational copy and health results follow the active language",
   await expect(realmCards).toHaveCount(3);
   const originalTitles = await realmCards.locator(".title").allTextContents();
   const originalLinks = await realmCards.evaluateAll((cards) => cards.map((card) => card.getAttribute("href")));
-  const originalFrontier = await (await describedSource(byClass(page, "event-frontier-card"), "dashboard-frontier-provenance")).textContent();
-  expect(originalFrontier).toBeTruthy();
+  let originalFrontier: string | null = null;
   const message = byClass(page, "dashboard-notification-card").filter({ has: byClass(page, "dashboard-notification-source-kind").filter({ hasText: /^message$/ }) });
   await expect(message).toHaveCount(1);
   const source = await describedSource(message, "dashboard-notification-provenance");
@@ -61,12 +60,14 @@ test("dashboard operational copy and health results follow the active language",
     await expect(byClass(page, "dashboard-contacts-card").locator(".delta")).toHaveText(
       zh ? "待处理 1 · 私聊 1" : "Pending 1 · Direct 1",
     );
-    await expect(byClass(page, "recent-boards").locator(".surface-head > .dashboard-section-title")).toHaveText(zh ? "最近的 Strand" : "Recent Strands");
-    await expect(byClass(page, "recent-boards").locator("thead th")).toHaveText(
-      zh ? ["", "标题", "Space", "状态", "更新时间"] : ["", "Title", "Space", "State", "Updated"],
-    );
-    await expect(byClass(page, "activity-feed").locator(".section-title")).toHaveText(zh ? "最近活动" : "Recent Activity");
-    await expect(byClass(page, "operations-surface").locator(".surface-head > .dashboard-section-title")).toHaveText(zh ? "客户端状态" : "Client Status");
+    const recent = byClass(home, "recent-boards");
+    if (await recent.count()) {
+      await expect(recent.locator(".surface-head > .dashboard-section-title")).toHaveText(zh ? "最近的 Strand" : "Recent Strands");
+      await expect(recent.locator("thead th")).toHaveText(zh ? ["标题", "状态", "截止日期"] : ["Title", "State", "Due date"]);
+      await expect(recent.locator("tbody tr").first().locator("td")).toHaveCount(3);
+    }
+    await expect(byClass(home, "activity-feed")).toHaveCount(0);
+    await expect(byClass(home, "operations-surface")).toHaveCount(0);
     await expect(byClass(message, "dashboard-notification-kind")).toHaveText(zh ? "消息" : "message");
     const currentSource = await describedSource(message, "dashboard-notification-provenance");
     await expect(byClass(currentSource, "dashboard-notification-source-kind")).toHaveText("message");
@@ -75,15 +76,19 @@ test("dashboard operational copy and health results follow the active language",
     await expect(byClass(message, "dashboard-notification-body")).toHaveText("Alice sent a message in Demo Realm");
     expect(await realmCards.locator(".title").allTextContents()).toEqual(originalTitles);
     expect(await realmCards.evaluateAll((cards) => cards.map((card) => card.getAttribute("href")))).toEqual(originalLinks);
-    await expect(await describedSource(byClass(page, "event-frontier-card"), "dashboard-frontier-provenance")).toHaveText(originalFrontier!);
+    await openSettings(page);
+    await byClass(page, "settings-nav-item-developer").click();
+    await expect(byClass(page, "operations-surface").locator(".surface-head > .dashboard-section-title")).toHaveText(zh ? "客户端状态" : "Client Status");
+    const frontier = await describedSource(byClass(page, "event-frontier-card"), "dashboard-frontier-provenance");
+    originalFrontier ??= await frontier.textContent();
+    expect(originalFrontier).toBeTruthy();
+    await expect(frontier).toHaveText(originalFrontier!);
 
     const health = byClass(page, "check-health-button");
     await expect(health).toHaveAttribute("aria-label", zh ? "检查运行状况" : "Run health checks");
     await health.hover();
     await expect(page.getByRole("tooltip").filter({ hasText: zh ? "检查运行状况" : "Run health checks" })).toBeVisible();
     await page.mouse.move(0, 0);
-    // Settings navigation remounts Home. Run the normal sequential public
-    // checks in each language; retained same-mount results are covered by VDom.
     await health.click();
     await expect(byClass(page, "dashboard-health-row")).toHaveCount(3);
     await expect(health).toBeEnabled();
@@ -93,6 +98,7 @@ test("dashboard operational copy and health results follow the active language",
     await expect(byClass(page, "dashboard-health-value")).toHaveText(
       zh ? ["station v1.0", "9 个配置档", "identity_registry v1.0"] : ["station v1.0", "9 profiles", "identity_registry v1.0"],
     );
+    await openHome(page);
   }
   expect(writes).toEqual([]);
 });

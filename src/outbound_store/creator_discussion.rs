@@ -123,7 +123,6 @@ impl DurableOutboundState {
                             "discussion".to_owned(),
                             arkret_sdk::StrandTrack::discussion_primary(),
                         )])
-                    || payload.object.scope_circle_id.is_some()
                     || payload.object.metadata.is_some()
                     || payload.object.content.is_some()
                     || payload.object.encrypted_metadata.is_some()

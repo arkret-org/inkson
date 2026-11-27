@@ -219,7 +219,7 @@
 }
 
 .agent-admin-lifecycle-toggle-row,
-.agent-admin-lifecycle-toggle-control {
+.agent-admin-lifecycle-summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -233,9 +233,13 @@
   background: var(--surface);
 }
 
-.agent-admin-lifecycle-toggle-control {
-  flex: 0 0 auto;
+.agent-admin-lifecycle-summary {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  min-width: 0;
+  gap: 6px;
 }
+.agent-admin-enabled-switch { flex-shrink: 0; }
 
 .agent-admin-detail-meta {
   display: flex;
@@ -305,8 +309,6 @@
   font-size: var(--text-label);
 }
 .agent-admin-detail-meta-item { overflow-wrap: anywhere; }
-.agent-admin-lifecycle-toggle-row, .agent-admin-lifecycle-toggle-control { flex-wrap: wrap; }
-.agent-admin-lifecycle-toggle-control { max-width: 100%; }
 @media (pointer: coarse) {
   .agent-admin-filter-bar .sapid-segment { min-height: var(--control-lg); }
 }

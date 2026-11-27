@@ -596,7 +596,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn two_streams_of_one_realm_never_share_a_durable_position() {
+    async fn separate_realms_never_share_a_durable_position() {
         let path = std::env::temp_dir().join(format!(
             "inkson-client-core-streams-{}.json",
             crate::operation::uuid_v7()
@@ -611,22 +611,19 @@ mod tests {
                 realm_id: realm_id.clone(),
             },
         };
-        let circle_scope = garth::CursorScope::CommitStream {
+        let other_realm_scope = garth::CursorScope::CommitStream {
             service_id: None,
-            stream_ref: garth::CommitStreamRef::Circle {
-                realm_id,
-                circle_id: arkret_sdk::CircleId::new(
-                    "ak:circle:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
+            stream_ref: garth::CommitStreamRef::Realm { realm_id: arkret_sdk::RealmId::new(
+                    "ak:realm:AQJmSg1s9QyzppFeJL40dN92YVHZeLdBBt3UWHa9XNOD".to_owned(),
                 )
-                .unwrap(),
-            },
+                .unwrap() },
         };
         adapter
             .save(realm_scope.clone(), "7".to_owned())
             .await
             .unwrap();
         adapter
-            .save(circle_scope.clone(), "3".to_owned())
+            .save(other_realm_scope.clone(), "3".to_owned())
             .await
             .unwrap();
         assert_eq!(
@@ -634,7 +631,7 @@ mod tests {
             Some("7")
         );
         assert_eq!(
-            adapter.load(circle_scope).await.unwrap().as_deref(),
+            adapter.load(other_realm_scope).await.unwrap().as_deref(),
             Some("3")
         );
         let _ = std::fs::remove_file(path);

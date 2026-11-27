@@ -513,7 +513,6 @@
 .watch-level-option:focus-visible,
 .watch-level-option[data-highlighted="true"] {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
-  outline: none;
 }
 .watch-level-option.active {
   background: color-mix(in srgb, var(--accent) 18%, transparent);

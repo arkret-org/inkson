@@ -64,7 +64,7 @@ fn call_scope(
     anyhow::ensure!(
         matches!(
             source_stream_ref,
-            arkret_sdk::CommitStreamRef::Realm { .. } | arkret_sdk::CommitStreamRef::Circle { .. }
+            arkret_sdk::CommitStreamRef::Realm { .. }
         ),
         "Call current has an unsupported source stream"
     );
@@ -208,11 +208,7 @@ fn select_capture_grant(
 ) -> anyhow::Result<GrantId> {
     let target = match scope {
         ScopeRef::Realm { realm_id } => arkret_sdk::WireResourceSelector::realm(realm_id.clone()),
-        ScopeRef::Circle {
-            realm_id,
-            circle_id,
-        } => arkret_sdk::WireResourceSelector::circle(realm_id.clone(), circle_id.clone()),
-        _ => anyhow::bail!("Capture requires its Call's Realm or Circle scope"),
+        _ => anyhow::bail!("Capture requires its Call's Realm scope"),
     };
     let mut seen = std::collections::BTreeSet::new();
     let mut candidates = Vec::new();

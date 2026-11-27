@@ -2,7 +2,6 @@ pub mod account;
 pub(crate) mod agent_interaction;
 pub mod auth;
 mod blob;
-pub mod circle;
 mod contacts;
 pub(crate) use contacts::DEFAULT_CONTACT_SCOPE_NAMES;
 #[cfg(any(target_arch = "wasm32", test))]

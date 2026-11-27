@@ -6,6 +6,7 @@
 //! The aggregate routing entry + the generic profile card live in
 //! this `mod.rs`.
 
+mod about;
 pub mod blocklist;
 pub mod capabilities;
 pub mod consent;
@@ -533,6 +534,10 @@ pub(crate) async fn save_contact_remark_edit(
 mod preferences;
 mod profile;
 
+pub(crate) fn section_label_key(slug: &str) -> &'static str {
+    SettingsSection::from_slug(Some(slug)).label_key()
+}
+
 pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
     page_with_header(scope, context, route, Rc::new(|_| empty()))
 }
@@ -589,12 +594,8 @@ pub(crate) fn page_with_header(
                     context.translated(scope, "search.no_results"),
                 ));
             }
-            let group_count = groups.len();
-            for (group_index, group) in groups.into_iter().enumerate() {
-                let mut items = vec![paragraph(
-                    "settings-nav-group-label",
-                    context.translated(scope, group.label_key),
-                )];
+            for group in groups {
+                let mut items = Vec::with_capacity(group.sections.len());
                 for section in group.sections {
                     let navigate = context.clone();
                     let label = context.translated(scope, section.label_key());
@@ -626,15 +627,19 @@ pub(crate) fn page_with_header(
                             }),
                     ) as View);
                 }
-                clusters.push(stack("settings-nav-cluster", items));
-                if group_index + 1 < group_count {
-                    clusters.push(stack("settings-nav-divider", Vec::new()));
-                }
+                clusters.push(Box::new(
+                    glory::ui::view()
+                        .class("settings-nav-cluster")
+                        .role(glory::render::Role::Group)
+                        .name(context.translated(scope, group.label_key))
+                        .fill(items),
+                ));
             }
             stack("settings-nav-list", clusters)
         },
     );
     let content = match active_section {
+        SettingsSection::About => about::page(scope, &context),
         SettingsSection::Account => profile::page(scope, context.clone()),
         SettingsSection::Devices => devices::page(
             scope,
@@ -670,7 +675,6 @@ pub(crate) fn page_with_header(
         SettingsSection::Developer => {
             crate::views::developer::page(scope, context.clone(), Route::Developer)
         }
-        SettingsSection::Release => release_page(scope, context.clone()),
         SettingsSection::Server => {
             let push = context.state_store.read(|store| store.push_registration());
             let metric = |title: &str, value: View| {
@@ -1091,44 +1095,3 @@ fn mimi_page(scope: &Scope, context: Rc<InksonContext>) -> View {
 
 #[cfg(test)]
 mod tests;
-
-fn release_page(scope: &Scope, context: Rc<InksonContext>) -> View {
-    let signer = crate::event_signer::signer_status()
-        .map(|status| status.signer_did)
-        .unwrap_or_else(|| "—".into());
-    stack(
-        "settings-content-stack",
-        vec![stack(
-            "event settings-session-diagnostics",
-            vec![
-                line(
-                    "event-head",
-                    vec![
-                        plain(context.translated(scope, "settings.session_diagnostics.title")),
-                        plain(context.translated(scope, "settings.group.advanced")),
-                    ],
-                ),
-                stack(
-                    "metric-grid",
-                    vec![
-                        stack(
-                            "metric settings-proof-mode",
-                            vec![
-                                plain(context.translated(scope, "settings.proof_mode.label")),
-                                plain(crate::operation::current_proof_mode().label_en()),
-                            ],
-                        ),
-                        stack(
-                            "metric settings-signer-info",
-                            vec![
-                                plain(context.translated(scope, "settings.signer.label")),
-                                paragraph("settings-signer-did", short_protocol_id(&signer)),
-                                paragraph("sr-only settings-signer-identity", signer),
-                            ],
-                        ),
-                    ],
-                ),
-            ],
-        )],
-    )
-}

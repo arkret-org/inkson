@@ -361,7 +361,8 @@ web-sys = { workspace = true, features = [
 # so the running wasm can print which bundle the browser loaded — the
 # definitive stale-cached-wasm check. Build deps do not affect the wasm binary.
 [build-dependencies]
-chrono = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+serde_json = { workspace = true }
 embed-resource = { version = "3.0.12", optional = true }
 
 [dev-dependencies]

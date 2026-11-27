@@ -981,7 +981,7 @@ mod tests {
 /// One authorized commit-stream page: the authority-signed `RealmCommit` and
 /// the exact Event it covers, in stream order.
 ///
-/// There is deliberately no Realm-global page here. A Realm, each Circle and
+/// There is deliberately no Realm-global page here. A Realm, each
 /// each Sidecar own independent streams, so a caller names the stream it is
 /// catching up and this view never mixes two of them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

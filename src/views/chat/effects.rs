@@ -363,7 +363,7 @@ pub(super) fn chat_effects(
     realm_live_epoch: Cage<u64>,
     frontier_state: Cage<String>,
     _agent_participation_sync_key: String,
-    _selected_scope_circle: Option<String>,
+
     _readable_participation_agent_ids: Vec<String>,
     _participant_ids_for_presence: Vec<String>,
     _account_display_label: String,
@@ -410,29 +410,6 @@ pub(super) fn chat_effects(
         realm_live_epoch,
         state_store.clone(),
     );
-    super::circle_welcome::circle_welcome(
-        scope,
-        context.clone(),
-        base_url.clone(),
-        selected_realm_id.clone(),
-        scope
-            .bond(move || live_snapshot.get().selected_scope_circle)
-            .into(),
-        authority.clone(),
-        device_id.clone(),
-        token,
-        sync_cursor,
-        state_store.clone(),
-    );
-    eligible_circle_scopes(
-        scope,
-        context.clone(),
-        controller,
-        base_url.clone(),
-        selected_realm_id.clone(),
-        principal_id.clone(),
-        token,
-    );
     let event_sink = ChatProjectionSink::new(controller);
 
     let channels = controller.channels;
@@ -477,7 +454,6 @@ pub(super) fn chat_effects(
                     let _epoch = realm_live_epoch.get();
                     let readable_realm_strand = channels.get().iter().any(|channel| {
                         channel.strand_id == strand
-                            && channel.scope_circle.is_none()
                             && !channel.is_private_sidecar
                     });
                     let request = readable_realm_strand
@@ -760,7 +736,6 @@ async move {
                 .is_some()
                 && controller.channels.get().iter().any(|channel| {
                     channel.strand_id == strand
-                        && channel.scope_circle.is_none()
                         && !channel.is_private_sidecar
                 });
             if ordinary_direct_chat {
@@ -913,7 +888,7 @@ async move {
                 // state for the scope the capability is withdrawn; there is no
                 // plaintext presence broadcast in v1.
                 let Ok(material) = state_store_for_presence
-                    .read(|store| crate::signal::key_material_for_scope(store, &realm, None))
+                    .read(|store| crate::signal::key_material_for_scope(store, &realm))
                 else {
                     return;
                 };
@@ -980,7 +955,7 @@ async move {
             scope.effect(move || {
                 let live = live_snapshot.get();
                 let strand = selected_channel.get();
-                let circle = live.selected_scope_circle;
+
                 let agent_ids = live.readable_participation_agent_ids;
                 let agent_participation_sync_key = live.agent_participation_sync_key;
                 if token.get().trim().is_empty()
@@ -996,7 +971,7 @@ async move {
                     agent_participation_sync_key_seen.revise(|value| *value = next_value);
                 };
                 // A scope change must fail closed while the new participation
-                // snapshot is loading; never reuse the previous strand/circle's
+                // snapshot is loading; never reuse the previous Strand's
                 // visibility decision for this agent list.
                 event_sink.emit(ChatProjectionEvent::AgentParticipation(
                     std::collections::BTreeMap::new(),
@@ -1007,7 +982,7 @@ async move {
                 let base = base.clone();
                 let realm = realm.clone();
                 let strand = strand.clone();
-                let circle = circle.clone();
+
                 let agent_ids = agent_ids.clone();
                 let api_token = token.get();
                 let request_key = agent_participation_sync_key.clone();
@@ -1028,7 +1003,7 @@ async move {
                                             participation_allows_public_reply(
                                                 &outcome.participation_entries,
                                                 &realm,
-                                                circle.as_deref(),
+
                                                 &strand,
                                             ),
                                         );
@@ -1524,135 +1499,6 @@ let _claim = claim;
             })
         };
     }
-}
-
-/// Load the Circles a new Strand may be scoped to.
-///
-/// Keyed on (server, actor, Realm) so a credential or context change retries
-/// and nothing else does. The two guard Signals are read with `peek` because
-/// this effect writes both of them: subscribing to them would make the load
-/// re-trigger itself.
-fn eligible_circle_scopes(
-    scope: &Scope,
-    context: Rc<crate::presentation::InksonContext>,
-
-    controller: ChatController,
-    base_url: String,
-    realm_id: String,
-    actor: String,
-    token: Cage<String>,
-) {
-    let eligible_circle_scopes = controller.eligible_circle_scopes;
-    let key_seen = controller.eligible_circle_scope_request_key_seen;
-    let in_flight = controller.eligible_circle_scope_request_in_flight;
-    let retry_revision = scope.cage(0_u64);
-    key_seen.revise(String::clear);
-    in_flight.revise(|value| *value = false);
-    if let Err(error) = scope.on_cleanup(move || {
-        let _ = key_seen.try_revise(String::clear);
-        let _ = in_flight.try_revise(|value| *value = false);
-    }) {
-        scope.report_error(error);
-    }
-    {
-        let context = context.clone();
-        let effect_owner = scope.downgrade();
-        scope.effect(move || {
-            let _ = retry_revision.get();
-            let credential = token.get();
-            let session_context = context.clone();
-            let generation = context.session_generation.get();
-            let account = context.active_account.get();
-            let base = base_url.clone();
-            let realm = realm_id.clone();
-            let request_key = format!("{base}\u{1f}{actor}\u{1f}{realm}");
-            if !should_start_circle_scope_request(
-                &credential,
-                key_seen.get_untracked().as_str(),
-                in_flight.get_untracked(),
-                &request_key,
-            ) {
-                return;
-            }
-            {
-                let next_value = request_key.clone();
-                key_seen.revise(|value| *value = next_value);
-            };
-            {
-                let next_value = true;
-                in_flight.revise(|value| *value = next_value);
-            };
-            spawn_effect(&effect_owner, {
-                async move {
-                    let outcome = crate::transport::auth::with_authed_api(
-                        &base,
-                        credential,
-                        |api| async move {
-                            api.http()
-                                .circle_list(&realm)
-                                .await
-                                .map_err(anyhow::Error::from)
-                        },
-                    )
-                    .await;
-                    if !session_context.session_matches(generation, &account)
-                        || key_seen.get_untracked() != request_key
-                    {
-                        if key_seen.get_untracked() == request_key {
-                            key_seen.revise(String::clear);
-                            in_flight.revise(|value| *value = false);
-                            retry_revision.revise(|value| *value = value.wrapping_add(1));
-                        }
-                        return;
-                    }
-                    match outcome {
-                        Ok(list) => {
-                            let summaries = crate::circle::ordinary_circle_views(list)
-                                .into_iter()
-                                .filter(|circle| {
-                                    circle.state == arkret_sdk::CircleState::Active
-                                        && circle.viewer_membership
-                                            == Some(arkret_sdk::CircleMembership::Join)
-                                })
-                                .map(|circle| CircleSummary {
-                                    id: circle.circle_id.to_string(),
-                                    realm_id: circle.realm_id.to_string(),
-                                    title: circle.title,
-                                    display: circle.display,
-                                    member_count: u32::try_from(circle.member_ids.len())
-                                        .unwrap_or(u32::MAX),
-                                    state: circle.state,
-                                    viewer_is_member: true,
-                                })
-                                .collect();
-                            {
-                                let next_value = summaries;
-                                eligible_circle_scopes.revise(|value| *value = next_value);
-                            };
-                        }
-                        Err(error) => {
-                            if key_seen.get_untracked().as_str() == request_key {
-                                // Permit a later credential/context change to retry,
-                                // but do not immediately self-trigger this effect.
-                                {
-                                    let next_value = String::new();
-                                    key_seen.revise(|value| *value = next_value);
-                                };
-                            }
-                            tracing::warn!(
-                                error = %error.display(),
-                                "Circle scope picker load failed"
-                            );
-                        }
-                    }
-                    {
-                        let next_value = false;
-                        in_flight.revise(|value| *value = next_value);
-                    };
-                }
-            });
-        })
-    };
 }
 
 fn spawn_effect(

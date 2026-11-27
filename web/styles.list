@@ -27,7 +27,6 @@ src/styles/features/chat-shell.css
 src/styles/features/chat-message.css
 src/styles/features/chat-composer.css
 src/styles/features/chat-sidecar.css
-src/styles/features/circle.css
 src/styles/features/kanban-board.css
 src/styles/features/kanban-card-detail.css
 src/styles/features/kanban-card-fields.css

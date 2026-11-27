@@ -86,16 +86,12 @@ pub(super) fn notifications(scope: &Scope, context: Rc<InksonContext>) -> View {
         kind_controls.push(stack(
             format!("metric settings-notification-kind-{kind}"),
             vec![
-                paragraph(
-                    "settings-notification-kind-label",
-                    context.translated(scope, label),
-                ),
                 Box::new(
-                    sapid::checkbox()
+                    sapid::switch()
                         .unstyled()
-                        .class("settings-toggle settings-notification-kind-status")
-                        .name(context.translated(scope, label))
-                        .label(status_label)
+                        .class("settings-switch")
+                        .label_position(sapid::SwitchLabelPosition::Before)
+                        .label(context.translated(scope, label))
                         .checked(enabled)
                         .on_checked_change(move |next| {
                             enabled.revise(|value| *value = next);
@@ -112,6 +108,7 @@ pub(super) fn notifications(scope: &Scope, context: Rc<InksonContext>) -> View {
                             );
                         }),
                 ),
+                paragraph("muted settings-notification-kind-status", status_label),
             ],
         ));
     }
@@ -227,8 +224,6 @@ pub(super) fn notifications(scope: &Scope, context: Rc<InksonContext>) -> View {
     let register_context = context.clone();
     let push_unregister = controller.clone();
     let unregister_context = context.clone();
-    let push = context.state_store.read(|store| store.push_registration());
-    let push_label = crate::push::push_status_label(push.as_ref());
     stack(
         "settings-card-grid",
         vec![
@@ -238,38 +233,43 @@ pub(super) fn notifications(scope: &Scope, context: Rc<InksonContext>) -> View {
                 "settings.notifications.defaults_title",
                 vec![
                     stack("metric-grid", kind_controls),
-                    toggle(
-                        scope,
-                        context.clone(),
-                        "settings-notification-sound-toggle",
-                        "settings.notifications.sound_on",
-                        sound,
-                        true,
-                        move |next| {
-                            sound.revise(|value| *value = next);
-                            sound_context.state_store.write(|store| {
-                                crate::notification_sound::set_notification_sound_enabled(
-                                    store, next,
-                                )
-                            });
-                            if next {
-                                crate::notification_sound::initialize_notification_audio();
-                            }
-                        },
-                    ),
-                    action(
-                        scope,
-                        context.clone(),
-                        "settings-notification-sound-test",
-                        "settings.notifications.sound_test",
-                        "secondary",
-                        sound,
-                        move || {
-                            if sound.get_untracked() {
-                                crate::notification_sound::initialize_notification_audio();
-                                crate::notification_sound::play_notification_sound();
-                            }
-                        },
+                    line(
+                        "actions",
+                        vec![
+                            switch_toggle(
+                                scope,
+                                context.clone(),
+                                "settings-notification-sound-toggle",
+                                "settings.notifications.sound_on",
+                                sound,
+                                true,
+                                move |next| {
+                                    sound.revise(|value| *value = next);
+                                    sound_context.state_store.write(|store| {
+                                        crate::notification_sound::set_notification_sound_enabled(
+                                            store, next,
+                                        )
+                                    });
+                                    if next {
+                                        crate::notification_sound::initialize_notification_audio();
+                                    }
+                                },
+                            ),
+                            action(
+                                scope,
+                                context.clone(),
+                                "settings-notification-sound-test",
+                                "settings.notifications.sound_test",
+                                "secondary",
+                                sound,
+                                move || {
+                                    if sound.get_untracked() {
+                                        crate::notification_sound::initialize_notification_audio();
+                                        crate::notification_sound::play_notification_sound();
+                                    }
+                                },
+                            ),
+                        ],
                     ),
                     toggle(
                         scope,
@@ -287,7 +287,7 @@ pub(super) fn notifications(scope: &Scope, context: Rc<InksonContext>) -> View {
                         scope,
                         context.clone(),
                         "dnd-mode-select",
-                        "settings.notifications.dnd",
+                        "settings.notifications.dnd_mode",
                         mode,
                         mode_options,
                         true,
@@ -370,7 +370,7 @@ pub(super) fn notifications(scope: &Scope, context: Rc<InksonContext>) -> View {
                                 "realm-override-add",
                                 "settings.notifications.add_override",
                                 "primary",
-                                true,
+                                scope.bond(move || !chosen_realm.get().trim().is_empty()),
                                 move || {
                                     let realm = chosen_realm.get();
                                     if realm.trim().is_empty() {
@@ -401,7 +401,7 @@ pub(super) fn notifications(scope: &Scope, context: Rc<InksonContext>) -> View {
                         "notifications-settings-clear-muted-realms",
                         "settings.notifications.clear_overrides",
                         "secondary",
-                        true,
+                        scope.bond(move || !overrides.get().is_empty()),
                         move || {
                             clear_context.state_store.write(|store| {
                                 let ids: Vec<_> = store.realm_watch_levels().into_keys().collect();
@@ -425,7 +425,6 @@ pub(super) fn notifications(scope: &Scope, context: Rc<InksonContext>) -> View {
                 "settings.push.title",
                 vec![
                     paragraph("muted", context.translated(scope, "settings.push.body")),
-                    plain(push_label),
                     line(
                         "actions",
                         vec![
@@ -669,11 +668,10 @@ pub(super) fn privacy(scope: &Scope, context: Rc<InksonContext>) -> View {
     stack(
         "settings-content-stack privacy-settings",
         vec![
-            preference_card(
+            card(
                 scope,
                 context.clone(),
-                "settings.group.privacy",
-                "settings.privacy.badge",
+                "settings.privacy.presence",
                 vec![
                     choice(
                         scope,
@@ -710,13 +708,6 @@ pub(super) fn privacy(scope: &Scope, context: Rc<InksonContext>) -> View {
                             );
                         },
                     ),
-                    line(
-                        "event-head",
-                        vec![
-                            plain(context.translated(scope, "settings.privacy.status_title")),
-                            plain(context.translated(scope, "settings.privacy.status_badge")),
-                        ],
-                    ),
                     stack(
                         "settings-presence-editor",
                         vec![
@@ -740,24 +731,11 @@ pub(super) fn privacy(scope: &Scope, context: Rc<InksonContext>) -> View {
                                 true,
                                 move |next| manual.revise(|value| *value = next),
                             ),
-                            input(
-                                scope,
-                                context.clone(),
-                                "presence-status-message-input",
-                                "settings.privacy.status_message_placeholder",
-                                message,
-                                true,
-                            ),
-                        ],
-                    ),
-                    line(
-                        "actions",
-                        vec![
                             choice(
                                 scope,
                                 context.clone(),
                                 "presence-status-expiry-select",
-                                "settings.privacy.status_title",
+                                "settings.privacy.status_expiry",
                                 expiry,
                                 ["never", "30m", "1h", "today"]
                                     .into_iter()
@@ -773,6 +751,19 @@ pub(super) fn privacy(scope: &Scope, context: Rc<InksonContext>) -> View {
                                 true,
                                 move |next| expiry.revise(|value| *value = next),
                             ),
+                        ],
+                    ),
+                    input(
+                        scope,
+                        context.clone(),
+                        "presence-status-message-input",
+                        "settings.privacy.status_message",
+                        message,
+                        true,
+                    ),
+                    line(
+                        "actions",
+                        vec![
                             action(
                                 scope,
                                 context.clone(),
@@ -854,16 +845,14 @@ pub(super) fn privacy(scope: &Scope, context: Rc<InksonContext>) -> View {
                         ],
                     ),
                     status(feedback),
-                    line(
-                        "event-head",
-                        vec![
-                            plain(context.translated(scope, "chat.settings.read_receipts")),
-                            plain(
-                                context.translated(scope, "settings.read_receipts.default_badge"),
-                            ),
-                        ],
-                    ),
-                    toggle(
+                ],
+            ),
+            card(
+                scope,
+                context.clone(),
+                "chat.settings.read_receipts",
+                vec![
+                    switch_toggle(
                         scope,
                         context.clone(),
                         "read-receipts-default-toggle",
@@ -878,7 +867,7 @@ pub(super) fn privacy(scope: &Scope, context: Rc<InksonContext>) -> View {
                             sync_receipts(send_context.clone());
                         },
                     ),
-                    toggle(
+                    switch_toggle(
                         scope,
                         context.clone(),
                         "read-receipts-display-default-toggle",
@@ -900,9 +889,11 @@ pub(super) fn privacy(scope: &Scope, context: Rc<InksonContext>) -> View {
                                 context
                                     .translated(scope, "settings.read_receipts.realm_exceptions"),
                             ),
-                            plain(scope.bond(move || {
-                                format!("{} configured", receipt_overrides.get().len())
-                            })),
+                            plain(context.translated_args(
+                                scope,
+                                "settings.notifications.configured_count",
+                                move || vec![("count", receipt_overrides.get().len().to_string())],
+                            )),
                         ],
                     ),
                     receipt_rows,
@@ -1228,7 +1219,7 @@ mod tests {
         app.flush().unwrap();
         let mut pending = app.tree().roots().to_vec();
         let control = loop {
-            let id = pending.pop().expect("mention checkbox is mounted");
+            let id = pending.pop().expect("mention switch is mounted");
             let tree = app.tree();
             let node = tree.node(id).unwrap();
             let view = node.descriptor.view();
@@ -1261,17 +1252,10 @@ mod tests {
                 Some(context.tr("settings.notifications.kind_mention").as_str())
             );
             let Props::Check(props) = view.props else {
-                panic!("same live checkbox remains mounted")
+                panic!("same live switch remains mounted")
             };
             assert_eq!(props.checked, enabled);
-            assert_eq!(
-                props.label,
-                context.tr(if enabled {
-                    "settings.notifications.kind_enabled"
-                } else {
-                    "settings.notifications.kind_muted"
-                })
-            );
+            assert_eq!(props.mode, glory::render::CheckMode::Switch);
         }
     }
 }

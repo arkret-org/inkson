@@ -302,13 +302,10 @@ async fn browser_receipt_disappears_when_current_account_changes_station() {
 }
 
 #[wasm_bindgen_test(async)]
-async fn browser_circle_receipt_retracts_without_resurrection_after_policy_tightens() {
+async fn browser_realm_receipt_retracts_without_resurrection_after_policy_tightens() {
     let case = Case {
         viewer: reader(),
-        scope: arkret_sdk::ScopeRef::Circle {
-            realm_id: REALM.parse().unwrap(),
-            circle_id: arkret_sdk::CircleId::from_event_id(&EVENT.parse().unwrap()),
-        },
+        scope: arkret_sdk::ScopeRef::Realm { realm_id: arkret_sdk::RealmId::from_event_id(&EVENT.parse().unwrap()) },
         policy: arkret_sdk::ReadReceiptPolicy::default(),
         ..Default::default()
     };

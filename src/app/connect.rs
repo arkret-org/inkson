@@ -845,7 +845,8 @@ pub(super) fn connect(
                             status.revise(|current| {
                                 *current = format!("Refreshed: {probe_label}; sign-in required")
                             });
-                            network_state.revise(|current| *current = "online".to_owned());
+                            network_state
+                                .revise(|current| *current = "sign-in-required".to_owned());
                             crypto_state
                                 .revise(|current| *current = "No authenticated session".to_owned());
                             last_error.revise(|current| *current = Some(reason.clone()));

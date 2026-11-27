@@ -33,7 +33,6 @@
 //!     account_id: Some(active_account.authority.clone()),
 //!     authorization_credential: Some(api_token),
 //!     session_grant: None,
-//!     active_circle_id: None,
 //! }, &local_state_store).await?;
 //! ```
 
@@ -114,12 +113,7 @@ pub struct RegisterContext {
     /// means inkson loads the persisted coauth session grant from
     /// `LocalStateStore` and fails closed if no grant is available.
     pub session_grant: Option<String>,
-    /// P3B.2.9 — active Circle id (when the registration
-    /// originates from a Circle-scoped sidebar deep-link or the
-    /// current Strand's `scope_circle_id`). `None` falls back to the
-    /// historical Realm-wide subscription. Forwarded into the chime
-    /// request via [`build_request`].
-    pub active_circle_id: Option<String>,
+
 }
 
 #[derive(Clone, Debug)]
@@ -195,7 +189,6 @@ pub async fn unregister_via_chime(
             .and_then(|state| state.account_id.clone()),
         authorization_credential: ctx.authorization_credential.clone(),
         session_grant: ctx.session_grant.clone(),
-        active_circle_id: None,
     };
     let session_grant = resolve_chime_session_grant(&mut grant_ctx, persisted_grant.as_ref())?;
     let request = crate::push::build_unregister_request(&ctx.device_id, registration.as_ref())
@@ -339,29 +332,13 @@ fn build_request(
         ctx.floria_gateway_url.clone()
     };
     let binding = GatewayBinding::new(PushGatewayType::Standard, push_gateway);
-    // P3B.2.9 — forward the active Circle id (when present)
-    // into the chime subscribe request by stamping it onto the
-    // idempotency key, so re-registration after a Circle switch
-    // produces a distinct subscription record. When no Circle is
-    // active the build falls back to the prior Realm-wide
-    // subscription behaviour. (The former `muted_circle_ids`
-    // preference field was persisted-only and never consumed by the
-    // request builder; chime removed it.)
-    let active_circle = ctx
-        .active_circle_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
     let prefs = PushPreferences {
         enabled: true,
         allow_insecure_loopback_push_gateway: true,
         gateways: vec![binding.clone()],
         ..Default::default()
     };
-    let idempotency_key = match active_circle {
-        Some(circle) => format!("inkson-push-register-{}-{circle}", ctx.device_id),
-        None => format!("inkson-push-register-{}", ctx.device_id),
-    };
+    let idempotency_key = format!("inkson-push-register-{}", ctx.device_id);
     let platform = current_platform();
     let config = PushDeviceConfig {
         account_id: ctx.account_id.clone(),
@@ -435,7 +412,6 @@ mod tests {
             )),
             authorization_credential: Some("session-secret".to_owned()),
             session_grant: None,
-            active_circle_id: None,
         }
     }
 
@@ -500,14 +476,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn build_request_stamps_active_circle_into_idempotency_key() {
-        let mut c = ctx("dev_inkson");
-        c.active_circle_id = Some("ak:circle:opsroom".to_owned());
-        let request = build_request(&c, "apns:01234567890abcdef").expect("build");
-        let key = request.idempotency_key.as_deref().expect("idempotency_key");
-        assert!(key.contains("ak:circle:opsroom"), "idempotency_key={key}");
-    }
 
     #[test]
     fn resolves_persisted_grant_into_chime_bearer() {

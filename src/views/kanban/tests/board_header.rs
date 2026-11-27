@@ -22,19 +22,82 @@ fn space_id(value: &str) -> arkret_sdk::SpaceId {
 
 fn option(id: &str, title: &str) -> BoardSpaceOption {
     BoardSpaceOption {
+        rank: None,
         id: space_id(id),
         title: title.to_owned(),
         state: SpaceContainerLifecycleState::Active,
     }
 }
 
+#[test]
+fn board_ranks_survive_renames_and_allow_drops_between_legacy_boards() {
+    const BOARD_C: &str = "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+    let a = option(BOARD_A, "Zulu");
+    let b = option(BOARD_B, "Alpha");
+    let mut c = option(BOARD_C, "Last");
+    c.rank = Some("z".into());
+    let mut boards = vec![c, b, a];
+    sort_board_space_options(&mut boards);
+    assert_eq!(boards[0].id.as_str(), BOARD_A);
+    assert_eq!(boards[1].id.as_str(), BOARD_B);
+    assert!(boards[0].ordering_rank().starts_with("4156"));
+    assert_eq!(boards[0].ordering_rank().len(), 88);
+    let id = boards[2].id.clone();
+    let moved = board_drop_rank(&boards, &id, &boards[1].id, false)
+        .unwrap()
+        .unwrap();
+    assert!(boards[0].ordering_rank().as_ref() < moved.as_str());
+    assert!(moved.as_str() < boards[1].ordering_rank().as_ref());
+    boards[2].rank = Some(moved);
+    sort_board_space_options(&mut boards);
+    assert_eq!(boards[1].id, id);
+    assert_eq!(
+        board_drop_rank(&boards, &id, &boards[2].id, false).unwrap(),
+        None
+    );
+    let last = board_drop_rank(&boards, &id, &boards[2].id, true)
+        .unwrap()
+        .unwrap();
+    assert!(last.as_str() > boards[2].ordering_rank().as_ref());
+    let first = board_drop_rank(&boards, &id, &boards[0].id, false)
+        .unwrap()
+        .unwrap();
+    assert!(first.as_str() < boards[0].ordering_rank().as_ref());
+}
+
+#[test]
+fn explicit_rank_equal_to_a_legacy_key_uses_space_id() {
+    let a = option(BOARD_A, "Zulu");
+    let mut b = option(BOARD_B, "Alpha");
+    b.rank = Some(a.ordering_rank().into_owned());
+    let mut boards = vec![b, a];
+    sort_board_space_options(&mut boards);
+    assert_eq!(boards[0].id.as_str(), BOARD_A);
+    assert!(boards[0].rank.is_none());
+}
+
 fn pending(title: &str, state: CardState) -> PendingBoardCreate {
     PendingBoardCreate {
+        rank: None,
         operation_id: crate::operation::LocalOperationId::new(),
         title: title.to_owned(),
         state,
         error: None,
     }
+}
+
+#[test]
+fn new_board_follows_legacy_confirmed_and_pending_boards() {
+    let options = [option(BOARD_A, "Legacy")];
+    let first = board_append_rank(&options, &[]).unwrap();
+    assert!(first.as_str() > options[0].ordering_rank().as_ref());
+    let mut queued = pending("First create", CardState::Queued);
+    queued.rank = Some(first.clone());
+    assert!(board_append_rank(&options, &[queued]).unwrap() > first);
+    assert_eq!(
+        board_append_rank(&[], &[]).unwrap(),
+        rank_for_drop(None, None).unwrap()
+    );
 }
 
 #[test]

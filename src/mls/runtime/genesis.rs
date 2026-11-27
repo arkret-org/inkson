@@ -92,7 +92,7 @@ pub fn ensure_creator_mls_checkpoint(
         state_store,
         secure_store,
         realm_id,
-        None,
+
         authority,
         device_id,
     )
@@ -102,7 +102,7 @@ pub fn ensure_creator_mls_checkpoint_for_effective_scope(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    circle_id: Option<&str>,
+
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
@@ -110,7 +110,7 @@ pub fn ensure_creator_mls_checkpoint_for_effective_scope(
         state_store,
         secure_store,
         realm_id,
-        circle_id,
+
         authority,
         device_id,
         None,
@@ -121,7 +121,7 @@ pub fn ensure_creator_mls_checkpoint_for_effective_scope_with_binding(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    circle_id: Option<&str>,
+
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     sidecar_id: Option<arkret_sdk::SidecarId>,
@@ -130,7 +130,7 @@ pub fn ensure_creator_mls_checkpoint_for_effective_scope_with_binding(
         state_store,
         secure_store,
         realm_id,
-        circle_id,
+
         authority,
         device_id,
         sidecar_id,
@@ -150,7 +150,7 @@ pub(crate) fn ensure_creator_mls_checkpoint_with_pinned_binding(
         state_store,
         secure_store,
         realm_id,
-        None,
+
         authority,
         device_id,
         None,
@@ -162,7 +162,7 @@ fn ensure_creator_mls_checkpoint_with_binding_inner(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    circle_id: Option<&str>,
+
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     sidecar_id: Option<arkret_sdk::SidecarId>,
@@ -175,9 +175,7 @@ fn ensure_creator_mls_checkpoint_with_binding_inner(
         ));
     }
     super::reject_retired_minimal_metadata_realm(state_store, realm)?;
-    let circle = circle_id
-        .map(str::trim)
-        .filter(|circle_id| !circle_id.is_empty());
+
     let realm_typed = arkret_sdk::RealmId::new(realm.to_owned())
         .map_err(|error| MlsRuntimeError::Genesis(format!("invalid Realm id: {error}")))?;
     let effective_scope = match sidecar_id.as_ref() {
@@ -185,17 +183,9 @@ fn ensure_creator_mls_checkpoint_with_binding_inner(
             realm_id: realm_typed.clone(),
             sidecar_id: sidecar_id.clone(),
         },
-        None => match circle {
-            Some(circle_id) => arkret_sdk::ScopeRef::Circle {
-                realm_id: realm_typed.clone(),
-                circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).map_err(|error| {
-                    MlsRuntimeError::Genesis(format!("invalid Circle id: {error}"))
-                })?,
-            },
-            None => arkret_sdk::ScopeRef::Realm {
+        None => arkret_sdk::ScopeRef::Realm {
                 realm_id: realm_typed.clone(),
             },
-        },
     };
     let group_id = effective_scope
         .canonical_mls_group_id()
@@ -452,7 +442,7 @@ pub fn initial_mls_checkpoint_summary_from_existing(
         state_store,
         secure_store,
         realm_id,
-        None,
+
         authority,
         device_id,
     )
@@ -462,7 +452,7 @@ pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    circle_id: Option<&str>,
+
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
@@ -470,7 +460,7 @@ pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope(
         state_store,
         secure_store,
         realm_id,
-        circle_id,
+
         authority,
         device_id,
         None,
@@ -481,7 +471,7 @@ pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope_with_bin
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    circle_id: Option<&str>,
+
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     sidecar_id: Option<arkret_sdk::SidecarId>,
@@ -490,7 +480,7 @@ pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope_with_bin
         state_store,
         secure_store,
         realm_id,
-        circle_id,
+
         authority,
         device_id,
         sidecar_id,
@@ -503,7 +493,7 @@ pub(crate) fn initial_mls_checkpoint_summary_with_pinned_binding(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    circle_id: Option<&str>,
+
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     sidecar_id: Option<arkret_sdk::SidecarId>,
@@ -515,9 +505,7 @@ pub(crate) fn initial_mls_checkpoint_summary_with_pinned_binding(
             "realm_id is required for MLS genesis summary restore".to_owned(),
         ));
     }
-    let circle = circle_id
-        .map(str::trim)
-        .filter(|circle_id| !circle_id.is_empty());
+
     let realm_typed = arkret_sdk::RealmId::new(realm.to_owned())
         .map_err(|error| MlsRuntimeError::Genesis(format!("invalid Realm id: {error}")))?;
     let effective_scope = match sidecar_id.as_ref() {
@@ -525,17 +513,9 @@ pub(crate) fn initial_mls_checkpoint_summary_with_pinned_binding(
             realm_id: realm_typed.clone(),
             sidecar_id: sidecar_id.clone(),
         },
-        None => match circle {
-            Some(circle_id) => arkret_sdk::ScopeRef::Circle {
-                realm_id: realm_typed.clone(),
-                circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).map_err(|error| {
-                    MlsRuntimeError::Genesis(format!("invalid Circle id: {error}"))
-                })?,
-            },
-            None => arkret_sdk::ScopeRef::Realm {
+        None => arkret_sdk::ScopeRef::Realm {
                 realm_id: realm_typed.clone(),
             },
-        },
     };
     let expected_group_id = effective_scope
         .canonical_mls_group_id()
@@ -623,7 +603,7 @@ pub(crate) fn initial_mls_checkpoint_summary_with_pinned_binding(
 /// Build the canonical `ak.mls.genesis` payload for a freshly-created creator
 /// group.
 ///
-/// `governance_binding` MUST be a realm/circle binding at epoch `0 -> 0`
+/// `governance_binding` MUST be a realm binding at epoch `0 -> 0`
 /// (genesis installs epoch 0); its serialized `effective_scope` is mirrored
 /// into the top-level `effective_scope` field so the two stay in lockstep
 /// (coland and strict client schema validators both compare them).

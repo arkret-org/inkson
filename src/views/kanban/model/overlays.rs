@@ -1044,6 +1044,7 @@ pub(crate) fn pending_board_creates_from_ops(
         by_operation.insert(
             record.operation_id.clone(),
             PendingBoardCreate {
+                rank: local_create.rank,
                 operation_id: crate::operation::LocalOperationId::from_holder_key(
                     record.operation_id.clone(),
                 ),

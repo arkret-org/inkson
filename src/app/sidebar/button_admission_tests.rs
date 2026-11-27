@@ -46,6 +46,47 @@ fn nodes(app: &glory::App, class: &str) -> Vec<glory::render::NodeId> {
 }
 
 #[test]
+fn realm_actions_survive_unrelated_sync_and_permission_updates() {
+    let app = glory::App::memory();
+    let dir = tempfile::tempdir().unwrap();
+    let context = fixture(&app, dir.path());
+    let id = "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo";
+    let node = serde_json::from_value(serde_json::json!({
+        "realm_id": id, "title": "Hello", "public": true
+    }))
+    .unwrap();
+    context.realm_tree_nodes.revise(|nodes| nodes.push(node));
+    let ui = ShellState::new(app.scope(), &context);
+    app.mount(realm_rows(app.scope(), context.clone(), ui.clone()))
+        .unwrap();
+    app.flush().unwrap();
+    let trigger = nodes(&app, "sapid-popover-trigger")[0];
+    context.state_revision.revise(|revision| *revision += 1);
+    app.flush().unwrap();
+    assert_eq!(nodes(&app, "sapid-popover-trigger"), vec![trigger]);
+    app.dispatch(trigger, glory::render::Event::Activate)
+        .unwrap();
+    app.flush().unwrap();
+    let before = nodes(&app, "sidebar-row-menu-item");
+    assert!(!before.is_empty());
+    ui.row_perms.revise(|perms| {
+        perms.insert(
+            id.to_owned(),
+            SidebarRowRealmPerms {
+                can_add_member: true,
+                can_settings: true,
+            },
+        );
+    });
+    context.state_revision.revise(|revision| *revision += 1);
+    app.flush().unwrap();
+    let after = nodes(&app, "sidebar-row-menu-item");
+    assert_eq!(after.len(), before.len() + 2);
+    assert!(before.iter().all(|action| after.contains(action)));
+    assert_eq!(nodes(&app, "sapid-popover-trigger"), vec![trigger]);
+}
+
+#[test]
 fn production_rail_routes_and_account_link_remain_mounted() {
     let app = glory::App::memory();
     let dir = tempfile::tempdir().unwrap();
@@ -56,6 +97,7 @@ fn production_rail_routes_and_account_link_remain_mounted() {
     let avatar = nodes(&app, "rail-account")[0];
     for (class, target) in [
         ("rail-realms", Route::RealmsManage),
+        ("rail-private-chats", Route::PrivateChats),
         ("rail-contacts", Route::Contacts),
         (
             "rail-agents",

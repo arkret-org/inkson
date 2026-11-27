@@ -29,10 +29,10 @@ use crate::state::LocalStateStore;
 pub(crate) fn note_e2ee_submit_refusal(
     state_store: &StateStoreHandle,
     realm_id: &str,
-    circle_id: Option<&str>,
+
     error: &anyhow::Error,
 ) -> bool {
-    state_store.write(|store| note_e2ee_submit_refusal_in_store(store, realm_id, circle_id, error))
+    state_store.write(|store| note_e2ee_submit_refusal_in_store(store, realm_id, error))
 }
 
 /// Record the same coverage refusal when it arrives already classified.
@@ -43,11 +43,11 @@ pub(crate) fn note_e2ee_submit_refusal(
 pub(crate) fn note_e2ee_epoch_update_required(
     state_store: &StateStoreHandle,
     realm_id: &str,
-    circle_id: Option<&str>,
+
     detail: &str,
 ) -> bool {
     state_store.write(|store| {
-        if let Err(error) = store.record_mls_coverage_stale(realm_id.to_owned(), circle_id, detail)
+        if let Err(error) = store.record_mls_coverage_stale(realm_id.to_owned(),  detail)
         {
             tracing::warn!(realm = %realm_id, %error, "refusing to persist an invalid MLS coverage scope");
             return false;
@@ -67,21 +67,14 @@ pub(crate) fn note_send_gate_blocked_in_store(
     if blocked != &crate::mls::send_gate::MlsSendGateBlocked::EpochUpdateRequired {
         return false;
     }
-    let (realm, circle) = match scope {
-        arkret_sdk::ScopeRef::Realm { realm_id } => (realm_id, None),
-        arkret_sdk::ScopeRef::Circle {
-            realm_id,
-            circle_id,
-        } => (realm_id, Some(circle_id.as_str())),
+    let realm = match scope {
+        arkret_sdk::ScopeRef::Realm { realm_id } => realm_id,
         _ => return false,
     };
-    if store
-        .mls_coverage_stale_reason(realm.as_str(), circle)
-        .is_some()
-    {
+    if store.mls_coverage_stale_reason(realm.as_str()).is_some() {
         return false;
     }
-    match store.record_mls_coverage_stale(realm.to_string(), circle, &blocked.to_string()) {
+    match store.record_mls_coverage_stale(realm.to_string(), &blocked.to_string()) {
         Ok(()) => true,
         Err(error) => {
             tracing::warn!(%error, "could not schedule MLS send-gate coverage repair");
@@ -94,7 +87,7 @@ pub(crate) fn note_send_gate_blocked_in_store(
 pub(crate) fn note_e2ee_submit_refusal_in_store(
     state_store: &mut LocalStateStore,
     realm_id: &str,
-    circle_id: Option<&str>,
+
     error: &anyhow::Error,
 ) -> bool {
     if crate::api_error::mls_send_refusal(error) != Some(garth::MlsSendRefusal::EpochUpdateRequired)
@@ -102,7 +95,7 @@ pub(crate) fn note_e2ee_submit_refusal_in_store(
         return false;
     }
     if let Err(error) =
-        state_store.record_mls_coverage_stale(realm_id.to_owned(), circle_id, &error.to_string())
+        state_store.record_mls_coverage_stale(realm_id.to_owned(), &error.to_string())
     {
         tracing::warn!(realm = %realm_id, %error, "refusing to persist an invalid MLS coverage scope");
         return false;
@@ -110,45 +103,18 @@ pub(crate) fn note_e2ee_submit_refusal_in_store(
     true
 }
 
-/// The effective scopes of `realm_id` waiting for an epoch advance to restore
-/// sending, as the `circle_id` argument [`ensure_mls_governance_coverage`]
-/// takes (`None` = the Realm-default group).
-///
-/// Cheap and synchronous so UI effects can gate on it without spawning, and
-/// deliberately requires a local snapshot per scope: without group material
-/// there is nothing to commit from, and the creator bootstrap / Welcome pass is
-/// what fixes that.
-pub(crate) fn pending_mls_coverage_repairs(
-    store: &LocalStateStore,
-    realm_id: &str,
-) -> Vec<Option<String>> {
-    store
-        .stale_mls_coverage_scopes(realm_id)
-        .into_iter()
-        .filter(|circle_id| {
-            store
-                .mls_checkpoint_for_effective_scope(realm_id, circle_id.as_deref())
-                .is_some()
-        })
-        .collect()
+/// A receiver refusal can be repaired once the Realm's local group exists.
+pub(crate) fn realm_coverage_repair_pending(store: &LocalStateStore, realm_id: &str) -> bool {
+    store.mls_coverage_stale_reason(realm_id).is_some()
+        && store.mls_checkpoint_for(realm_id).is_some()
 }
 
-/// Stable, non-secret fingerprint for the Realm bootstrap effect's dedup key.
-///
-/// Recording `epoch_update_required` mutates only the local state store;
-/// it does not advance the sync cursor or any of the other inputs that used to
-/// make up that effect's key.  Without this hint the effect woke up, compared
-/// the same key, and returned before running the repair it had just been asked
-/// to perform.  Include every stale effective scope (even one that is not yet
-/// repairable because its snapshot is still arriving) so a later snapshot
-/// write and the stale marker are both observable scheduler edges.
 pub(crate) fn mls_coverage_repair_dedup_hint(store: &LocalStateStore, realm_id: &str) -> String {
-    store
-        .stale_mls_coverage_scopes(realm_id)
-        .into_iter()
-        .map(|circle_id| circle_id.unwrap_or_else(|| "realm".to_owned()))
-        .collect::<Vec<_>>()
-        .join(",")
+    if store.mls_coverage_stale_reason(realm_id).is_some() {
+        "realm".into()
+    } else {
+        String::new()
+    }
 }
 
 /// Advance the MLS epoch so the scope's new commit covers its current
@@ -164,7 +130,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
     api: &crate::transport::TransportClient,
     state_store: &StateStoreHandle,
     realm_id: &str,
-    circle_id: Option<&str>,
+
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<bool, String> {
@@ -173,9 +139,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
     if realm_id.is_empty() {
         return Err("realm_id is required for MLS coverage repair".to_owned());
     }
-    let circle_id = circle_id
-        .map(str::trim)
-        .filter(|circle_id| !circle_id.is_empty());
+
     let authoring_lock = crate::mls::admission::mls_admission_authoring_lock(realm_id);
     let _authoring_guard = authoring_lock.lock().await;
     if state_store.read(|store| store.active_authority().as_ref() != Some(authority)) {
@@ -183,12 +147,8 @@ pub(crate) async fn ensure_mls_governance_coverage(
     }
     let (pending, has_checkpoint) = state_store.read(|store| {
         (
-            store
-                .mls_coverage_stale_reason(realm_id, circle_id)
-                .is_some(),
-            store
-                .mls_checkpoint_for_effective_scope(realm_id, circle_id)
-                .is_some(),
+            store.mls_coverage_stale_reason(realm_id).is_some(),
+            store.mls_checkpoint_for_effective_scope(realm_id).is_some(),
         )
     });
     if !pending {
@@ -218,14 +178,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
     }
 
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|error| error.to_string())?;
-    let scope = match circle_id {
-        Some(circle) => arkret_sdk::ScopeRef::Circle {
-            realm_id: realm,
-            circle_id: arkret_sdk::CircleId::new(circle.to_owned())
-                .map_err(|error| error.to_string())?,
-        },
-        None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
-    };
+    let scope = arkret_sdk::ScopeRef::Realm { realm_id: realm };
     let Some(current) = current_needing_coverage_repair(state_store, &scope, authority).await?
     else {
         return Ok(true);
@@ -274,10 +227,9 @@ pub(crate) async fn ensure_mls_governance_coverage(
         )
         .await
         .map_err(|error| format!("submitting the MLS coverage repair commit failed: {error}"))?;
-    state_store.write(|store| store.clear_mls_coverage_stale(realm_id, circle_id))?;
+    state_store.write(|store| store.clear_mls_coverage_stale(realm_id))?;
     tracing::info!(
         realm = %realm_id,
-        circle = circle_id.unwrap_or("-"),
         epoch = staged.envelope.epoch,
         "MLS coverage repair commit accepted; encrypted sending may resume",
     );
@@ -291,16 +243,11 @@ async fn current_needing_coverage_repair(
     scope: &arkret_sdk::ScopeRef,
     authority: &arkret_sdk::AccountId,
 ) -> Result<Option<arkret_wire::MlsGroupValue>, String> {
-    let (realm, circle) = match scope {
-        arkret_sdk::ScopeRef::Realm { realm_id } => (realm_id, None),
-        arkret_sdk::ScopeRef::Circle {
-            realm_id,
-            circle_id,
-        } => (realm_id, Some(circle_id.as_str())),
-        _ => return Err("MLS coverage repair requires a Realm or Circle".to_owned()),
+    let realm = match scope {
+        arkret_sdk::ScopeRef::Realm { realm_id } => realm_id,
+        _ => return Err("MLS coverage repair requires a Realm".to_owned()),
     };
     let realm_id = realm.as_str();
-    let circle_id = circle;
     let read = state_store
         .read(LocalStateStore::capture_committed_account_read)
         .map_err(|error| format!("capturing MLS coverage repair cut failed: {error}"))?;
@@ -317,7 +264,7 @@ async fn current_needing_coverage_repair(
             {
                 return Err("MLS coverage repair cut changed before completion".to_owned());
             }
-            store.clear_mls_coverage_stale(realm_id, circle_id)
+            store.clear_mls_coverage_stale(realm_id)
         })?;
         return Ok(None);
     }
@@ -383,7 +330,7 @@ mod tests {
             .save_mls_checkpoint_for_scope(&scope, checkpoint.clone())
             .unwrap();
         local
-            .record_mls_coverage_stale(REALM, None, "epoch_update_required")
+            .record_mls_coverage_stale(REALM, "epoch_update_required")
             .unwrap();
         let commit = arkret_sdk::RealmCommitId::from_digest([9; 32]);
         let head = json!([{"stream_ref":scope,"stream_position":1,"commit_id":commit}]);
@@ -448,17 +395,17 @@ mod tests {
         let result = current_needing_coverage_repair(&state, &scope, &caller).await;
         if wrong_authority {
             assert!(result.unwrap_err().contains("cut changed before"));
-            assert!(state.read(|store| store.mls_coverage_stale_reason(REALM, None).is_some()));
+            assert!(state.read(|store| store.mls_coverage_stale_reason(REALM).is_some()));
         } else if change_cut {
             assert!(
                 result
                     .unwrap_err()
                     .contains("cut changed before completion")
             );
-            assert!(state.read(|store| store.mls_coverage_stale_reason(REALM, None).is_some()));
+            assert!(state.read(|store| store.mls_coverage_stale_reason(REALM).is_some()));
         } else if covered && complete {
             assert!(result.unwrap().is_none());
-            assert!(state.read(|store| store.mls_coverage_stale_reason(REALM, None).is_none()));
+            assert!(state.read(|store| store.mls_coverage_stale_reason(REALM).is_none()));
             let input = crate::mls::send_gate::MlsSendGateInput::capture(&state, &scope);
             assert!(matches!(
                 crate::mls::send_gate::resolve_mls_send_gate(&input, &scope).await,
@@ -487,7 +434,7 @@ mod tests {
                     "{error}"
                 );
             }
-            assert!(state.read(|store| store.mls_coverage_stale_reason(REALM, None).is_some()));
+            assert!(state.read(|store| store.mls_coverage_stale_reason(REALM).is_some()));
         }
         assert_eq!(
             state.read(|store| store.mls_checkpoint_for_scope(&scope)),
@@ -548,21 +495,21 @@ mod tests {
         let device =
             crate::test_support::device_id("ak:device:01904100-0000-7000-8000-000000000001");
         assert!(
-            ensure_mls_governance_coverage(&api, &state, REALM, None, &authority, &device)
+            ensure_mls_governance_coverage(&api, &state, REALM, &authority, &device)
                 .await
                 .unwrap(),
             "a cleared scheduling hint must let its owner clear the old error and stop retrying"
         );
         state
-            .write(|store| store.record_mls_coverage_stale(REALM, None, "epoch_update_required"))
+            .write(|store| store.record_mls_coverage_stale(REALM, "epoch_update_required"))
             .unwrap();
         assert!(
-            !ensure_mls_governance_coverage(&api, &state, REALM, None, &authority, &device)
+            !ensure_mls_governance_coverage(&api, &state, REALM, &authority, &device)
                 .await
                 .unwrap(),
             "missing private material remains pending, without transport or a new Commit"
         );
-        assert!(state.read(|store| store.mls_coverage_stale_reason(REALM, None).is_some()));
+        assert!(state.read(|store| store.mls_coverage_stale_reason(REALM).is_some()));
     }
 
     #[test]
@@ -583,7 +530,7 @@ mod tests {
                 &mut store, &realm, &blocked
             ));
         }
-        assert!(store.stale_mls_coverage_scopes(REALM).is_empty());
+        assert!(store.mls_coverage_stale_reason(REALM).is_none());
         let blocked = MlsSendGateBlocked::EpochUpdateRequired;
         assert!(note_send_gate_blocked_in_store(
             &mut store, &realm, &blocked
@@ -591,18 +538,21 @@ mod tests {
         assert!(!note_send_gate_blocked_in_store(
             &mut store, &realm, &blocked
         ));
-        let circle = arkret_sdk::ScopeRef::Circle {
-            realm_id,
-            circle_id: arkret_sdk::CircleId::new(
-                "ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
+        let other = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
             )
             .unwrap(),
         };
         assert!(note_send_gate_blocked_in_store(
-            &mut store, &circle, &blocked
+            &mut store, &other, &blocked
         ));
-        assert_eq!(store.stale_mls_coverage_scopes(REALM).len(), 2);
-        store.clear_mls_coverage_stale(REALM, None).unwrap();
+        assert!(
+            store
+                .mls_coverage_stale_reason(other.realm_id().as_str())
+                .is_some()
+        );
+        store.clear_mls_coverage_stale(REALM).unwrap();
         assert!(note_send_gate_blocked_in_store(
             &mut store, &realm, &blocked
         ));
@@ -611,14 +561,14 @@ mod tests {
     #[test]
     fn coverage_repair_needs_both_a_refusal_and_local_group_material() {
         let mut store = temp_store("pending");
-        assert!(pending_mls_coverage_repairs(&store, REALM).is_empty());
+        assert!(!realm_coverage_repair_pending(&store, REALM));
         store
-            .record_mls_coverage_stale(REALM, None, "epoch_update_required: ...")
+            .record_mls_coverage_stale(REALM, "epoch_update_required: ...")
             .unwrap();
         // Still not repairable: without group material there is nothing to
         // commit from, and the creator bootstrap owns that step.
-        assert!(pending_mls_coverage_repairs(&store, REALM).is_empty());
-        assert_eq!(store.stale_mls_coverage_scopes(REALM), vec![None]);
+        assert!(!realm_coverage_repair_pending(&store, REALM));
+        assert!(store.mls_coverage_stale_reason(REALM).is_some());
     }
 
     fn station_problem(problem: arkret_sdk::Problem) -> anyhow::Error {
@@ -654,92 +604,32 @@ mod tests {
             assert!(!note_e2ee_submit_refusal_in_store(
                 &mut store,
                 REALM,
-                None,
                 &station_problem(refusal),
             ));
         }
-        assert!(store.stale_mls_coverage_scopes(REALM).is_empty());
+        assert!(store.mls_coverage_stale_reason(REALM).is_none());
 
         assert!(note_e2ee_submit_refusal_in_store(
             &mut store,
             REALM,
-            None,
             &station_problem(pending),
         ));
-        assert_eq!(store.stale_mls_coverage_scopes(REALM), vec![None]);
+        assert!(store.mls_coverage_stale_reason(REALM).is_some());
     }
 
     #[test]
-    fn circle_scopes_are_tracked_as_their_own_repairs() {
-        let mut store = temp_store("scopes");
+    fn clearing_one_realm_preserves_another_realms_refusal() {
+        let mut store = temp_store("independent-repairs");
+        let other = "ak:realm:AZSmUwZFkNevUaVm0adiKDKw0OuAQqfAX6DFwhnIqF9I";
+        store.record_mls_coverage_stale(REALM, "local").unwrap();
         store
-            .record_mls_coverage_stale(REALM, None, "realm-default")
+            .record_mls_coverage_stale(other, "independent")
             .unwrap();
-        store
-            .record_mls_coverage_stale(
-                REALM,
-                Some("ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"),
-                "circle",
-            )
-            .unwrap();
-        // Keyed by effective scope, but each record still names its Realm so
-        // the Realm's MLS effect can find the Circle group it has to repair.
-        let mut scopes = store.stale_mls_coverage_scopes(REALM);
-        scopes.sort();
+        store.clear_mls_coverage_stale(REALM).unwrap();
+        assert!(store.mls_coverage_stale_reason(REALM).is_none());
         assert_eq!(
-            scopes,
-            vec![
-                None,
-                Some("ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1".to_owned())
-            ]
-        );
-        assert!(
-            store
-                .stale_mls_coverage_scopes("ak:realm:ALxDZio2znRUoLNW5_OmFXNttc8yHs8Jw8_b6vk0QYXo")
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn clearing_is_scoped_and_idempotent() {
-        let mut store = temp_store("clear");
-        store
-            .record_mls_coverage_stale(REALM, None, "first")
-            .unwrap();
-        assert_eq!(
-            store.mls_coverage_stale_reason(REALM, None).as_deref(),
-            Some("first")
-        );
-        // Last writer wins so the stored message always names the governance
-        // Seals the receiver is currently missing.
-        store
-            .record_mls_coverage_stale(REALM, None, "second")
-            .unwrap();
-        assert_eq!(
-            store.mls_coverage_stale_reason(REALM, None).as_deref(),
-            Some("second")
-        );
-        store.clear_mls_coverage_stale(REALM, None).unwrap();
-        store.clear_mls_coverage_stale(REALM, None).unwrap();
-        assert!(store.mls_coverage_stale_reason(REALM, None).is_none());
-        // A Circle-scoped group is a separate MLS group with its own
-        // accumulator; clearing the Realm-default scope must not touch it.
-        store
-            .record_mls_coverage_stale(
-                REALM,
-                Some("ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"),
-                "circle",
-            )
-            .unwrap();
-        store.clear_mls_coverage_stale(REALM, None).unwrap();
-        assert_eq!(
-            store
-                .mls_coverage_stale_reason(
-                    REALM,
-                    Some("ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"),
-                )
-                .as_deref(),
-            Some("circle")
+            store.mls_coverage_stale_reason(other).as_deref(),
+            Some("independent")
         );
     }
 
@@ -749,26 +639,11 @@ mod tests {
         assert_eq!(mls_coverage_repair_dedup_hint(&store, REALM), "");
 
         store
-            .record_mls_coverage_stale(REALM, None, "realm-default")
+            .record_mls_coverage_stale(REALM, "realm-default")
             .unwrap();
         assert_eq!(mls_coverage_repair_dedup_hint(&store, REALM), "realm");
 
-        store
-            .record_mls_coverage_stale(
-                REALM,
-                Some("ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"),
-                "circle",
-            )
-            .unwrap();
-        assert_eq!(
-            mls_coverage_repair_dedup_hint(&store, REALM),
-            "ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1,realm"
-        );
-
-        store.clear_mls_coverage_stale(REALM, None).unwrap();
-        assert_eq!(
-            mls_coverage_repair_dedup_hint(&store, REALM),
-            "ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"
-        );
+        store.clear_mls_coverage_stale(REALM).unwrap();
+        assert!(mls_coverage_repair_dedup_hint(&store, REALM).is_empty());
     }
 }

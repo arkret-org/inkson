@@ -65,7 +65,7 @@ fn sidecar_epoch_zero_restores_only_its_pinned_authority_and_creator_device() {
             &state,
             &secure,
             realm.as_str(),
-            None,
+
             &authority,
             device,
             Some(sidecar.clone()),

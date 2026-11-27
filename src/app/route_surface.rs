@@ -53,7 +53,6 @@ fn route_feature(route: &Route) -> Option<StationFeature> {
         | Route::KanbanBoardTask { .. }
         | Route::KanbanTask { .. } => Some(StationFeature::Board),
         Route::Chat { .. } | Route::DirectConversation { .. } => Some(StationFeature::Discussion),
-        Route::Circles { .. } | Route::CircleDetail { .. } => Some(StationFeature::Circles),
         Route::Setup | Route::SetupSection { .. } => setup_feature(route),
         _ => None,
     }
@@ -157,6 +156,17 @@ pub(super) fn surface(
                 .state_store
                 .read(|store| personal_control_realm_id(&store.load())),
         ),
+        Route::PrivateChats | Route::NewPrivateChat => paragraph(
+            "private-chats-selection",
+            context.translated(
+                scope,
+                if route == Route::NewPrivateChat {
+                    "direct.choose_recipient"
+                } else {
+                    "direct.choose_chat"
+                },
+            ),
+        ),
         Route::ContactsManage => super::manage_pages::contacts_page(scope, context.clone(), ui),
         Route::Contacts => {
             crate::views::contacts::page_with_header(scope, context.clone(), route.clone(), header)
@@ -166,9 +176,6 @@ pub(super) fn surface(
         }
         Route::RealmMembers { .. } | Route::RealmAdmin { .. } | Route::RealmAdminSection { .. } => {
             crate::views::realm_admin::page(scope, context.clone(), route.clone())
-        }
-        Route::Circles { .. } | Route::CircleDetail { .. } => {
-            crate::views::circles::page(scope, context.clone(), route.clone())
         }
         Route::Realm { realm_id } => crate::views::kanban::page(
             scope,

@@ -1,5 +1,5 @@
 //! MLS group-lifecycle Event construction: `ak.mls.genesis` for a creator
-//! group and `ak.mls.commit` for any effective scope (Realm-wide, Circle or
+//! group and `ak.mls.commit` for any effective scope (Realm or
 //! Sidecar), plus the atomic commit submission that carries the Welcome
 //! deliveries the same transition produced.
 //!
@@ -13,26 +13,16 @@ use crate::state::LocalStateStore;
 pub(crate) fn mls_base_epoch_ref_for_scope(
     state_store: &LocalStateStore,
     realm_id: &str,
-    circle_id: Option<&str>,
+
     group_id: &str,
     epoch: u64,
 ) -> Result<String, String> {
     state_store
-        .mls_group_state_ref_for_effective_scope(realm_id, circle_id, group_id, epoch)
+        .mls_group_state_ref_for_effective_scope(realm_id,  group_id, epoch)
         .map(|event_id| event_id.to_string())
 }
 
-pub(crate) fn circle_effective_scope(
-    realm_id: &str,
-    circle_id: &str,
-) -> Result<arkret_wire::ScopeRef, String> {
-    Ok(arkret_wire::ScopeRef::Circle {
-        realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))
-            .map_err(|err| format!("invalid Circle scope Realm id: {err:?}"))?,
-        circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
-            .map_err(|err| format!("invalid Circle scope Circle id: {err:?}"))?,
-    })
-}
+
 
 /// Build the `ak.mls.genesis` Event for a creator group that has local
 /// epoch-zero material but no accepted Genesis yet.
@@ -51,7 +41,7 @@ pub(crate) fn build_creator_mls_genesis_event(
     build_creator_mls_genesis_event_for_effective_scope(
         state_store,
         realm_id,
-        None,
+
         actor_id,
         fresh_summary,
     )
@@ -60,13 +50,13 @@ pub(crate) fn build_creator_mls_genesis_event(
 pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
     state_store: &mut LocalStateStore,
     realm_id: &str,
-    circle_id: Option<&str>,
+
     actor_id: &str,
     fresh_summary: Option<&crate::mls::runtime::InitialMlsCheckpointSummary>,
 ) -> Result<Option<crate::operation::LocalOperation>, String> {
     build_creator_mls_genesis_event_for_scope(
         state_store,
-        &effective_scope_for(realm_id, circle_id, None)?,
+        &effective_scope_for(realm_id,  None)?,
         realm_id,
         actor_id,
         fresh_summary,
@@ -84,7 +74,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_sidecar_scope(
 ) -> Result<Option<crate::operation::LocalOperation>, String> {
     build_creator_mls_genesis_event_for_scope(
         state_store,
-        &effective_scope_for(realm_id, None, Some(sidecar_id))?,
+        &effective_scope_for(realm_id,  Some(sidecar_id))?,
         realm_id,
         actor_id,
         fresh_summary,
@@ -143,7 +133,7 @@ fn build_creator_mls_genesis_event_for_scope(
 
 fn effective_scope_for(
     realm_id: &str,
-    circle_id: Option<&str>,
+
     sidecar_id: Option<&arkret_sdk::SidecarId>,
 ) -> Result<arkret_sdk::ScopeRef, String> {
     let realm = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
@@ -154,10 +144,7 @@ fn effective_scope_for(
             sidecar_id: sidecar_id.clone(),
         });
     }
-    match circle_id.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(circle_id) => circle_effective_scope(realm_id, circle_id),
-        None => Ok(arkret_sdk::ScopeRef::Realm { realm_id: realm }),
-    }
+    Ok(arkret_sdk::ScopeRef::Realm { realm_id: realm })
 }
 
 /// Everything an `ak.mls.commit` needs from the local store, read once.
@@ -205,7 +192,7 @@ impl MlsCommitBasis {
 pub(crate) fn mls_commit_basis_from_store(
     state_store: &LocalStateStore,
     realm_id: &str,
-    circle_id: Option<&str>,
+
     actor_id: &str,
     staged: &crate::mls::runtime::StagedMlsCommit,
     sidecar_id: Option<&arkret_sdk::SidecarId>,
@@ -218,7 +205,7 @@ pub(crate) fn mls_commit_basis_from_store(
     // whenever the local group has advanced past the last observed epoch.
     let commit_envelope = &staged.envelope;
     let previous_epoch = commit_envelope.epoch.saturating_sub(1);
-    let effective_scope = effective_scope_for(realm_id, circle_id, sidecar_id)?;
+    let effective_scope = effective_scope_for(realm_id,  sidecar_id)?;
     let base_group_state_ref = state_store.mls_group_state_ref_for_scope(
         &effective_scope,
         commit_envelope.group_id.as_str(),
@@ -249,17 +236,17 @@ pub(crate) fn mls_commit_event_from_store(
     actor_id: &str,
     staged: &crate::mls::runtime::StagedMlsCommit,
 ) -> Result<crate::operation::LocalOperation, String> {
-    mls_commit_event_from_store_for_effective_scope(state_store, realm_id, None, actor_id, staged)
+    mls_commit_event_from_store_for_effective_scope(state_store, realm_id,  actor_id, staged)
 }
 
 pub(crate) fn mls_commit_event_from_store_for_effective_scope(
     state_store: &LocalStateStore,
     realm_id: &str,
-    circle_id: Option<&str>,
+
     actor_id: &str,
     staged: &crate::mls::runtime::StagedMlsCommit,
 ) -> Result<crate::operation::LocalOperation, String> {
-    mls_commit_basis_from_store(state_store, realm_id, circle_id, actor_id, staged, None)?.build()
+    mls_commit_basis_from_store(state_store, realm_id,  actor_id, staged, None)?.build()
 }
 
 pub(crate) fn mls_commit_event_with_binding(
@@ -299,15 +286,13 @@ mod tests {
     use super::*;
 
     const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-    const CIRCLE: &str = "ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
 
     #[test]
     fn an_effective_scope_names_exactly_one_group_partition() {
-        let realm = effective_scope_for(REALM, None, None).unwrap();
-        let circle = effective_scope_for(REALM, Some(CIRCLE), None).unwrap();
+        let realm = effective_scope_for(REALM,  None).unwrap();
         let sidecar = effective_scope_for(
             REALM,
-            Some(CIRCLE),
+
             Some(
                 &arkret_sdk::SidecarId::new(
                     "ak:sidecar:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml".to_owned(),
@@ -317,13 +302,10 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(realm, arkret_sdk::ScopeRef::Realm { .. }));
-        assert!(matches!(circle, arkret_sdk::ScopeRef::Circle { .. }));
-        // A Sidecar binding wins over a Circle hint: a Sidecar group is its own
-        // scope with its own independent commit stream.
         assert!(matches!(sidecar, arkret_sdk::ScopeRef::Sidecar { .. }));
         assert_ne!(
             realm.canonical_mls_group_id().unwrap(),
-            circle.canonical_mls_group_id().unwrap()
+            sidecar.canonical_mls_group_id().unwrap()
         );
     }
 }

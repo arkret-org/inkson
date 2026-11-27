@@ -41,8 +41,7 @@ impl MessageStreamHub {
                     .is_some_and(|authority| {
                         signal.expires_at > observed_at
                             && authority.authority_commit_id == signal.authority_commit_id
-                            && authority.parent_realm_authority_commit_id
-                                == signal.parent_realm_authority_commit_id
+
                             && arkret_policy::signal_authorization::message_stream_allowed(
                                 authority,
                                 &domain.sender_actor_id,
@@ -224,7 +223,7 @@ mod tests {
         };
         let material = SignalProductAuthority {
             authority_commit_id: head.commit_id.clone(),
-            parent_realm_authority_commit_id: None,
+
             current_realm_head: head.clone(),
             current_scope_head: head.clone(),
             sent_at: now,
@@ -249,7 +248,7 @@ mod tests {
             product_authority: None,
             call_invitation: None,
             authority_commit_id: head.commit_id,
-            parent_realm_authority_commit_id: None,
+
             payload: SignalPlaintext::MessageStream(arkret_sdk::MessageStreamFrame::Keyframe(
                 MessageStreamKeyframe::new(
                     0,

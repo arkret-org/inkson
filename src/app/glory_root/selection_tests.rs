@@ -226,6 +226,6 @@ fn actual_context_links_render_one_visible_label_with_their_icon() {
         }
         pending.extend(node.children.iter().copied());
     }
-    assert!(names.iter().any(|name| name == "Board"));
+    assert!(names.iter().any(|name| name == "Boards"));
     assert!(names.iter().any(|name| name == "Members"));
 }

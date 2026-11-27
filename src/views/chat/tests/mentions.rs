@@ -199,14 +199,14 @@ fn owned_agent_ids_only_select_current_controllers_agents() {
         actor_id: None,
         ..owned.clone()
     };
-    assert!(
+    assert_eq!(
         owned_agent_ids_from_composer(
             true,
             std::slice::from_ref(&mention),
             &[missing_roster],
             controller
-        )
-        .is_empty()
+        ),
+        vec![agent_id]
     );
     let wrong_station = SpaceParticipant {
         actor_id: Some(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(

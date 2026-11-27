@@ -163,7 +163,7 @@ test("private Account Data Problem extensions are operation-owned and closed", (
   for (const mutation of [{ ...problem, current_entry: null }, { ...problem, obsolete_alias: true },
     { ...problem, current_revision: undefined }]) expect(() => validateMockTransportResponse(operation,
       { status: 404, contentType: "application/problem+json", json: mutation })).toThrow();
-  const unrelated = mockOperations().find(item => item.operation_id === "ak.self.circle.resource.get.v1")!;
+  const unrelated = mockOperations().find(item => item.operation_id === "ak.self.read_cursor.read.list.v1")!;
   expect(() => validateMockTransportResponse(unrelated, { status: 404, contentType: "application/problem+json", json: problem })).toThrow();
 });
 

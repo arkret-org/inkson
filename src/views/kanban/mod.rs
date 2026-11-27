@@ -229,6 +229,13 @@ pub fn page(scope: &Scope, app: Rc<InksonContext>, route: Route) -> View {
     }) else {
         return empty();
     };
+    if matches!(route, Route::KanbanRealm { .. }) {
+        app.on_realm_create_dialog(scope, route.clone(), move || {
+            controller
+                .board_popover
+                .revise(|value| *value = BoardToolbarPopover::CreateBoard);
+        });
+    }
     let inventory = {
         let app = app.clone();
         let realm = local_realm.clone();
@@ -505,6 +512,49 @@ pub fn page(scope: &Scope, app: Rc<InksonContext>, route: Route) -> View {
 }
 #[allow(unused_variables)]
 impl Board {
+    fn next_board_rank(&self) -> anyhow::Result<String> {
+        let options = self.controller.board_space_options.get_untracked();
+        let pending = self.app.state_store.read(|store| {
+            pending_board_creates_from_ops(&store.load().raw_operations, &self.local_realm)
+        });
+        board_append_rank(&options, &pending)
+    }
+
+    fn move_board(&self, moved: &arkret_sdk::SpaceId, target: &arkret_sdk::SpaceId, after: bool) {
+        if !self.ready.get_untracked() || !self.controller.command_queue.is_alive() {
+            return;
+        }
+        let result = (|| -> anyhow::Result<_> {
+            let options = self.controller.board_space_options.get_untracked();
+            let Some(rank) = board_drop_rank(&options, moved, target, after)? else {
+                return Ok(None);
+            };
+            let patch = serde_json::json!({"rank": {"$op": "set", "value": rank}});
+            let event = crate::operation::ak_ops::space_update_patch(
+                &self.realm,
+                self.principal.as_ref(),
+                moved.as_str(),
+                patch,
+            )?
+            .build_sdk_event("inkson")?;
+            Ok(Some(event))
+        })();
+        match result {
+            Ok(Some(event)) => self.controller.enqueue_operation(
+                self.app.base_url.get_untracked(),
+                self.app.token,
+                self.realm.clone(),
+                event,
+                self.security.get_untracked(),
+            ),
+            Ok(None) => {}
+            Err(error) => self
+                .controller
+                .board_status
+                .revise(|value| *value = error.to_string()),
+        }
+    }
+
     fn retry_board(&self, operation_id: crate::operation::LocalOperationId) {
         if !self.controller.command_queue.is_alive() || !self.ready.get_untracked() {
             return;
@@ -526,13 +576,26 @@ impl Board {
         let Some(pending) = pending.filter(PendingBoardCreate::is_retryable) else {
             return;
         };
+        let rank = match pending
+            .rank
+            .map(Ok)
+            .unwrap_or_else(|| self.next_board_rank())
+        {
+            Ok(rank) => rank,
+            Err(error) => {
+                self.controller
+                    .board_status
+                    .revise(|value| *value = error.to_string());
+                return;
+            }
+        };
         let operation = crate::operation::ak_ops::space_create(
             &self.realm,
             self.principal.as_ref(),
             "board",
             &pending.title,
             None,
-            None,
+            Some(&rank),
         )
         .and_then(|builder| builder.build_sdk_event("inkson"))
         .map(|operation| operation.with_local_operation_id(operation_id));
@@ -655,8 +718,20 @@ impl Board {
                     });
                     return;
                 }
+                let rank = match self.next_board_rank() {
+                    Ok(rank) => rank,
+                    Err(error) => {
+                        board_status.revise(|value| *value = error.to_string());
+                        return;
+                    }
+                };
                 let op = match crate::operation::ak_ops::space_create(
-                    &realm, &actor, "board", &title, None, None,
+                    &realm,
+                    &actor,
+                    "board",
+                    &title,
+                    None,
+                    Some(&rank),
                 ) {
                     Ok(builder) => builder.build_sdk_event("inkson"),
                     Err(err) => {
@@ -870,8 +945,6 @@ impl Board {
                     });
                     return;
                 }
-                // The new list`ak.space.createtely: `submit_kanban_operation_event`
-                // appends the `ak.space.create` op, which the `columns` memo folds.
                 controller.enqueue_operation(
                     base.clone(),
                     token,
@@ -879,10 +952,10 @@ impl Board {
                     op,
                     selected_scope_security_encrypted,
                 );
-                new_column_title.revise(|value| {
-                    let next = String::new();
-                    *value = next;
-                });
+                new_column_title.revise(String::clear);
+                controller
+                    .board_popover
+                    .revise(|value| *value = BoardToolbarPopover::None);
             }
         };
         handler(());

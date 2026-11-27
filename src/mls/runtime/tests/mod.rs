@@ -28,7 +28,7 @@ fn seed_current_group_state_ref(
     state
         .record_mls_group_state_ref_for_effective_scope(
             realm_id,
-            None,
+
             &snapshot.group_id,
             snapshot.epoch,
             event_id.clone(),

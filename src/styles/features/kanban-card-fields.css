@@ -34,7 +34,6 @@
   border-color: var(--accent);
   color: var(--text, var(--ak-ink));
   background: color-mix(in srgb, var(--accent) 10%, transparent);
-  outline: none;
 }
 .assignee-add-empty {
   border-style: solid;
@@ -136,7 +135,6 @@
 .assignee-option[data-style="secondary"]:not(:disabled):hover,
 .assignee-option[data-style="secondary"]:focus-visible {
   background: var(--surface-2, var(--ak-panel));
-  outline: none;
 }
 .assignee-option[data-style="secondary"].selected {
   background: color-mix(in srgb, var(--accent) 14%, var(--surface));
@@ -236,7 +234,6 @@
 .due-add-button:focus-visible {
   border-color: var(--accent);
   color: var(--text, var(--ak-ink));
-  outline: none;
 }
 .due-date-modal-backdrop {
   position: fixed;
@@ -306,7 +303,6 @@
   border-color: var(--border, var(--ak-line));
   background: var(--surface-2, var(--ak-panel));
   color: var(--text, var(--ak-ink));
-  outline: none;
 }
 .due-date-modal-body {
   min-height: 0;
@@ -444,7 +440,6 @@
 .calendar-schedule-disclosure-summary:hover,
 .calendar-schedule-disclosure-summary:focus-visible {
   background: color-mix(in srgb, var(--accent, var(--ak-brand)) 7%, transparent);
-  outline: none;
 }
 .calendar-schedule-disclosure-body {
   padding: 4px 18px 18px;
@@ -452,9 +447,6 @@
 }
 .calendar-schedule-edit-form .card-detail-edit-status {
   margin: 0;
-}
-.calendar-schedule-edit-form .card-detail-edit-status:empty {
-  display: none;
 }
 .calendar-schedule-edit-form > .card-detail-edit-controls {
   position: sticky;

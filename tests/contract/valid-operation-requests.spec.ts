@@ -21,11 +21,7 @@ for (const [index, install] of MOCK_INSTALLS.entries()) {
       const response = await driveOnce(captured.handler(), request);
       expect(response?.status).toBe(200);
       const body = request.postData as Record<string, any>;
-      if (id.startsWith("ak.self.circle.member.")) expect(response?.body).toEqual({
-        circle_id: body.member_event.event.payload.circle_id, member_id: body.member_event.event.payload.member_id,
-        membership: body.member_event.event.payload.membership,
-      });
-      else if (id.startsWith("ak.self.agent.command.")) {
+      if (id.startsWith("ak.self.agent.command.")) {
         const state = id.includes("deactivate") ? "deactivated" : id.includes("resume") ? "active" : "paused";
         expect(response?.body).toEqual({ status: state });
         const current = await driveOnce(captured.handler(), { method: "GET", url: `https://local.host/_arkret/self/agents/${encodeURIComponent(CURRENT_ASSISTANT_CORE_ID)}` });

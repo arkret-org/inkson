@@ -4,7 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../../assets/livekit_desktop_driver.js'), 'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
-async function scenario({ rejectConnect = false, rejectKey = false } = {}) {
+async function scenario({ rejectConnect = false, rejectKey = false, shareDocument } = {}) {
   const events = [], calls = [], handlers = new Map(), attached = [];
   let room;
   class Provider {
@@ -37,7 +37,7 @@ async function scenario({ rejectConnect = false, rejectKey = false } = {}) {
     LivekitClient: { Room, ExternalE2EEKeyProvider: Provider, RoomEvent: { ParticipantConnected: 'participant', Disconnected: 'disconnected', TrackSubscribed: 'track' } },
     ipc: { postMessage: value => events.push(JSON.parse(value)) },
   };
-  vm.runInNewContext(source, { window, document: { getElementById: id => id === 'remote-media' ? { appendChild: value => attached.push(value) } : null }, Uint8Array, Worker: undefined });
+  vm.runInNewContext(source, { window, document: shareDocument ?? { getElementById: id => id === 'remote-media' ? { appendChild: value => attached.push(value) } : null }, Uint8Array, Worker: undefined });
   assert.deepEqual(events, [{ event: 'ready' }]);
   window.__inksonMediaReceive({ cmd: 'init', config: { connectUrl: 'wss://media.example/', backendToken: 'private-token', audio: true, video: true, localIdentity: 'local-sender', frameKey: Array(32).fill(7) } });
   await tick(); await tick();
@@ -52,6 +52,23 @@ async function scenario({ rejectConnect = false, rejectKey = false } = {}) {
   assert.ok(!keyFailure.events.some(value => value.event === 'connected'));
   assert.ok(!keyFailure.calls.some(value => value[0] === 'audio' || value[0] === 'video'));
   assert.ok(keyFailure.calls.some(value => value[0] === 'disconnect'));
+  const shareButton = { hidden: true, addEventListener() {}, focus() { shareDocument.activeElement = this; } };
+  const leaveButton = { addEventListener() {} };
+  const shareDocument = {
+    body: {}, activeElement: leaveButton, hasFocus: () => true,
+    getElementById: id => id === 'share-screen' ? shareButton : id === 'leave-media' ? leaveButton : null,
+  };
+  const fallback = await scenario({ shareDocument });
+  fallback.room.localParticipant.setScreenShareEnabled = async () => { throw new Error('gesture required'); };
+  fallback.command({ cmd: 'set_screen', enabled: true });
+  await tick();
+  assert.equal(shareButton.hidden, false);
+  assert.equal(shareDocument.activeElement, leaveButton);
+  shareDocument.activeElement = shareDocument.body;
+  fallback.command({ cmd: 'set_screen', enabled: true });
+  await tick();
+  assert.equal(shareDocument.activeElement, shareButton);
+  fallback.command({ cmd: 'leave' });
   const success = await scenario();
   const position = kind => success.calls.findIndex(value => value[0] === kind);
   assert.ok(position('connect') < position('key'));

@@ -115,7 +115,7 @@ fn seed_ready_creator_snapshot(
     state
         .record_mls_group_state_ref_for_effective_scope(
             realm,
-            None,
+
             &snapshot.group_id,
             snapshot.epoch,
             accepted_ref.clone(),
@@ -855,7 +855,7 @@ async fn encrypted_private_patch_rejects_epoch_zero_without_accepted_genesis_ref
         state
             .mls_group_state_ref_for_effective_scope(
                 realm,
-                None,
+
                 &arkret_sdk::base64url_encode(realm.as_bytes()),
                 0,
             )
@@ -951,7 +951,7 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
     state
         .record_mls_group_state_ref_for_effective_scope(
             realm,
-            None,
+
             &record.group_id,
             record.epoch,
             arkret_sdk::EventId::new(base_group_state_ref.to_owned()).unwrap(),
@@ -1230,7 +1230,7 @@ fn encrypted_scope_allows_strand_summary_metadata_update() {
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
-    let mut state = isolated_store_for_tests("sidecar-track-circle-encrypt");
+    let mut state = isolated_store_for_tests("sidecar-track-encrypt");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let actor = "ak:did_core:web:alice.example";
     let device = "ak:device:0196419b-0000-7000-8000-000000000021";

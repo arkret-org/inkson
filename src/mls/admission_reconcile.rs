@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 use anyhow::Context as _;
 
 pub(crate) use crate::mls::admission::mls_admission_authoring_lock;
+use crate::runtime_helpers::boxed_future;
 use crate::state::LocalStateStore;
 use crate::state::realm_membership::*;
 use crate::views::helpers::short_protocol_id;
@@ -194,16 +195,17 @@ async fn submit_mls_admission_for_invitee(
         .author_for_direct_submission(&admission.commit)
         .await?;
     let welcomes = (admission.welcomes)(authored_commit.event()).map_err(anyhow::Error::msg)?;
-    submitter
-        .submit_mls_commit(
+    boxed_future(|| {
+        submitter.submit_mls_commit(
             authored_commit,
             welcomes,
             account.device_id.clone(),
             admission.authority_hints,
-            &state_store.clone(),
+            state_store,
             admission.staged_checkpoint,
         )
-        .await?;
+    })
+    .await?;
     tracing::debug!(
         realm = %short_protocol_id(&realm_id),
         invitee_device = %invitee_device_id
@@ -557,7 +559,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             store,
             secure_store.as_ref(),
             &realm_id,
-            None,
+
             &account.authority,
             &account.device_id,
         ) else {
@@ -579,7 +581,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             store,
             secure_store.as_ref(),
             &realm_id,
-            None,
+
             &account.authority,
             &account.device_id,
         ) else {
@@ -754,16 +756,18 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     );
     let mut outcome = MlsAdmissionReconcileOutcome::default();
     for (invitee_id, target_device_id) in pending {
-        match submit_mls_admission_for_invitee(
-            api,
-            state_store,
-            realm_id.clone(),
-            actor_id.clone(),
-            device_id.clone(),
-            invitee_id.clone(),
-            target_device_id.clone(),
-            membership_current.joined.get(&invitee_id).cloned(),
-        )
+        match boxed_future(|| {
+            submit_mls_admission_for_invitee(
+                api,
+                state_store,
+                realm_id.clone(),
+                actor_id.clone(),
+                device_id.clone(),
+                invitee_id.clone(),
+                target_device_id.clone(),
+                membership_current.joined.get(&invitee_id).cloned(),
+            )
+        })
         .await
         {
             Ok(Some(epoch)) => {
@@ -819,7 +823,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                 store,
                 secure_store.as_ref(),
                 &realm_id,
-                None,
+
                 &account.authority,
                 &account.device_id,
             )

@@ -12,8 +12,7 @@
 //! subscription cursor, and a commit-stream cursor is that stream's own
 //! `stream_position`.
 //!
-//! Why per-stream and not per-Realm: a Realm, each of its Circles and each of
-//! its Sidecars own an **independent** commit stream
+//! Each Realm and personal Sidecar owns an **independent** commit stream
 //! ([`arkret_wire::CommitStreamRef`]). There is no Realm-global order, no
 //! Realm-global position and no Realm-global cursor to hold; this engine keeps
 //! one durable position per stream ref ([`garth::CursorScope::CommitStream`])
@@ -413,7 +412,6 @@ fn holder_pcr_root_authorization(
 
 /// Verify the original scope create under the current Realm authority and a
 /// continuous parent stream ending at the signed current snapshot cut.
-/// A Circle create is a parent Realm Event, not the Realm's root create.
 pub(crate) async fn verified_creator_create(
     http: &arkret_sdk::http_client::Client,
     intent: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
@@ -1487,7 +1485,7 @@ mod tests {
                 "realm_id",
                 json!(arkret_sdk::RealmId::from_event_id(&created.event.event_id)),
             ),
-            ("schema", json!(arkret_sdk::SchemaId::CIRCLE_V1)),
+            ("schema", json!(arkret_sdk::SchemaId::STRAND_V1)),
             ("controller_account_id", json!({"principal_id": ACTOR_ID})),
             ("state", json!("suspended")),
             ("extra", json!(true)),
@@ -1508,79 +1506,7 @@ mod tests {
         assert!(validate(&private_source).is_err());
     }
 
-    #[test]
-    fn signed_parent_floor_installs_exact_circle_configuration_without_child_state() {
-        let realm_id = collaboration_fixture_realm_id();
-        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
-            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
-        ));
-        let circle = arkret_sdk::Circle::create_object(
-            realm_id.clone(),
-            "Circle",
-            crate::operation::ak_ops::circle_display_from_title("Circle"),
-            creator.clone(),
-        );
-        let (bundle, _, items) =
-            crate::test_support::committed_event::verified_realm_fixture_signed_by(
-                &crate::test_support::committed_event::FixtureStation::did_web(),
-                realm_id.clone(),
-                json!({"object": collaboration_genesis(GENESIS_SALT)}),
-                ordinary_bootstrap_entries(&creator)
-                    .into_iter()
-                    .chain([("ak.circle.create".to_owned(), json!({"object": circle}))])
-                    .collect(),
-                "alice.example",
-                DEVICE_ID,
-            );
-        let realm_id = bundle.realm_id.clone();
-        let head_commit = &items.last().unwrap().commit;
-        let head = arkret_wire::CommitStreamHead {
-            stream_ref: head_commit.stream_ref.clone(),
-            stream_position: head_commit.stream_position,
-            commit_id: head_commit.commit_id.clone(),
-        };
-        let rows = coland_bootstrap_rows(&bundle, &items);
-        let validate = |rows: &[CurrentState]| {
-            validate_signed_floor_rows(
-                &realm_id,
-                &bundle,
-                &head,
-                arkret_sdk::HistoryAccess::SinceJoin,
-                rows,
-            )
-        };
-        validate(&rows).unwrap();
-        let index = rows.len() - 1;
-        let mut substituted = rows.clone();
-        let CurrentState::Value { value, .. } = &mut substituted[index];
-        value["id"] = json!(arkret_sdk::CircleId::from_event_id(
-            &items[0].event.event_id
-        ));
-        assert!(validate(&substituted).is_err());
-        let mut foreign = rows.clone();
-        let CurrentState::Value { value, .. } = &mut foreign[index];
-        value["realm_id"] = json!(arkret_sdk::RealmId::from_event_id(&items[0].event.event_id));
-        assert!(validate(&foreign).is_err());
-        let mut open = rows.clone();
-        let CurrentState::Value { value, .. } = &mut open[index];
-        value["unregistered"] = json!(true);
-        assert!(validate(&open).is_err());
-        let mut child_source = rows.clone();
-        let CurrentState::Value {
-            source_stream_ref,
-            selector,
-            ..
-        } = &mut child_source[index];
-        let arkret_wire::CurrentSelector::Circle { circle_id } = selector else {
-            unreachable!()
-        };
-        *source_stream_ref = CommitStreamRef::Circle {
-            realm_id: realm_id.clone(),
-            circle_id: circle_id.clone(),
-        };
-        assert!(validate(&child_source).is_err());
-    }
+
 
     #[test]
     fn signed_floor_genesis_rows_require_the_verified_genesis_commit_and_closed_value() {
@@ -2853,9 +2779,6 @@ mod tests {
             arkret_wire::PinScope::Strand {
                 id: arkret_sdk::StrandId::from_event_id(event_id),
             },
-            arkret_wire::PinScope::Circle {
-                id: arkret_sdk::CircleId::from_event_id(event_id),
-            },
             arkret_wire::PinScope::Space {
                 id: arkret_sdk::SpaceId::from_event_id(event_id),
             },
@@ -3046,9 +2969,7 @@ mod tests {
             rows.push(match item.event.kind.as_str() {
                 "ak.realm.profile" => row(CurrentSelector::RealmProfile, commit, payload),
                 "ak.scope.read_receipt_policy" => row(
-                    CurrentSelector::ScopeReadReceiptPolicy {
-                        scope_ref: commit.stream_ref.scope_ref(),
-                    },
+                    CurrentSelector::ScopeReadReceiptPolicy,
                     commit,
                     payload,
                 ),
@@ -3077,12 +2998,6 @@ mod tests {
                     commit,
                     json!({"membership": "join"}),
                 ),
-                "ak.circle.create" => {
-                    let circle_id = arkret_sdk::CircleId::from_event_id(&item.event.event_id);
-                    let mut value = payload["object"].clone();
-                    value["id"] = json!(circle_id);
-                    row(CurrentSelector::Circle { circle_id }, commit, value)
-                }
                 "ak.sidecar.create" => {
                     let sidecar_id = arkret_sdk::SidecarId::from_event_id(&item.event.event_id);
                     let sidecar = arkret_sdk::AgentSidecar {
@@ -3376,6 +3291,7 @@ mod tests {
         let path = directory.join("state.json");
         let mut store = LocalStateStore::with_path(&path);
         let mut snapshot = snapshot_at(&bundle, &items, bundle.bundle_issued_at);
+        let source_realm = arkret_sdk::RealmId::from_event_id(&native[0].event.event_id);
         let source_strand = arkret_sdk::StrandId::from_event_id(&bundle.genesis_event.event_id);
         let controller = actor.as_account_id().unwrap().clone();
         let revision = arkret_sdk::CurrentRevision {
@@ -3415,7 +3331,7 @@ mod tests {
                 source_stream_ref: stream.clone(),
                 revision: revision.clone(),
                 value: json!({"id":sidecar,"schema":"ak.schema.agent_sidecar.v1",
-                    "realm_id":realm,"controller_account_id":controller,"state":"active",
+                    "realm_id":realm,"source_realm_id":source_realm,"controller_account_id":controller,"state":"active",
                     "created_at":"2026-01-01T00:00:00.000Z"}),
             },
             CurrentState::Value {
@@ -3521,7 +3437,7 @@ mod tests {
         );
         assert_eq!(
             reopened
-                .verified_sidecar_for_source(&controller, realm.as_str(), &source_strand)
+                .verified_sidecar_for_source(&controller, source_realm.as_str(), &source_strand)
                 .unwrap()
                 .unwrap()
                 .id,
@@ -3530,7 +3446,7 @@ mod tests {
         let other_strand = arkret_sdk::StrandId::from_event_id(&native[0].event.event_id);
         assert!(
             reopened
-                .verified_sidecar_for_source(&controller, realm.as_str(), &other_strand)
+                .verified_sidecar_for_source(&controller, source_realm.as_str(), &other_strand)
                 .unwrap()
                 .is_none()
         );
@@ -3539,7 +3455,7 @@ mod tests {
             arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap();
         assert!(
             reopened
-                .verified_sidecar_for_source(&other_station, realm.as_str(), &source_strand)
+                .verified_sidecar_for_source(&other_station, source_realm.as_str(), &source_strand)
                 .unwrap()
                 .is_none()
         );
@@ -3661,7 +3577,7 @@ mod tests {
         assert!(reopened.mls_scopes_needing_tail_recovery().is_empty());
         assert!(
             reopened
-                .verified_sidecar_for_source(&controller, realm.as_str(), &source_strand)
+                .verified_sidecar_for_source(&controller, source_realm.as_str(), &source_strand)
                 .is_err()
         );
         let scan = arkret_sdk::StreamScanRequestBody {
@@ -4201,7 +4117,7 @@ mod tests {
                     matches!(
                         row,
                         arkret_wire::CurrentState::Value {
-                            selector: arkret_wire::CurrentSelector::ScopeReadReceiptPolicy { .. },
+                            selector: arkret_wire::CurrentSelector::ScopeReadReceiptPolicy,
                             ..
                         }
                     )
@@ -4310,13 +4226,7 @@ mod tests {
             },
             {
                 let mut value = valid.clone();
-                value["scope_circle_id"] = json!(arkret_wire::CircleId::from_event_id(
-                    &accepted.event.event_id
-                ));
-                value["effective_scope"] = json!(arkret_wire::ScopeRef::Circle {
-                    realm_id: realm_id.clone(),
-                    circle_id: arkret_wire::CircleId::from_event_id(&accepted.event.event_id),
-                });
+                value["effective_scope"] = json!(arkret_wire::ScopeRef::Realm { realm_id: arkret_wire::RealmId::from_event_id(&accepted.event.event_id) });
                 value
             },
         ] {
@@ -4476,19 +4386,16 @@ mod tests {
             service_id: None,
             stream_ref: realm_stream.clone(),
         };
-        let circle_scope = CursorScope::CommitStream {
+        let other_realm_scope = CursorScope::CommitStream {
             service_id: None,
-            stream_ref: CommitStreamRef::Circle {
-                realm_id,
-                circle_id: arkret_sdk::CircleId::new(
-                    "ak:circle:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
+            stream_ref: CommitStreamRef::Realm { realm_id: arkret_sdk::RealmId::new(
+                    "ak:realm:AQJmSg1s9QyzppFeJL40dN92YVHZeLdBBt3UWHa9XNOD".to_owned(),
                 )
-                .unwrap(),
-            },
+                .unwrap() },
         };
-        // Two streams of one Realm never share a cursor slot, which is what
+        // Two Realms never share a cursor slot, which is what
         // stops a Realm-global position from being representable at all.
-        assert_ne!(scope, circle_scope);
+        assert_ne!(scope, other_realm_scope);
     }
 
     #[test]

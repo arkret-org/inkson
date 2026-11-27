@@ -63,7 +63,6 @@ impl DurableOutboundState {
         let payload: arkret_sdk::StrandCreatePayload =
             serde_json::from_value(serde_json::to_value(&event.payload)?)?;
         if !payload.object.tracks.contains_key("synthesis")
-            || payload.object.scope_circle_id.is_some()
         {
             return Err(garth::Error::Protocol(
                 "card initializer requires a Realm card".into(),

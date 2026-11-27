@@ -50,13 +50,11 @@ fn chat_message_from_event_flags_encrypted_payload_as_decrypting() {
 }
 
 #[test]
-fn circle_scoped_message_does_not_require_forbidden_payload_scope_field() {
+fn realm_message_does_not_require_forbidden_payload_scope_field() {
     let event = signed_chat_event_in_scope(
         "ak.message.create",
         json!({
-            "kind": "circle",
-            "realm_id": "ak:realm:AZ50TDWNf7-ZvnbVpb3-bD97v_NiKs0krmIiZeXokdCg",
-            "circle_id": "ak:circle:Ad3sAE8SdL97yMaxfdHCkPiyKsWulMWC1Eisx0zigFOe"
+            "kind": "realm", "realm_id": "ak:realm:AZ50TDWNf7-ZvnbVpb3-bD97v_NiKs0krmIiZeXokdCg"
         }),
         json!({"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}),
         "2026-05-14T01:23:45.000Z",

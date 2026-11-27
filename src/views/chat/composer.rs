@@ -44,21 +44,14 @@ fn ordinary_composer_scope(realm: &str, channel: &ChannelEntity) -> Option<arkre
         return None;
     }
     let realm_id = arkret_sdk::RealmId::new(realm.to_owned()).ok()?;
-    Some(match &channel.scope_circle {
-        Some(scope) => arkret_sdk::ScopeRef::Circle {
-            realm_id,
-            circle_id: arkret_sdk::CircleId::new(scope.circle_id.clone()).ok()?,
-        },
-        None => arkret_sdk::ScopeRef::Realm { realm_id },
-    })
+    Some(arkret_sdk::ScopeRef::Realm { realm_id })
+
 }
 
 #[derive(Clone)]
 pub(super) struct ChatComposerContext {
     pub sidecar_route_pending: Cage<bool>,
     pub selected_channel_info: Option<ChannelEntity>,
-    pub circle_display: Option<arkret_sdk::CircleDisplay>,
-    pub circle_encrypted: Option<bool>,
     pub authority: arkret_sdk::AccountId,
     pub did: arkret_sdk::Did,
     pub principal_id: arkret_sdk::DidCoreId,
@@ -106,7 +99,6 @@ fn composer_scope_label(
         return crate::i18n::tr("chat.composer.private_scope");
     }
     let key = match scope {
-        arkret_sdk::AgentMentionComposerScope::Circle => "chat.composer.circle_scope",
         arkret_sdk::AgentMentionComposerScope::Direct => "chat.composer.direct_scope",
         arkret_sdk::AgentMentionComposerScope::Realm
         | arkret_sdk::AgentMentionComposerScope::Sidecar => "chat.composer.original_scope",
@@ -167,7 +159,6 @@ fn latest_source_event_anchor(
                         && matches!(
                             &content.scope,
                             arkret_sdk::ScopeRef::Realm { realm_id: source }
-                                | arkret_sdk::ScopeRef::Circle { realm_id: source, .. }
                                 if source.as_str() == realm_id
                         )
                 })
@@ -242,12 +233,6 @@ fn draft_route(
 ) {
     let scope = if !context.mentions_enabled {
         arkret_sdk::AgentMentionComposerScope::Direct
-    } else if context
-        .selected_channel_info
-        .as_ref()
-        .is_some_and(|channel| channel.scope_circle.is_some())
-    {
-        arkret_sdk::AgentMentionComposerScope::Circle
     } else {
         arkret_sdk::AgentMentionComposerScope::Realm
     };
@@ -682,8 +667,15 @@ pub(super) fn chat_composer(
         let Some(request) = request_signal.get() else {
             return;
         };
-        if request_seen.get_untracked() == request.request_id {
-            return;
+        // Move focus for the user's mention command. A later participant refresh
+        // may resolve the mention after the user has already moved elsewhere.
+        if request_seen.get_untracked() != request.request_id {
+            request_seen.revise(|value| value.clone_from(&request.request_id));
+            if let Some(owner) = request_owner.upgrade()
+                && let Some(node) = input_node.get_untracked()
+            {
+                let _ = owner.action(glory::render::Action::Focus(node));
+            }
         }
         let Some(candidate) = request.resolve_candidate(
             &context.participants,
@@ -692,7 +684,6 @@ pub(super) fn chat_composer(
         ) else {
             return;
         };
-        request_seen.revise(|value| *value = request.request_id);
         request_signal.revise(|value| *value = None);
         let text = controller.draft.get_untracked();
         let updated = controller.mention_picker_state.revise(|picker| {
@@ -701,11 +692,6 @@ pub(super) fn chat_composer(
             updated
         });
         controller.update_draft(updated);
-        if let Some(owner) = request_owner.upgrade()
-            && let Some(node) = input_node.get_untracked()
-        {
-            let _ = owner.action(glory::render::Action::Focus(node));
-        }
     });
     let send_app = app.clone();
     let send_target = controller.draft_strand_id.get_untracked();
@@ -967,32 +953,6 @@ pub(super) fn chat_composer(
             ],
         )
     });
-    let circle_app = app.clone();
-    let circle_source = scope.bond(move || {
-        let current = context.get();
-        let scope = current
-            .selected_channel_info
-            .and_then(|channel| channel.scope_circle)
-            .map(|circle| crate::circle::CircleScope::Circle {
-                circle_id: circle.circle_id,
-                title: circle.title,
-                member_count: circle.member_count,
-            })
-            .unwrap_or(crate::circle::CircleScope::Realm);
-        (scope, current.circle_display, current.circle_encrypted)
-    });
-    let circle_banner =
-        reactive_distinct(circle_source, move |scope, (circle, display, encrypted)| {
-            crate::components::circle_composer_banner(
-                scope,
-                circle_app.clone(),
-                crate::components::CircleComposerBannerProps {
-                    scope: circle,
-                    display,
-                    encrypted,
-                },
-            )
-        });
     let mention_context = context;
     let mentions = mention_picker(scope, app.clone(), controller, mention_context);
     let chip_source = scope.bond(move || controller.mention_picker_state.get().inserted);
@@ -1305,24 +1265,23 @@ pub(super) fn chat_composer(
                 "muted composer-send-diagnostic",
                 scope.bond(move || preview.get().title),
             ),
-            circle_banner,
             enrollment,
             reply,
             block(
                 "composer-input-surface",
-                vec![
-                    storage_error,
-                    input,
-                    mentions,
-                    chips,
-                    line("mention-chip-row", tools),
-                ],
+                vec![storage_error, input, mentions, chips],
             ),
             upload_status,
             attachments,
             poll,
             scheduled_panel,
-            line("actions", vec![primary, secure]),
+            line(
+                "composer-toolbar",
+                vec![
+                    line("composer-tools", tools),
+                    line("composer-send-actions", vec![primary, secure]),
+                ],
+            ),
         ],
     )
 }
@@ -1366,7 +1325,7 @@ fn edit_draft(
         return;
     }
     let Ok(material) = app.state_store.read(|store| {
-        crate::signal::key_material_for_scope(store, &context.selected_realm_id, None)
+        crate::signal::key_material_for_scope(store, &context.selected_realm_id)
     }) else {
         return;
     };

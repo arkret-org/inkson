@@ -1,4 +1,4 @@
-//! The independent Sidecar handshake. Realm/Circle creator transactions must
+//! The independent Sidecar handshake. Realm creator transactions must
 //! never be opened for a Sidecar; its accepted participant cut binds both the
 //! private RFC 9420 state and the producer-signed Genesis.
 
@@ -184,7 +184,7 @@ async fn ensure_sidecar_mls_genesis(
                     store,
                     secure.as_ref(),
                     scope.realm_id().as_str(),
-                    None,
+
                     authority,
                     device,
                     Some(view.sidecar.id.clone()),
@@ -222,7 +222,7 @@ async fn ensure_sidecar_mls_genesis(
                 store,
                 secure.as_ref(),
                 scope.realm_id().as_str(),
-                None,
+
                 authority,
                 device,
                 Some(view.sidecar.id.clone()),

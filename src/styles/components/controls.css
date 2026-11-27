@@ -9,7 +9,37 @@
 /* Sapid sets an initial inline paint. Follow the live Inkson theme on both hosts. */
 .sapid-segmented-control .sapid-segment { color: var(--text-2) !important; }
 
-.btn, .primary, .btn-primary, .secondary, .btn-secondary, .tab {
+/* Sapid paints the visible track and thumb inline. The overlaid native
+   input owns interaction and supplies the state for both theme palettes. */
+.sapid-switch.sapid-unstyled {
+  --switch-track: var(--surface-3);
+  --switch-border: var(--field-border);
+  --switch-thumb: var(--text-2);
+}
+.sapid-switch.sapid-unstyled:has(input:checked) {
+  --switch-track: var(--accent);
+  --switch-border: var(--accent);
+  --switch-thumb: var(--text-on-accent);
+}
+.sapid-switch.sapid-unstyled > .sapid-switch-track {
+  background-color: var(--switch-track) !important;
+  border-color: var(--switch-border) !important;
+}
+.sapid-switch.sapid-unstyled .sapid-switch-thumb { background-color: var(--switch-thumb) !important; }
+.sapid-switch.sapid-unstyled .sapid-switch-focus { border-color: var(--focus) !important; }
+.sapid-switch.sapid-unstyled:has([aria-invalid=true]) .sapid-switch-focus { border-color: var(--danger) !important; }
+@media (forced-colors: active) {
+  .sapid-switch.sapid-unstyled { --switch-border: ButtonText; --switch-track: Canvas; --switch-thumb: ButtonText; }
+  .sapid-switch.sapid-unstyled > .sapid-switch-track { forced-color-adjust: none; }
+  .sapid-switch.sapid-unstyled:has(input:checked) { --switch-border: Highlight; --switch-track: Highlight; --switch-thumb: HighlightText; }
+  .sapid-switch.sapid-unstyled .sapid-switch-focus { border-color: Highlight !important; }
+  .sapid-switch.sapid-unstyled:has(input:disabled) { --switch-border: GrayText; --switch-thumb: GrayText; }
+}
+.sapid-switch-control, .sapid-switch-control input { cursor: pointer; }
+.sapid-switch:has(input:disabled) { opacity: .65; }
+.sapid-switch-control:has(input:disabled), .sapid-switch-control input:disabled { cursor: not-allowed; }
+
+.btn, .primary, .btn-primary, .secondary, .btn-secondary, .destructive, .tab {
   appearance: none;
   display: inline-flex;
   align-items: center;
@@ -42,8 +72,8 @@
   font-weight: var(--weight-semibold);
 }
 .primary:hover, .btn-primary:hover, .btn.primary:hover, .btn.btn-primary:hover { background: var(--accent-strong); }
-.btn.danger, .btn.btn-danger { color: var(--danger); border-color: var(--danger); }
-.btn.danger:hover, .btn.btn-danger:hover { background: var(--danger-soft); }
+.btn.danger, .btn.btn-danger, .destructive { color: var(--danger); border-color: var(--danger); }
+.btn.danger:hover, .btn.btn-danger:hover, .destructive:hover { background: var(--danger-soft); }
 .btn.success, .btn.btn-success { color: var(--success); border-color: var(--success); }
 .btn.success:hover, .btn.btn-success:hover { background: var(--success-soft); }
 .btn.ghost, .btn.btn-ghost {
@@ -79,10 +109,32 @@
 .tab.active { font-weight: var(--weight-semibold); }
 .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 
-.btn:focus-visible, .tab:focus-visible, .icon-button:focus-visible, .help-tip:focus-visible {
+:where(button:not([role]), [role="button"], .destructive, .btn, .tab, .icon-button, .help-tip):focus-visible,
+.sapid-checkbox.sapid-unstyled input:focus-visible,
+button.sapid-select.sapid-unstyled:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+:where([role="menuitem"], [role="option"], select.sapid-native-select.sapid-unstyled):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.sapid-segmented-control.sapid-unstyled .sapid-segment:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+}
+
+/* Unstyled disclosures are ordinary buttons on the web host. Give them a
+   flat default while allowing each surface to set its own layout. */
+:where(.sapid-collapsible.sapid-unstyled) > .sapid-collapsible-trigger {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+.sapid-collapsible-trigger:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* Feature-specific paints still defer to the disabled state. */
 button:disabled, .btn.disabled, .primary[disabled], .secondary[disabled],

@@ -1058,7 +1058,7 @@ pub(super) struct PlaintextSendRequest {
     pub api_token: String,
     pub wait_for: Option<String>,
     pub realm_id: String,
-    pub circle_id: Option<String>,
+
     pub strand_id: String,
     pub actor: String,
     /// Holder-local id of the optimistic row, and the message id the Event
@@ -1096,7 +1096,7 @@ pub(super) fn send_plaintext_message(
             api_token,
             wait_for,
             realm_id,
-            circle_id,
+
             strand_id,
             actor,
             local_id,
@@ -1193,15 +1193,7 @@ pub(super) fn send_plaintext_message(
             }
         };
         let scope =
-            match arkret_sdk::RealmId::new(realm_id.clone()).and_then(|realm_id| match circle_id {
-                Some(circle_id) => arkret_sdk::CircleId::new(circle_id).map(|circle_id| {
-                    arkret_sdk::ScopeRef::Circle {
-                        realm_id,
-                        circle_id,
-                    }
-                }),
-                None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
-            }) {
+            match arkret_sdk::RealmId::new(realm_id.clone()).and_then(|realm_id| Ok(arkret_sdk::ScopeRef::Realm { realm_id })) {
                 Ok(scope) => scope,
                 Err(error) => {
                     fail_optimistic_send_row(messages, &local_id, format!("send failed: {error}"));
@@ -1658,7 +1650,7 @@ pub(super) struct EncryptedSendRequest {
     pub api_token: String,
     pub wait_for: Option<String>,
     pub realm_id: String,
-    pub circle_id: Option<String>,
+
     pub strand_id: String,
     pub actor: String,
     pub authority: arkret_sdk::AccountId,
@@ -1697,7 +1689,7 @@ pub(super) fn send_encrypted_message(
         api_token,
         wait_for,
         realm_id: realm,
-        circle_id,
+
         strand_id,
         actor,
         authority: authority_for_sidecar,
@@ -1766,17 +1758,7 @@ pub(super) fn send_encrypted_message(
             .iter()
             .filter_map(|mention| mention.as_audience_mention().cloned())
             .collect::<Vec<_>>();
-        let scope = match arkret_sdk::RealmId::new(realm.clone()).and_then(|realm_id| {
-            match circle_id.as_ref() {
-                Some(id) => arkret_sdk::CircleId::new(id.clone()).map(|circle_id| {
-                    arkret_sdk::ScopeRef::Circle {
-                        realm_id,
-                        circle_id,
-                    }
-                }),
-                None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
-            }
-        }) {
+        let scope = match arkret_sdk::RealmId::new(realm.clone()).map(|realm_id| arkret_sdk::ScopeRef::Realm { realm_id }) {
             Ok(scope) => scope,
             Err(e) => {
                 {
@@ -1957,7 +1939,7 @@ pub(super) fn send_encrypted_message(
             reply_to.as_deref(),
             &secure_content_bytes,
             None,
-            circle_id.as_deref(),
+
             None,
         )
         .await
@@ -2039,7 +2021,7 @@ pub(super) fn send_encrypted_message(
                 &state_store.handle(),
                 secure_build,
                 &realm_for_record,
-                None,
+
             )
             .await;
             let resp = match outcome {

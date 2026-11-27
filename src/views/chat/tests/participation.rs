@@ -10,7 +10,7 @@ fn participation_visibility_uses_most_specific_effective_scope() {
     };
 
     let realm = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
-    let circle = "ak:circle:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+    let strand = "ak:strand:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
     let realm_entry = AgentParticipationView {
         target_scope: ParticipationScope::Realm {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
@@ -21,10 +21,10 @@ fn participation_visibility_uses_most_specific_effective_scope() {
             expected_version: 1,
         }),
     };
-    let circle_entry = AgentParticipationView {
-        target_scope: ParticipationScope::Circle {
+    let strand_entry = AgentParticipationView {
+        target_scope: ParticipationScope::Strand {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
-            circle_id: arkret_sdk::CircleId::new(circle.to_owned()).unwrap(),
+            strand_id: arkret_sdk::StrandId::new(strand.to_owned()).unwrap(),
         },
         selection: ParticipationBits::NONE,
         version: 1,
@@ -36,13 +36,13 @@ fn participation_visibility_uses_most_specific_effective_scope() {
     assert!(participation_allows_public_reply(
         std::slice::from_ref(&realm_entry),
         realm,
-        None,
+
         "ak:strand:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL",
     ));
     assert!(!participation_allows_public_reply(
-        &[realm_entry, circle_entry],
+        &[realm_entry, strand_entry],
         realm,
-        Some(circle),
+
         "ak:strand:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL",
     ));
 }
@@ -71,7 +71,7 @@ fn participation_visibility_can_target_an_authoritative_discussion_strand() {
     assert!(participation_allows_public_reply(
         std::slice::from_ref(&entry),
         realm,
-        None,
+
         &strand,
     ));
 }
@@ -105,7 +105,7 @@ fn mention_only_participation_does_not_expose_agent_in_roster() {
     assert!(!participation_allows_public_reply(
         std::slice::from_ref(&entry),
         realm,
-        None,
+
         "ak:strand:AYdzR-cxE5CaMt7Xeab7lJ6oTMVcXRDFIfPqcXOahgQ4",
     ));
 }

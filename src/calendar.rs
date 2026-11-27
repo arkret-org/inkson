@@ -88,8 +88,7 @@ pub(crate) async fn build_encrypted_calendar_rsvp_event(
         serde_json::from_value(strand_value.clone())?;
     anyhow::ensure!(
         current_strand.id.as_ref() == Some(&strand)
-            && current_strand.realm_id == realm
-            && current_strand.scope_circle_id.is_none(),
+            && current_strand.realm_id == realm,
         "RSVP target has no verified Realm effective scope"
     );
     let scope = arkret_sdk::ScopeRef::Realm { realm_id: realm };
@@ -166,7 +165,7 @@ pub(crate) async fn build_encrypted_calendar_rsvp_event(
                 &[response_bytes],
                 arkret_wire::event_kind_str::RSVP_SET,
                 accepted_group_state_ref,
-                None,
+
                 None,
                 &[material],
             )

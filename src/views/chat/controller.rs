@@ -459,21 +459,11 @@ pub(super) struct ChatController {
     pub presence_sync_key_seen: Cage<String>,
     pub presence_announce_key_seen: Cage<String>,
     pub presence_heartbeat_tick: Cage<u64>,
-    pub promote_discussion_draft:
-        Cage<crate::messaging::discussion_promote::PromoteDiscussionDraft>,
-    pub promoted_targets: Cage<std::collections::BTreeMap<String, String>>,
     pub latest_read_cursor: Cage<String>,
     pub blocked_show_anyway: Cage<std::collections::BTreeSet<String>>,
     pub account_display_name: Cage<String>,
     pub track_filter: Cage<String>,
     pub left_panel_open: Cage<bool>,
-    /// Circles the signed-in account may scope a new Strand to. Loaded once
-    /// per (server, actor, Realm); the two keys below are the guard that keeps
-    /// the load from re-triggering its own effect.
-    pub eligible_circle_scopes: Cage<Vec<crate::circle::CircleSummary>>,
-    pub eligible_circle_scope_request_key_seen: Cage<String>,
-    pub eligible_circle_scope_request_in_flight: Cage<bool>,
-    pub new_channel_scope: Cage<crate::circle::CircleScope>,
     pub sidecar_send_pending: Cage<bool>,
     pub(crate) sidecar_enrollment: Cage<Option<crate::sidecar::PersonalSidecarEnrollment>>,
     /// Member handle lookups already in flight, so a re-render does not issue
@@ -593,11 +583,8 @@ impl ChatController {
             presence_status_messages,
             presence_sync_key_seen,
             presence_announce_key_seen,
-            promoted_targets,
             blocked_show_anyway,
             account_display_name,
-            eligible_circle_scopes,
-            eligible_circle_scope_request_key_seen,
             member_handle_fetching
         );
         set!(new_channel_create_card, false);
@@ -612,14 +599,8 @@ impl ChatController {
         set!(initial_sync_requested, false);
         set!(initial_sync_finished, false);
         set!(typing_next_expires_at_ms, None);
-        set!(
-            promote_discussion_draft,
-            crate::messaging::discussion_promote::PromoteDiscussionDraft::default()
-        );
         set!(track_filter, "discussion_only".to_owned());
         set!(left_panel_open, true);
-        set!(eligible_circle_scope_request_in_flight, false);
-        set!(new_channel_scope, crate::circle::CircleScope::default());
         set!(sidecar_send_pending, false);
         set!(sidecar_enrollment, None);
         let _ = self
@@ -1637,10 +1618,7 @@ impl ChatController {
                     message.reply_to.as_deref(),
                     &content_bytes,
                     None,
-                    match &original_scope {
-                        arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str()),
-                        _ => None,
-                    },
+
                     None,
                 )
                 .await
@@ -1666,7 +1644,7 @@ impl ChatController {
                     &state_store.handle(),
                     build,
                     &message.realm_id,
-                    None,
+
                 )
                 .await;
                 match outcome {
@@ -1907,13 +1885,6 @@ impl ChatController {
             self.status_msg.revise(|value| *value = next_value);
         };
         let actor = arkret_sdk::ActorId::account(context.authority.clone());
-        let selected_circle = self
-            .channels
-            .get()
-            .iter()
-            .find(|channel| channel.strand_id == context.selected_channel_id)
-            .and_then(|channel| channel.scope_circle.as_ref())
-            .map(|scope| scope.circle_id.clone());
         let vote_check = self
             .poll_cards
             .get()
@@ -1922,16 +1893,10 @@ impl ChatController {
             .ok_or_else(|| anyhow::anyhow!("poll projection is unavailable"))
             .and_then(|card| {
                 let realm_id = arkret_sdk::RealmId::new(context.selected_realm_id.clone())?;
-                let scope = match &selected_circle {
-                    Some(circle_id) => arkret_sdk::ScopeRef::Circle {
-                        realm_id,
-                        circle_id: arkret_sdk::CircleId::new(circle_id.clone())?,
-                    },
-                    None => arkret_sdk::ScopeRef::Realm { realm_id },
-                };
+                let scope = arkret_sdk::ScopeRef::Realm { realm_id };
                 anyhow::ensure!(
                     card.verified_scope.as_ref() == Some(&scope),
-                    "poll belongs to another Realm or Circle scope"
+                    "poll belongs to another Realm"
                 );
                 super::poll_submission::verified_poll_response_heads(card, &poll_ref, &actor)
             });
@@ -1955,13 +1920,7 @@ impl ChatController {
         let protection = super::poll_submission::PollSubmissionContext {
             authority: context.authority.clone(),
             device_id: context.device_id.clone(),
-            circle_id: self
-                .channels
-                .get()
-                .iter()
-                .find(|channel| channel.strand_id == context.selected_channel_id)
-                .and_then(|channel| channel.scope_circle.as_ref())
-                .map(|scope| scope.circle_id.clone()),
+
         };
         let Some(state_store) = self.command_store() else {
             return;
@@ -1986,7 +1945,7 @@ impl ChatController {
                         &realm_id,
                         actor.as_str(),
                         &strand_id,
-                        protection.circle_id.as_deref(),
+
                         poll_ref.as_str(),
                         &[option_id],
                         response_heads.clone(),
@@ -2093,7 +2052,6 @@ impl ChatController {
                     is_default: false,
                     is_private_sidecar: false,
                     security_encrypted: None,
-                    scope_circle: draft.scope_circle,
                 })
             });
             self.select_channel(strand_id.clone());
@@ -2136,10 +2094,6 @@ impl ChatController {
                 let next_value = false;
                 self.new_channel_create_card
                     .revise(|value| *value = next_value);
-            };
-            {
-                let next_value = crate::circle::CircleScope::Realm;
-                self.new_channel_scope.revise(|value| *value = next_value);
             };
             {
                 let next_value = false;
@@ -2538,49 +2492,7 @@ impl ChatController {
         });
     }
 
-    /// Author the Circle + Strand unit that promotes a message into a private
-    /// discussion.
-    ///
-    /// The two ids fall out of their own create Events, so the promoted
-    /// indicator is only set once the whole unit lands; a half-applied promote
-    /// rolls the indicator back rather than presenting itself as success.
-    pub fn promote_private_discussion(
-        self,
-        base_url: String,
-        api_token: String,
-        source_id: String,
-        steps: Vec<crate::event_submit::EventUnitStep>,
-    ) {
-        super::task::dispatch(async move {
-            let outcome =
-                crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
-                    let submitter = api.event_submitter()?;
-                    let authored = submitter.author_event_unit(steps).await?;
-                    let ids = crate::messaging::discussion_promote::promote_ids(&authored)?;
-                    submitter
-                        .submit_signed_sdk_events_in_order(&authored)
-                        .await?;
-                    Ok(ids)
-                })
-                .await;
-            match outcome {
-                Ok(ids) => {
-                    self.promoted_targets
-                        .revise(|value| value.insert(source_id, ids.discussion_strand_id));
-                }
-                Err(err) => {
-                    tracing::warn!("discussion promote failed: {}", err.display());
-                    self.promoted_targets
-                        .revise(|value| value.remove(&source_id));
-                    {
-                        let next_value =
-                            format!("Private discussion creation failed: {}", err.display());
-                        self.status_msg.revise(|value| *value = next_value);
-                    };
-                }
-            }
-        });
-    }
+
 }
 
 fn mark_message_command_succeeded(messages: &mut Cage<Vec<ChatMessage>>, message_id: &str) {
@@ -2643,7 +2555,6 @@ pub(super) struct StrandCreateDraft {
     pub category: String,
     pub topic: Option<String>,
     pub create_card: bool,
-    pub scope_circle: Option<StrandScopeCircle>,
     pub frontier_state: Cage<String>,
 }
 
@@ -3133,18 +3044,11 @@ pub(super) fn chat_controller_for_initial_target(
         presence_sync_key_seen: scope.cage((String::new)()),
         presence_announce_key_seen: scope.cage((String::new)()),
         presence_heartbeat_tick: scope.cage(0),
-        promote_discussion_draft: scope
-            .cage((crate::messaging::discussion_promote::PromoteDiscussionDraft::default)()),
-        promoted_targets: scope.cage((std::collections::BTreeMap::<String, String>::new)()),
         latest_read_cursor: composer.latest_read_cursor,
         blocked_show_anyway: scope.cage((std::collections::BTreeSet::<String>::new)()),
         account_display_name: scope.cage((String::new)()),
         track_filter: scope.cage("discussion_only".to_owned()),
         left_panel_open: scope.cage(true),
-        eligible_circle_scopes: scope.cage((Vec::new)()),
-        eligible_circle_scope_request_key_seen: scope.cage((String::new)()),
-        eligible_circle_scope_request_in_flight: scope.cage(false),
-        new_channel_scope: scope.cage((crate::circle::CircleScope::default)()),
         sidecar_send_pending: scope.cage(false),
         sidecar_enrollment: scope.cage(None),
         member_handle_fetching: scope.cage((std::collections::BTreeSet::new)()),

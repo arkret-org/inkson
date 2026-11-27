@@ -46,8 +46,8 @@ for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 720 });
     await openKanban(page);
     await setSystemTheme(page, "dark");
-    const options = page.locator(".board-toolbar-options > .sapid-collapsible-trigger");
-    const addList = page.locator(".board-toolbar-add-list > .sapid-collapsible-trigger");
+    const options = page.locator(".board-toolbar-options .sapid-menu-trigger");
+    const addList = page.locator(".board-toolbar-add-list .sapid-popover-trigger");
     const title = page.locator(".new-column-input");
     await expect(options).toHaveAttribute("aria-expanded", "false");
     await expect(title).toBeHidden();
@@ -56,6 +56,7 @@ for (const width of [1280, 390]) {
     await addList.click();
     await expect(title).toBeHidden();
     await addList.click();
+    await expect(title).toBeVisible();
     await expect(title).toHaveValue("Retained list draft");
     await addList.click();
     await page.screenshot({ path: testInfo.outputPath(`board-dark-${width}.png`) });

@@ -73,7 +73,7 @@ pub(super) fn context_bar(
                 if surface.is_available(board_ready) {
                     children.push(make_link(
                         surface.route(realm_id.clone()),
-                        surface.short_label().into(),
+                        context.tr(surface.short_label_key()),
                         surface.icon_name(),
                         current == Some(surface),
                         Some(surface),
@@ -84,7 +84,7 @@ pub(super) fn context_bar(
                             .unstyled()
                             .class(class(false))
                             .enabled(false)
-                            .label(surface.short_label())
+                            .label(context.tr(surface.short_label_key()))
                             .left_section(crate::components::ui_icon(surface.icon_name())),
                     ));
                 }
@@ -111,13 +111,11 @@ pub(super) fn context_bar(
         }
     };
     let normal = block("actions realm-nav-inline", links(false));
-    let (label, icon) = current
-        .map(|surface| (surface.short_label(), surface.icon_name()))
-        .unwrap_or(if members {
-            ("Members", "users")
-        } else {
-            ("Settings", "settings")
-        });
+    let (label, icon) = match current {
+        Some(surface) => (context.tr(surface.short_label_key()), surface.icon_name()),
+        None if members => (context.tr("realm_admin.members"), "users"),
+        None => (context.tr("nav.settings"), "settings"),
+    };
     block(
         "realm-context-bar",
         vec![
@@ -135,10 +133,7 @@ pub(super) fn context_bar(
                         sapid::popover("realm-view-menu")
                             .unstyled()
                             .class("realm-nav-menu-panel")
-                            .label(format!(
-                                "Switch view: {}",
-                                current.map(RealmSurface::title).unwrap_or(label)
-                            ))
+                            .label(format!("Switch view: {label}"))
                             .open(menu)
                             .on_open_change(move |open| menu.revise(|value| *value = open))
                             .show_close(false)

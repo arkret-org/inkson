@@ -277,7 +277,7 @@ pub(crate) fn realm_mls_activation(
 /// [`realm_mls_activation`] for an id that may name a Realm or one of the
 /// containers stored beside it.
 ///
-/// Only Realm, Circle and Sidecar are security scopes, so a Space or board id
+/// Only Realm and Sidecar are security scopes, so a Space or board id
 /// resolves through its stored body's home Realm rather than pretending to
 /// carry a scope of its own.
 pub(crate) fn scope_mls_activation(

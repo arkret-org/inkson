@@ -204,7 +204,6 @@
 
 .realm-nav-menu-item:hover,
 .realm-nav-menu-item:focus-visible {
-  outline: none;
   border-color: color-mix(in srgb, var(--accent) 34%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, var(--surface));
 }

@@ -24,7 +24,6 @@ pub(crate) fn discussion_channel_for_strand(strand_id: &str) -> Option<ChannelEn
         is_default: false,
         is_private_sidecar: false,
         security_encrypted: None,
-        scope_circle: None,
     })
 }
 
@@ -56,11 +55,6 @@ pub(crate) fn channel_from_current_strand(
     let topic = metadata.and_then(|metadata| metadata.summary.clone());
     let security_encrypted =
         (strand.encrypted_metadata.is_some() || strand.encrypted_content.is_some()).then_some(true);
-    let scope_circle = strand.scope_circle_id.map(|circle_id| StrandScopeCircle {
-        circle_id: circle_id.to_string(),
-        title: circle_id.to_string(),
-        member_count: 0,
-    });
     Some(ChannelEntity {
         strand_id,
         name,
@@ -76,7 +70,6 @@ pub(crate) fn channel_from_current_strand(
         is_default: false,
         is_private_sidecar: false,
         security_encrypted,
-        scope_circle,
     })
 }
 

@@ -31,17 +31,84 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
-}
-
-.board-toolbar-main {
   justify-content: flex-start;
 }
 
-.board-toolbar-disclosure {
+.board-toolbar-options {
+  flex: none;
+  margin-inline-start: auto;
+}
+
+.board-toolbar-options .sapid-menu-trigger {
+  display: grid;
+  place-items: center;
+  width: var(--control-md);
+  height: var(--control-md);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.board-toolbar-options .sapid-menu-trigger:is(:hover, [aria-expanded="true"]) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.board-toolbar-options .ui-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.board-options-menu {
+  box-sizing: border-box;
+  max-width: calc(100vw - 16px);
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+}
+
+.board-options-menu .sapid-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--control-md);
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.board-options-menu .sapid-menu-item:is(:disabled, [aria-disabled="true"]) {
+  color: var(--text-3);
+  opacity: .65;
+  cursor: default;
+}
+
+.board-options-menu .sapid-menu-item:enabled:is(:hover, :focus-visible) {
+  background: var(--surface-2);
+}
+
+.board-options-menu .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.board-toolbar-add-list {
   min-width: 0;
   flex: 0 0 auto;
 }
-.board-toolbar-disclosure > .sapid-collapsible-trigger {
+.board-toolbar-add-list .sapid-popover-trigger {
   display: inline-flex;
   align-items: center;
   min-height: 38px;
@@ -53,16 +120,16 @@
   font: inherit;
   cursor: pointer;
 }
-.board-toolbar-disclosure > .sapid-collapsible-trigger:focus-visible {
+.board-toolbar-add-list .sapid-popover-trigger:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.board-toolbar-disclosure [data-state="open"],
-.board-toolbar-disclosure > .sapid-collapsible-panel {
-  min-width: 0;
+.board-add-list-panel {
+  width: 288px;
+  padding: 10px;
 }
-.board-toolbar-disclosure > .sapid-collapsible-panel:not([hidden]) {
-  padding-top: 8px;
+.board-toolbar-add-list .sapid-popover-trigger:is(:hover, [aria-expanded=true]) {
+  background: var(--surface-2);
 }
 .board-card .kanban-card-assignee {
   margin: 0;
@@ -95,34 +162,14 @@
 }
 
 .board-list-compose {
-  flex: 0 1 auto;
-  min-width: 0;
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
 }
-
-.board-list-compose input {
-  width: 180px;
-  max-width: 20vw;
-  min-width: 132px;
-  min-height: 38px;
-  box-sizing: border-box;
-  border: 1px solid var(--border, var(--ak-line-strong));
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: var(--surface, var(--ak-surface));
-  color: var(--ak-ink);
-}
-
-.board-popover-panel input {
+.board-list-compose :is(.new-column-input, input) {
   width: 100%;
-  min-height: 38px;
-  box-sizing: border-box;
-  border: 1px solid var(--border, var(--ak-line-strong));
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: var(--surface, var(--ak-surface));
-  color: var(--ak-ink);
+  min-width: 0;
 }
+.board-status:empty { display: none; }
 
 .board-select-menu-host {
   position: relative;
@@ -182,6 +229,26 @@
   padding: 6px;
 }
 
+.board-order-row {
+  display: flex;
+  align-items: center;
+  border-radius: 7px;
+}
+.board-order-row.drop-before { box-shadow: inset 0 2px var(--accent, var(--ak-brand)); }
+.board-order-row.drop-after { box-shadow: inset 0 -2px var(--accent, var(--ak-brand)); }
+.board-order-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  min-width: 28px;
+  color: var(--muted);
+  cursor: grab;
+  touch-action: none;
+}
+.board-order-grip:active { cursor: grabbing; }
+.board-order-row .board-select-menu-item { min-width: 0; }
+
 .board-select-menu-item {
   min-height: 36px;
   width: 100%;
@@ -201,7 +268,6 @@
 
 .board-select-menu-item:hover,
 .board-select-menu-item:focus-visible {
-  outline: none;
   border-color: color-mix(in srgb, var(--accent, var(--ak-brand)) 34%, transparent);
   background: color-mix(in srgb, var(--accent, var(--ak-brand)) 10%, var(--surface, var(--ak-surface)));
 }
@@ -223,20 +289,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.board-popover-host {
-  position: relative;
-}
-
-.board-popover-panel {
-  display: grid;
-  gap: 8px;
-  padding: 10px;
-}
-
-.board-maintenance.is-empty {
-  display: none;
 }
 
 .board-grid {
@@ -312,9 +364,6 @@
   font-size: 15px;
   font-weight: 800;
   line-height: 1.2;
-}
-.board-column-title .column-rename-input:focus {
-  outline: none;
 }
 
 .board-column-title .column-drag-handle {
@@ -458,7 +507,6 @@
   box-sizing: border-box;
   padding: 10px 12px;
   border: 0;
-  outline: 0;
   resize: vertical;
   overflow-y: auto;
   background: transparent;
@@ -472,10 +520,6 @@
 }
 .board-card-composer-input::placeholder {
   color: var(--ak-muted, var(--text-3));
-}
-.board-card-composer-card:focus-within {
-  border-color: var(--ak-brand, var(--accent));
-  box-shadow: 0 0 0 1px var(--ak-brand, var(--accent));
 }
 .board-card-composer-actions {
   display: flex;
@@ -499,25 +543,47 @@
   display: flex;
   justify-content: flex-start;
 }
-.board-maintenance {
-  border-style: dashed;
+.kanban-maintenance {
+  display: grid;
+  gap: 6px;
+  min-height: 0;
+  max-height: 40%;
+  overflow: auto;
+}
+.kanban-maintenance :is(.kanban-archived-lists, .kanban-archived-cards) {
+  gap: 0;
+  padding: 0;
+  border: 0;
   box-shadow: none;
+  background: transparent;
 }
-.board-maintenance > summary {
-  cursor: pointer;
+.kanban-maintenance :is(.kanban-archived-lists, .kanban-archived-cards) > .sapid-collapsible-trigger {
   display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  color: var(--ak-muted);
-  font-size: 12px;
-  font-weight: 700;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--control-md);
+  padding: 4px 8px;
+  color: var(--text-2);
 }
-.board-maintenance > summary span:last-child {
-  white-space: nowrap;
+.kanban-maintenance :is(.kanban-archived-lists, .kanban-archived-cards) > .sapid-collapsible-trigger::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(-45deg);
 }
-.board-maintenance > .muted,
-.board-maintenance > .event {
-  margin-top: 8px;
+.kanban-maintenance :is(.kanban-archived-lists, .kanban-archived-cards) > [aria-expanded=true]::before {
+  transform: rotate(45deg);
+}
+.kanban-maintenance :is(.kanban-archived-list-row, .kanban-archived-card-row) {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+}
+.kanban-maintenance .event-head {
+  justify-content: flex-start;
 }
 @media (max-width: 900px) {
   .board-grid { margin-inline: -4px; padding-inline: 4px; }
@@ -608,9 +674,8 @@
 }
 
 /* Sapid owns toolbar layers and collapse semantics. */
-.board-select-menu-host > .sapid-popover, .board-popover-host > .sapid-popover { display: contents; }
+.board-select-menu-host > .sapid-popover { display: contents; }
 .board-select-menu-host .sapid-popover-trigger > [data-gly-kind=group] { display: contents; }
-.board-popover-host .sapid-popover-trigger { min-height: 36px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
 .board-toolbar-popover { max-width: calc(100vw - 24px); max-height: min(420px, calc(100dvh - 40px)); overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-solid, var(--surface)); color: var(--text); box-shadow: var(--shadow-lg); }
 .board-maintenance > .sapid-collapsible-trigger { width: 100%; padding: 8px; border: 0; background: transparent; color: var(--text); font: inherit; font-weight: 600; text-align: start; cursor: pointer; }
 

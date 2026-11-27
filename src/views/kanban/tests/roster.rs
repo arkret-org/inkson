@@ -205,7 +205,6 @@ fn assignment_mutations_preserve_same_principal_accounts_at_different_stations()
                 schema: arkret_sdk::SchemaId::RELATION_V1.to_owned(),
                 id: Some(arkret_sdk::RelationId::new(removed_relation_id).unwrap()),
                 realm_id: arkret_sdk::RealmId::new(TEST_REALM_ID).unwrap(),
-                scope_circle_id: None,
                 effective_scope: None,
                 relation_kind: arkret_sdk::RelationKind::from_wire("assigned_to"),
                 from_ref: card.id.as_str().into(),

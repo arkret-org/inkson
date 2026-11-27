@@ -1,6 +1,6 @@
 //! Shared MLS runtime helpers.
 //!
-//! Normal Realm/Circle usage wraps local MLS checkpoints with an
+//! Normal Realm usage wraps local MLS checkpoints with an
 //! account-scoped secret. The runtime exposes typed readiness errors when a
 //! device has not yet received a Welcome delivery for a scope.
 //!

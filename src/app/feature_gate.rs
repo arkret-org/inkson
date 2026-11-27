@@ -100,6 +100,8 @@ pub(super) fn route_label_key(route: &Route) -> &'static str {
         Route::PrincipalControl => "route.principal_control",
         Route::Realm { .. } => "route.realm",
         Route::Chat { .. } => "route.chat",
+        Route::PrivateChats => "nav.private_chats",
+        Route::NewPrivateChat => "direct.new_chat",
         Route::DirectConversation { .. } => "route.direct",
         Route::ContactsManage => "route.contacts_manage",
         Route::Contacts => "route.contacts",
@@ -112,10 +114,11 @@ pub(super) fn route_label_key(route: &Route) -> &'static str {
         },
         Route::Account => "route.account",
         Route::Settings => "route.settings",
-        Route::SettingsSection { section, .. } => settings_route_label_key(section),
+        Route::SettingsSection { section, .. } => {
+            crate::views::settings::section_label_key(section)
+        }
         Route::NotificationsSettings => "route.notifications",
         Route::RealmMembers { .. } => "route.realm_members",
-        Route::Circles { .. } | Route::CircleDetail { .. } => "route.circles",
         Route::RealmAdmin { .. } => "route.realm_admin",
         Route::RealmAdminSection { section, .. } => match section.as_str() {
             "profile" => "route.realm_admin.profile",
@@ -135,37 +138,12 @@ pub(super) fn route_label_key(route: &Route) -> &'static str {
         Route::Notifications => "route.notifications",
         Route::Call { .. } => "route.call",
         Route::Recovery => "route.recovery",
-        Route::SettingsDevices => "route.devices",
+        Route::SettingsDevices => "settings.section.devices",
         Route::SettingsDevicesPair => "route.devices_pair",
-        Route::SettingsRecovery => "route.recovery",
+        Route::SettingsRecovery => "settings.section.recovery",
         Route::Onboarding => "route.onboarding",
         Route::Quarantine => "route.quarantine",
         Route::Applets => "route.applets",
         Route::Search => "route.directory",
-    }
-}
-
-/// i18n key for a settings section's breadcrumb label. Several sections
-/// share a destination (`security` / `key-backup` / `recovery`), so the
-/// mapping collapses onto the same key.
-pub(super) fn settings_route_label_key(section: &str) -> &'static str {
-    match section {
-        "agents" => "settings.section.agents",
-        "server" => "route.settings.server",
-        "devices" => "route.devices",
-        "storage" => "route.settings.storage",
-        "encryption" => "route.settings.encryption",
-        "security" | "key-backup" | "recovery" => "route.recovery",
-        "mimi" => "route.settings.mimi",
-        "push" | "notifications" => "route.notifications",
-        "privacy" => "route.settings.privacy",
-        "invite-policy" | "invite_policy" => "route.settings.invite_policy",
-        "blocklist" | "blocked-users" => "route.settings.blocklist",
-        "capabilities" => "route.settings.capabilities",
-        "audit" | "audit-log" => "route.audit",
-        "developer" | "developer-tools" => "route.developer",
-        "theme" => "route.settings.theme",
-        "release" => "route.settings.release",
-        _ => "route.settings",
     }
 }

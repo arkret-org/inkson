@@ -194,7 +194,6 @@ async fn signal_seal_commits_checkpoint_and_restart_and_stale_snapshot_do_not_re
         actor.clone(),
         device.clone(),
         arkret_sdk::RealmCommitId::from_digest([81; 32]),
-        None,
         arkret_wire::SignalClass::Session,
         crate::clock::now_utc(),
     );

@@ -72,25 +72,7 @@ pub(crate) fn navigation_heading(
 ) -> View {
     let input_label = context.translated(scope, label);
     let open = scope.cage(!query.get_untracked().is_empty());
-    let focus_requested = scope.cage(false);
-    let input_reference = scope.cage(None::<glory::render::NodeId>);
     let trigger_reference = scope.cage(None::<glory::render::NodeId>);
-    let focus_scope = scope.downgrade();
-    let focus_context = context.clone();
-    scope.effect(move || {
-        if !focus_requested.get() {
-            return;
-        }
-        let Some(input) = input_reference.get() else {
-            return;
-        };
-        focus_requested.revise(|value| *value = false);
-        if focus_context.workspace_navigation.pane_visible(false)
-            && let Some(scope) = focus_scope.upgrade()
-        {
-            focus_navigation_node(&scope, Some(input));
-        }
-    });
     let dismiss_scope = scope.downgrade();
     let count = actions.len() + 1;
     let mut children = vec![
@@ -105,7 +87,6 @@ pub(crate) fn navigation_heading(
                 .trigger_content(|| crate::components::ui_icon("search"))
                 .on_open_change(move |next| {
                     open.revise(|value| *value = next);
-                    focus_requested.revise(|value| *value = next);
                     if !next {
                         query.revise(|value| value.clear());
                     }
@@ -117,7 +98,6 @@ pub(crate) fn navigation_heading(
                         .name(input_label)
                         .placeholder(input_label)
                         .value(query)
-                        .node_ref(input_reference)
                         .on(glory::render::EventKind::Keyboard, {
                             let dismiss_scope = dismiss_scope.clone();
                             move |event| {
@@ -129,7 +109,6 @@ pub(crate) fn navigation_heading(
                                     }
                                 ) && open.get_untracked()
                                 {
-                                    focus_requested.revise(|value| *value = false);
                                     query.revise(|value| value.clear());
                                     open.revise(|value| *value = false);
                                     if let Some(scope) = dismiss_scope.upgrade() {

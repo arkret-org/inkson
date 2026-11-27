@@ -35,3 +35,5 @@ pub(crate) mod sidecar_bootstrap;
 /// The `keypackages/consume` a joined Welcome owes once it is durable.
 pub mod welcome_consume;
 pub(crate) mod welcome_delivery;
+
+pub(crate) mod membership_removal;

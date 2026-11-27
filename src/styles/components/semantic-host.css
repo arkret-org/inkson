@@ -268,7 +268,7 @@ html, body, #app { min-width: 0; min-height: 100%; }
 .sapid-menu.watch-level-picker .watch-level-option{white-space:pre-line;min-height:42px;padding:7px 10px;text-align:left;border:0;border-radius:6px;background:transparent;color:var(--text)}
 .sapid-menu.message-context-menu{visibility:visible}
 .message-context-menu .message-context-menu-item{display:flex;align-items:center;justify-content:flex-start;width:100%;height:auto;min-height:34px;text-align:left;padding:7px 10px;background:transparent;border:none;border-radius:6px;box-shadow:none;font-size:13px;font-weight:650;cursor:pointer;color:var(--text);transition:background-color 100ms ease,color 100ms ease}
-.message-context-menu .message-context-menu-item:not(:disabled):hover,.message-context-menu .message-context-menu-item:focus-visible{color:var(--text);background:color-mix(in srgb,var(--accent) 12%,var(--surface-2));outline:none}
+.message-context-menu .message-context-menu-item:not(:disabled):hover,.message-context-menu .message-context-menu-item:focus-visible{color:var(--text);background:color-mix(in srgb,var(--accent) 12%,var(--surface-2))}
 .message-context-menu .message-context-menu-item.danger{margin-top:2px;border-top:1px solid var(--border-faint);border-radius:0 0 6px 6px;color:var(--danger)}
 .message-context-menu .message-context-menu-item.danger:not(:disabled):hover,.message-context-menu .message-context-menu-item.danger:focus-visible{background:color-mix(in srgb,var(--danger) 12%,var(--surface-2))}
 @media(max-width:640px){.message-context-menu .message-context-menu-item{min-height:40px;padding:9px 10px}}
@@ -281,7 +281,6 @@ html, body, #app { min-width: 0; min-height: 100%; }
 
 .message-edit-controls { display: contents; }
 
-.chat-input-host{position:relative;display:grid;min-width:0}.chat-input-hint{position:absolute;inset:12px 12px auto;margin:0;color:var(--text-2);pointer-events:none;line-height:1.5}
 
 /* Remote-main input hint uses the associated field label, not a private host attribute. */
 .direct-title-field { position: relative; display: block; min-width: 0; }

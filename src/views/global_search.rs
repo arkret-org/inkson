@@ -894,19 +894,19 @@ pub fn global_search_panel(
     // one. run_search cancels that read and fences its result by request epoch.
     let enabled = scope.bond(move || !query.get().trim().is_empty());
     let query_reference = scope.cage(None);
-    let query_focused = scope.cage(false);
+    let focus_requested = context.focus_search_on_navigation;
     let focus_owner = scope.downgrade();
     scope.effect(move || {
-        if !query_focused.get_untracked()
+        if focus_requested.get()
             && let Some(node) = query_reference.get()
             && let Some(scope) = focus_owner.upgrade()
             && scope
                 .capabilities()
                 .is_ok_and(|capabilities| capabilities.focus)
         {
-            match scope.action(glory::render::Action::Focus(node)) {
-                Ok(()) => query_focused.revise(|focused| *focused = true),
-                Err(error) => scope.report_error(error),
+            focus_requested.revise(|requested| *requested = false);
+            if let Err(error) = scope.action(glory::render::Action::Focus(node)) {
+                scope.report_error(error);
             }
         }
     });

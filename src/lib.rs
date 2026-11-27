@@ -28,13 +28,7 @@ pub(crate) mod browser_storage;
 pub mod build_info;
 pub mod calendar;
 pub mod canonical;
-/// P3B.2 — Circle UX types, scope picker, error-code mapping.
-/// `Circle` is the intra-Realm cryptographic sub-boundary (strict
-/// subset of Realm membership + independent MLS group). This module is
-/// the client-side surface; the canonical struct lives in
-/// `arkret_models_collaboration::governance::circle`.
-pub mod circle;
-pub mod circle_mls;
+
 pub mod client_core;
 pub(crate) mod clock;
 pub mod components;

@@ -585,7 +585,7 @@ fn fold_revision_group(
 }
 
 /// Ordinary chat projection only consumes a self-consistent Event whose signed
-/// scope is this Realm or one of its Circles. A native Sidecar Event may name
+/// scope is this Realm. A native Sidecar Event may name
 /// the same source Strand in its payload, but that does not authorize an echo
 /// into the shared timeline. Missing proof/scope stays out of this fold.
 /// Unresolved producer evidence remains explicitly flagged by the renderer;
@@ -624,10 +624,6 @@ fn ordinary_chat_event_proof(
     match scope {
         arkret_sdk::ScopeRef::Realm {
             realm_id: scope_realm_id,
-        }
-        | arkret_sdk::ScopeRef::Circle {
-            realm_id: scope_realm_id,
-            ..
         } if scope_realm_id.as_str() == signed_realm_id => Some(proof),
         _ => None,
     }
@@ -1168,10 +1164,7 @@ fn chat_message_from_event_with_proof(
         .filter(|value| value.starts_with("ak:strand:"))
         .unwrap_or("ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE")
         .to_owned();
-    // Message submit payloads normatively do not carry `scope_circle_id`.
-    // The reducer stamps the immutable Event `effective_scope`; selecting the
-    // matching Circle snapshot above binds decryption to that scope without
-    // inventing a payload field that v1 forbids.
+    // The accepted Event binds the decryption scope.
     let crypto_state = if proof_verdict == ChatProofVerdict::Unresolved {
         // A non-device producer whose signer evidence is not verified yet is
         // flagged rather than presented as trusted.
@@ -1382,8 +1375,7 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
             .and_then(|envelope| envelope.get("scope_ref"))
             .and_then(|scope| serde_json::from_value::<arkret_sdk::ScopeRef>(scope.clone()).ok());
         let realm_id = match &signed_scope {
-            Some(arkret_sdk::ScopeRef::Realm { realm_id })
-            | Some(arkret_sdk::ScopeRef::Circle { realm_id, .. }) => realm_id.as_str(),
+            Some(arkret_sdk::ScopeRef::Realm { realm_id }) => realm_id.as_str(),
             _ => realm_id,
         };
         let proof_verdict =
@@ -1475,11 +1467,7 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
             continue;
         };
         let scope = signed_scope.clone().and_then(|scope| match scope {
-            arkret_sdk::ScopeRef::Realm { realm_id } => Some((realm_id, None)),
-            arkret_sdk::ScopeRef::Circle {
-                realm_id,
-                circle_id,
-            } => Some((realm_id, Some(circle_id))),
+            arkret_sdk::ScopeRef::Realm { realm_id } => Some(realm_id),
             _ => None,
         });
         let Ok(block) = serde_json::from_value::<
@@ -1569,9 +1557,9 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
             card.verified_scope = verified_input.map(|input| input.event.scope_ref.clone());
         }
         if identity.is_some()
-            && let Some((realm_id, circle_id)) = scope
+            && let Some(realm_id) = scope
         {
-            card_scopes.insert((realm_id, circle_id, poll_ref), cards.len());
+            card_scopes.insert((realm_id, poll_ref), cards.len());
         }
         cards.push(card);
     }
@@ -1584,13 +1572,9 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
     let mut accepted_responses = std::collections::BTreeMap::new();
     let mut reduced = PollResponseSet::default();
     for (partition, accepted_ref, selections, heads) in responses {
-        let circle = match &partition.stream_ref {
-            arkret_sdk::CommitStreamRef::Circle { circle_id, .. } => Some(circle_id.clone()),
-            _ => None,
-        };
+        if partition.stream_ref != (arkret_sdk::CommitStreamRef::Realm { realm_id: partition.realm_id.clone() }) { continue; }
         let key = (
             partition.realm_id.clone(),
-            circle,
             partition.poll_ref.clone(),
         );
         let Some(index) = card_scopes.get(&key).copied() else {
@@ -1621,15 +1605,11 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
         accepted_responses.insert(accepted_ref.event_id.clone(), (partition, accepted_ref));
     }
     for (partition, projection) in reduced.project(true) {
-        let circle = match &partition.stream_ref {
-            arkret_sdk::CommitStreamRef::Circle { circle_id, .. } => Some(circle_id.clone()),
-            _ => None,
-        };
+        if partition.stream_ref != (arkret_sdk::CommitStreamRef::Realm { realm_id: partition.realm_id.clone() }) { continue; }
         let Some(index) = card_scopes
             .get(&(
                 partition.realm_id.clone(),
-                circle,
-                partition.poll_ref.clone(),
+                    partition.poll_ref.clone(),
             ))
             .copied()
         else {
@@ -1651,14 +1631,8 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
             }
         }
     }
-    for ((realm_id, circle_id, poll_ref), index) in card_scopes {
-        let stream = match circle_id {
-            Some(circle_id) => arkret_sdk::CommitStreamRef::Circle {
-                realm_id,
-                circle_id,
-            },
-            None => arkret_sdk::CommitStreamRef::Realm { realm_id },
-        };
+    for ((realm_id, poll_ref), index) in card_scopes {
+        let stream = arkret_sdk::CommitStreamRef::Realm { realm_id };
         if let Some(poll) = verified_inputs
             .iter()
             .find(|input| arkret_sdk::MessageId::from_event_id(&input.event.event_id) == poll_ref)

@@ -11,14 +11,14 @@ fn stale_secure_creator_cache_cannot_replace_the_accepted_private_checkpoint() {
         arkret_sdk::RealmId::new("ak:realm:AR9U75vD82XqGon9r2GYv6cwT3_W8U4BtjeOCoODErj_").unwrap();
     let event =
         arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [71; 32]);
-    let circle_id = arkret_sdk::CircleId::from_event_id(&event);
+    let sidecar_id = arkret_sdk::SidecarId::from_event_id(&event);
     for scope in [
         arkret_sdk::ScopeRef::Realm {
             realm_id: realm.clone(),
         },
-        arkret_sdk::ScopeRef::Circle {
+        arkret_sdk::ScopeRef::Sidecar {
             realm_id: realm.clone(),
-            circle_id,
+            sidecar_id,
         },
     ] {
         let path = temp_state_path(&format!(
@@ -127,7 +127,7 @@ fn receive_ratchet_preserves_exact_accepted_group_state_event() {
     );
     assert_eq!(
         store
-            .mls_group_state_ref_for_effective_scope(realm, None, "abcd", 1)
+            .mls_group_state_ref_for_effective_scope(realm,  "abcd", 1)
             .unwrap(),
         event
     );
@@ -137,7 +137,7 @@ fn receive_ratchet_preserves_exact_accepted_group_state_event() {
     let restored = LocalStateStore::with_path(path);
     assert_eq!(
         restored
-            .mls_group_state_ref_for_effective_scope(realm, None, "abcd", 1)
+            .mls_group_state_ref_for_effective_scope(realm,  "abcd", 1)
             .unwrap(),
         event
     );

@@ -90,7 +90,7 @@ impl EventSubmitter {
                 | arkret_sdk::EventKind::StrandUpdate
         ) || !matches!(
             intent.scope_ref(),
-            arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+            arkret_sdk::ScopeRef::Realm { .. }
         ) {
             return Ok(intent);
         }
@@ -233,12 +233,9 @@ impl EventSubmitter {
                 let group_ref = state
                     .mls_group_state_ref_for_scope(scope, &snapshot.group_id, snapshot.epoch)
                     .map_err(anyhow::Error::msg)?;
-                let (circle, sidecar) = match scope {
-                    arkret_sdk::ScopeRef::Circle { circle_id, .. } => {
-                        (Some(circle_id.as_str()), None)
-                    }
-                    arkret_sdk::ScopeRef::Sidecar { sidecar_id, .. } => (None, Some(sidecar_id)),
-                    _ => (None, None),
+                let sidecar = match scope {
+                    arkret_sdk::ScopeRef::Sidecar { sidecar_id, .. } => Some(sidecar_id),
+                    _ => None,
                 };
                 crate::mls::runtime::encrypt_message_with_device_snapshot(
                     state,
@@ -253,7 +250,7 @@ impl EventSubmitter {
                     None,
                     None,
                     None,
-                    circle,
+
                     sidecar,
                     material,
                     None,

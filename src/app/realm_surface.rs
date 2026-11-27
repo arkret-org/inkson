@@ -19,12 +19,13 @@ impl RealmSurface {
         [Self::Board]
     }
 
-    pub(crate) fn short_label(self) -> &'static str {
+    pub(crate) fn short_label_key(self) -> &'static str {
         match self {
-            Self::Board => "Board",
+            Self::Board => "kanban.ui.boards",
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
     pub(crate) fn title(self) -> &'static str {
         match self {
             Self::Board => "Board View",

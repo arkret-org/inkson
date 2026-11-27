@@ -1063,7 +1063,7 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, draft: super::Setu
                                     identity,
                                 ]), presentation::bootstrap_status(scope, context.clone(), draft.realm_state)]),
                                 crate::components::mls_creator_retry::creator_mls_retry(scope, context.clone(), crate::components::mls_creator_retry::CreatorMlsRetryProps {
-                                    realm_id: realm.into(), circle_id: None, refresh_hint: draft.realm_state.into(), token: context.token,
+                                    realm_id: realm.into(), refresh_hint: draft.realm_state.into(), token: context.token,
                                 }),
                                 navigation,
                             ])

@@ -229,58 +229,6 @@ pub fn chinese_translations() -> TranslationDict {
     }
     dict.set("kanban.ui.members_loading", "正在加载成员身份…");
     dict.set("kanban.ui.members_unavailable", "暂时无法读取成员身份。");
-    dict.set("circles.feedback.account_required", "请先登录账号。");
-    dict.set("circles.feedback.archive_failed", "归档失败：{error}");
-    dict.set("circles.feedback.archived", "圈子已归档");
-    dict.set("circles.feedback.create_failed", "创建圈子失败：{error}");
-    dict.set("circles.feedback.created", "圈子已创建");
-    dict.set("circles.feedback.creating", "正在创建圈子并设置初始成员…");
-    dict.set(
-        "circles.feedback.history_failed",
-        "修改历史记录范围失败：{error}",
-    );
-    dict.set(
-        "circles.feedback.history_restricted",
-        "历史记录已限制为加入之后",
-    );
-    dict.set(
-        "circles.feedback.invalid_account",
-        "账号标识无效，请重新登录。",
-    );
-    dict.set(
-        "circles.feedback.invalid_member",
-        "请输入完整的成员身份标识，包含身份类型及适用的托管站点。",
-    );
-    dict.set(
-        "circles.feedback.invalid_realm",
-        "Realm 标识无效，请刷新重试。",
-    );
-    dict.set(
-        "circles.feedback.invalid_transition",
-        "请选择有效的成员状态变更。",
-    );
-    dict.set("circles.feedback.join_requested", "加入申请已提交");
-    dict.set("circles.feedback.load_failed", "无法加载圈子：{error}");
-    dict.set(
-        "circles.feedback.member_removal_failed",
-        "移除成员失败：{error}",
-    );
-    dict.set("circles.feedback.member_removed", "成员访问权限已移除");
-    dict.set(
-        "circles.feedback.membership_failed",
-        "更新成员状态失败：{error}",
-    );
-    dict.set("circles.feedback.membership_updated", "成员状态已更新");
-    dict.set(
-        "circles.feedback.prepare_failed",
-        "无法准备圈子变更，请刷新重试。",
-    );
-    dict.set("circles.feedback.restore_failed", "恢复失败：{error}");
-    dict.set("circles.feedback.restored", "圈子已恢复");
-    dict.set("circles.feedback.retire_failed", "停用圈子失败：{error}");
-    dict.set("circles.feedback.retired", "圈子已永久停用");
-    dict.set("circles.feedback.update_failed", "更新圈子失败：{error}");
-    dict.set("circles.feedback.updated", "圈子已更新");
     dict.set("kanban.ui.actions", "操作");
     dict.set("kanban.ui.add_a_card_to_this_list", "向此列表添加卡片");
     dict.set("kanban.ui.add_a_list_to_this_board", "向此看板添加列表");
@@ -300,6 +248,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.ui.archived_lists", "{count} 个列表");
     dict.set("kanban.ui.asia_shanghai", "例如：Asia/Shanghai");
     dict.set("kanban.ui.assignees", "负责人");
+    dict.set("kanban.ui.move_board", "移动看板");
     dict.set("kanban.ui.board_options", "看板选项");
     dict.set("chat.composer.retry_attachments", "重试上传");
     dict.set("kanban.ui.board_title", "看板标题");
@@ -482,6 +431,13 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("nav.notifications", "通知");
     dict.set("nav.settings", "设置");
     dict.set("nav.collaboration", "协作");
+    dict.set("nav.private_chats", "私聊");
+    dict.set("direct.new_chat", "发起私聊");
+    dict.set("direct.search_chats", "搜索私聊");
+    dict.set("direct.choose_chat", "选择一个私聊以查看消息。");
+    dict.set("direct.choose_recipient", "选择用户或 Agent 开始私聊。");
+    dict.set("direct.empty_chats", "还没有私聊。");
+    dict.set("direct.no_matches", "没有匹配的私聊。");
     dict.set("nav.contacts", "联系人");
     dict.set("direct.unavailable", "暂不可发送");
     dict.set("contacts.empty", "暂无联系人");
@@ -687,6 +643,12 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.section.theme", "外观与语言");
     dict.set("settings.section.release", "发布状态");
     dict.set("settings.section.audit", "审计日志");
+    dict.set("settings.section.about", "关于");
+    dict.set("settings.about.client_version", "客户端版本");
+    dict.set("settings.about.spec_version", "Arkret 规范版本");
+    dict.set("settings.about.release_date", "发布日期");
+    dict.set("settings.about.no_release_date", "暂无发布日期");
+    dict.set("settings.about.build", "构建标识");
     dict.set("settings.section.developer", "开发者工具");
     dict.set("settings.account.identity", "账号身份");
     dict.set("settings.profile.display_name", "显示名称");
@@ -740,10 +702,8 @@ pub fn chinese_translations() -> TranslationDict {
         "settings.group.privacy.hint",
         "资料可见范围、邀请和屏蔽名单。",
     );
-    dict.set("settings.group.notifications", "通知");
-    dict.set("settings.group.notifications.hint", "通知投递行为。");
-    dict.set("settings.group.appearance", "外观与语言");
-    dict.set("settings.group.appearance.hint", "主题与语言。");
+    dict.set("settings.group.preferences", "使用偏好");
+    dict.set("settings.group.preferences.hint", "通知、外观与语言。");
     dict.set("settings.group.advanced", "高级");
     dict.set("settings.group.advanced.hint", "数据、连接与协议诊断。");
     // Settings-nav filter (design 3.4).
@@ -922,6 +882,7 @@ pub fn chinese_translations() -> TranslationDict {
         "settings.notifications.sound_test_blocked",
         "请先开启声音提醒再测试。",
     );
+    dict.set("settings.notifications.dnd_mode", "免打扰模式");
     dict.set("settings.notifications.dnd", " 免打扰");
     dict.set("settings.notifications.dnd_off", "关闭");
     dict.set("settings.notifications.dnd_now", "现在");
@@ -991,6 +952,9 @@ pub fn chinese_translations() -> TranslationDict {
         "settings.privacy.presence_visibility.nobody",
         "任何人都不可见（显示为离线）",
     );
+    dict.set("settings.privacy.presence", "在线状态");
+    dict.set("settings.privacy.status_expiry", "状态清除时间");
+    dict.set("settings.privacy.status_message", "状态消息");
     dict.set("settings.privacy.status_title", "我的状态");
     dict.set("settings.privacy.status_badge", "手动在线状态");
     dict.set("settings.privacy.presence_state.auto", "自动");
@@ -1109,25 +1073,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.archive_list_confirm_confirm", "归档列表");
     dict.set("kanban.archive_list_confirm_cancel", "取消");
     dict.set("kanban.restore_action", "恢复");
-    dict.set("error.circle.realm_mismatch", "Circle 不属于该 Realm。");
-    dict.set(
-        "error.circle.not_active",
-        "Circle 已归档或已终止，不能继续写入。",
-    );
-    dict.set(
-        "error.circle.member_not_in_realm",
-        "该用户不是父 Realm 的成员，不能加入 Circle。",
-    );
-    dict.set(
-        "error.circle.scope_rebind_forbidden",
-        "改变已有对象的 Circle scope 需要审计管理操作。",
-    );
-    // CircleScopePicker 的默认 scope 选项与帮助文案。
-    dict.set("circle.scope.realm_everyone", "Realm（所有人）");
-    dict.set(
-        "circle.scope.help",
-        "选择 Circle 可将可见范围限制为 Realm 成员的严格子集。",
-    );
     dict.set("kanban.archived_lists_header", "已归档列表");
     dict.set("kanban.archived_lists_empty", "暂无已归档列表。");
     dict.set("kanban.archived_cards_header", "已归档卡片");
@@ -1557,7 +1502,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.discussions_header", "Strand 讨论");
     dict.set("chat.users_header", "用户");
     dict.set("chat.settings_header", "设置");
-    dict.set("chat.new_strand", "新建 Strand");
+    dict.set("chat.new_chat", "新建聊天");
     dict.set("chat.hide_list", "隐藏讨论列表");
     dict.set("chat.label.title", "标题");
     dict.set("chat.label.summary", "概述");
@@ -1999,6 +1944,15 @@ pub fn chinese_translations() -> TranslationDict {
         "settings.privacy.blocklist.empty_body",
         "你还没有屏蔽任何对象。",
     );
+    dict.set("settings.privacy.blocklist.kind.service", "服务");
+    dict.set("settings.privacy.blocklist.kind.realm", "空间成员身份");
+    dict.set("settings.privacy.blocklist.target.service", "服务身份 ID");
+    dict.set(
+        "settings.privacy.blocklist.target.realm_actor",
+        "空间成员身份 ID",
+    );
+    dict.set("settings.privacy.blocklist.target.station", "所属站点 ID");
+    dict.set("settings.privacy.blocklist.target.realm", "空间 ID");
     dict.set("settings.privacy.blocklist.kind.domain", "域名");
     dict.set("settings.privacy.blocklist.kind.actor", "用户或代理");
     dict.set(
@@ -2019,7 +1973,10 @@ pub fn chinese_translations() -> TranslationDict {
         "已取消屏蔽 {target}",
     );
     dict.set("settings.privacy.blocklist.target_type", "对象类型");
-    dict.set("settings.privacy.blocklist.target.actor", "目标账户或代理");
+    dict.set(
+        "settings.privacy.blocklist.target.actor",
+        "账户或代理身份 ID",
+    );
     dict.set("settings.privacy.blocklist.target.domain", "目标域名");
     dict.set(
         "settings.privacy.blocklist.invalid.actor",
@@ -2121,13 +2078,20 @@ pub fn chinese_translations() -> TranslationDict {
         "当前服务器尚未提供该视图所需的能力。请尝试其他服务器或联系管理员。",
     );
 
-    dict.set("developer.title", "开发者工具");
-    dict.set("developer.subtitle", "协议诊断与审计");
+    dict.set(
+        "developer.diagnostics_intro",
+        "查看协议版本和最近的事件，排查通信问题。",
+    );
     dict.set("developer.section.events", "原始事件日志");
+    dict.set("developer.events.empty", "暂无原始操作记录。");
+    dict.set(
+        "developer.events.preview",
+        "共 {total} 条原始操作记录，按时间从新到旧显示最近 {count} 条。",
+    );
     dict.set("developer.section.protocol_version", "协议版本");
     dict.set(
-        "developer.hint",
-        "以下信息面向开发者和运维人员。终端用户无需阅读。",
+        "developer.protocol_version.description",
+        "当前客户端声明的协议版本。",
     );
 
     // R3 spec sync (b47ff6ec) — Chinese error toast translations.
@@ -2276,10 +2240,6 @@ pub fn chinese_translations() -> TranslationDict {
         "applets.manifest_placeholder",
         "完整注册材料 JSON（AppletInstallPreviewRequestBody）",
     );
-    dict.set(
-        "applets.circle_placeholder",
-        "可选 Circle 标识（ak:circle:…）；留空表示整个 Realm",
-    );
     dict.set("applets.actions_placeholder", "获批操作，以逗号或换行分隔");
     dict.set("applets.allow_ghost", "允许由小程序管理的 Ghost Actor");
     dict.set("applets.preview_plan", "预览计划");
@@ -2290,7 +2250,6 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("applets.trace_events", "查看事件追踪");
     dict.set("applets.revoke_scope", "卸载目标");
-    dict.set("applets.revoke_scope_help", "填写要卸载的 Circle，留空表示 Realm 安装。只影响所选 Service。登记历史不代表当前安装仍有效。");
     dict.set("applets.bot_name", "Bot 显示名称（可选）");
     dict.set("applets.create_bot", "创建 Bot");
     dict.set(
@@ -2405,159 +2364,12 @@ pub fn chinese_translations() -> TranslationDict {
         "chat.composer.placeholder_direct",
         "在此讨论中发送消息。用 #task-123 链接卡片。",
     );
-    dict.set(
-        "chat.composer.circle_scope",
-        "仅此 Circle 中获授权读取的成员可见",
-    );
     dict.set("chat.composer.direct_scope", "仅此直接对话的两位参与者可见");
     dict.set(
         "chat.composer.original_scope",
         "发送到当前 Realm 的讨论；仅获授权读取此范围的成员可见",
     );
 
-    dict.set("circles.page.state_active", "活跃");
-    dict.set("circles.page.state_archived", "已归档");
-    dict.set("circles.page.state_tombstoned", "已永久停用");
-    dict.set("circles.page.membership_join", "成员");
-    dict.set("circles.page.membership_knock", "已申请");
-    dict.set("circles.page.membership_leave", "已退出");
-    dict.set("circles.page.membership_ban", "已禁止加入");
-    dict.set("circles.page.membership_viewer", "目录浏览者");
-    dict.set("circles.page.encrypted", "独立 MLS 群组 · 已启用端到端加密");
-    dict.set(
-        "circles.page.unencrypted",
-        "限制投递范围 · 未启用端到端加密",
-    );
-    dict.set("circles.page.heading", "Circles");
-    dict.set("circles.page.new", "新建 Circle");
-    dict.set("circles.page.loading", "正在加载 Circles…");
-    dict.set("circles.page.empty", "暂无普通 Circle");
-    dict.set(
-        "circles.page.empty_help",
-        "创建 Circle，缩小协作范围。Agent 的私密对话不会显示在这里。",
-    );
-    dict.set("circles.page.preview", "Circle 预览");
-    dict.set("circles.page.directory", "目录");
-    dict.set("circles.page.membership", "成员关系");
-    dict.set("circles.page.your_access", "你的访问权限");
-    dict.set("circles.page.join_rule", "加入规则");
-    dict.set("circles.page.history", "历史记录");
-    dict.set("circles.page.encryption", "加密");
-    dict.set("circles.page.not_encrypted", "尚未启用端到端加密");
-    dict.set(
-        "circles.page.plaintext_warning",
-        "在此 Circle 自己的 MLS 初始事件被接受前，它只限制投递和查询范围。服务器仍可能读取明文。",
-    );
-    dict.set("circles.page.members", "成员");
-    dict.set(
-        "circles.page.members_private",
-        "只有当前 Circle 成员才能查看成员身份。",
-    );
-    dict.set("circles.page.remove", "移除");
-    dict.set("circles.page.add_member", "添加成员");
-    dict.set("circles.page.request", "申请加入");
-    dict.set("circles.page.leave", "退出");
-    dict.set("circles.page.ban", "禁止加入");
-    dict.set("circles.page.apply", "应用");
-    dict.set("circles.page.archive", "归档");
-    dict.set("circles.page.restore", "恢复");
-    dict.set("circles.page.directory_preview", "目录预览");
-    dict.set(
-        "circles.page.preview_private",
-        "加入此 Circle 后才能查看私密详情。",
-    );
-    dict.set("circles.page.select", "选择一个 Circle");
-    dict.set(
-        "circles.page.select_help",
-        "创建限定范围的内容前，请先确认成员和加密边界。",
-    );
-    dict.set("circles.page.create", "创建 Circle");
-    dict.set("circles.page.title", "标题");
-    dict.set(
-        "circles.page.short_name",
-        "简称（ASCII 字符，在此 Realm 内唯一）",
-    );
-    dict.set("circles.page.summary", "简介");
-    dict.set("circles.page.since_join", "加入之后");
-    dict.set("circles.page.all_history", "当前成员可查看全部历史");
-    dict.set("circles.page.e2ee", "端到端加密");
-    dict.set("circles.page.boundary_preview", "边界预览");
-    dict.set(
-        "circles.page.boundary_help",
-        "初始状态只限制投递范围。此 Circle 自己的 MLS 初始事件被接受后，才会启用端到端加密。",
-    );
-    dict.set("circles.page.nav_label", "普通 Circles");
-    dict.set("circles.page.actor_placeholder", "完整的成员 ActorId JSON");
-    dict.set("circles.page.actor_label", "Circle 成员 ActorId");
-    dict.set("circles.page.membership_state", "Circle 成员状态");
-    dict.set("circles.page.short_name_label", "Circle 简称");
-    dict.set("circles.page.history_label", "Circle 历史记录");
-    dict.set(
-        "circles.page.help",
-        "Circles 在此 Realm 内限制成员、历史记录、投递和加密范围。",
-    );
-    dict.set("circles.page.member_count", " · {count} 位成员");
-    dict.set("circles.page.preview_count", "{count} 位成员 · {rule}");
-    dict.set("circles.page.active_count", "{count} 位当前成员");
-    dict.set("circles.page.approximate_count", "{count}（约数）");
-    dict.set("circles.page.initial_member", "初始成员：{member}");
-    dict.set("circles.page.directory_value", "目录：{value}");
-    dict.set("circles.page.join_rule_value", "加入规则：{value}");
-    dict.set("circles.page.history_value", "历史记录：{value}");
-    dict.set("circles.controls.directory_visibility", "目录可见性");
-    dict.set(
-        "circles.controls.directory_visibility_aria",
-        "Circle 目录可见性",
-    );
-    dict.set("circles.controls.members_only", "仅 Circle 成员");
-    dict.set("circles.controls.realm_preview", "允许 Realm 成员预览");
-    dict.set("circles.controls.join_rule", "加入规则");
-    dict.set("circles.controls.join_rule_aria", "Circle 加入规则");
-    dict.set("circles.controls.public_join", "任何有效的 Realm 成员");
-    dict.set("circles.controls.knock_join", "申请批准");
-    dict.set("circles.controls.invite_join", "由 Circle 管理者添加");
-    dict.set("circles.controls.leave", "退出 Circle");
-    dict.set("circles.controls.withdraw", "撤回申请");
-    dict.set("circles.controls.join", "加入 Circle");
-    dict.set("circles.controls.request_join", "申请加入");
-    dict.set(
-        "circles.controls.terminal_unavailable",
-        "此 Circle 已永久不可用。",
-    );
-    dict.set(
-        "circles.controls.manager_access",
-        "必须由 Circle 管理者授予访问权限。预览权限不包含 Circle 内容。",
-    );
-    dict.set("circles.controls.edit", "编辑 Circle");
-    dict.set(
-        "circles.controls.management_required",
-        "修改需要 Circle 管理权限。",
-    );
-    dict.set("circles.controls.title", "标题");
-    dict.set("circles.controls.title_aria", "Circle 标题");
-    dict.set(
-        "circles.controls.short_name",
-        "短名（ASCII，在此 Realm 内唯一）",
-    );
-    dict.set("circles.controls.short_name_aria", "Circle 短名");
-    dict.set("circles.controls.summary", "简介");
-    dict.set("circles.controls.summary_aria", "Circle 简介");
-    dict.set("circles.controls.save_changes", "保存修改");
-    dict.set("circles.controls.irreversible", "不可撤销的修改");
-    dict.set(
-        "circles.controls.irreversible_permission",
-        "这些操作需要 Circle 管理权限，且无法撤销。",
-    );
-    dict.set(
-        "circles.controls.history_confirm",
-        "我了解历史记录将限制在每位成员自加入起的范围内。",
-    );
-    dict.set("circles.controls.restrict_history", "限制历史记录");
-    dict.set(
-        "circles.controls.terminal_confirm",
-        "我了解此 Circle 将变为永久不可用。",
-    );
-    dict.set("circles.controls.retire", "永久停用 Circle");
 
     dict.set(
         "chat.direct_structure.reply_hint",
@@ -3772,7 +3584,6 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.settings", "设置");
     dict.set("route.notifications", "通知");
     dict.set("route.realm_members", "成员");
-    dict.set("route.circles", "圈子");
     dict.set("route.realm_admin", "Realm 设置");
     dict.set("route.realm_admin.profile", "资料");
     dict.set("route.realm_admin.access", "访问策略");
@@ -4043,6 +3854,12 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.nav.scope_toggle", "协作与联系人");
     dict.set("app.nav.show_navigation", "显示导航");
     dict.set("app.nav.hide_navigation", "隐藏导航");
+    dict.set("connection.online", "已连接到服务器");
+    dict.set("connection.offline", "离线");
+    dict.set("connection.connecting", "正在连接");
+    dict.set("connection.reconnecting", "正在重连");
+    dict.set("connection.sign_in", "需要登录");
+    dict.set("connection.stopped", "同步已停止");
     dict.set("app.brand.home", "Inkson | Arkret 首页");
     dict.set("app.main_content", "主内容");
     dict.set("app.sidebar.hide_own_agents", "隐藏你的 AI 助理");
@@ -4056,6 +3873,7 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.sidebar.direct_badge", "私聊");
     dict.set("app.sidebar.agent_count", "助理 {count}");
     dict.set("app.sidebar.contact_actions", "联系人操作");
+    dict.set("app.sidebar.realm_actions", "Realm 操作");
     dict.set("app.sidebar.close_row_actions", "关闭这一行的操作");
     dict.set("app.sidebar.delete_contact", "删除联系人");
     dict.set("app.topbar.current_view", "当前视图：{surface}");

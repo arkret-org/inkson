@@ -123,13 +123,6 @@ async fn read_policy(
             );
             let scope = match row.source_stream_ref {
                 CommitStreamRef::Realm { realm_id } => ScopeRef::Realm { realm_id },
-                CommitStreamRef::Circle {
-                    realm_id,
-                    circle_id,
-                } => ScopeRef::Circle {
-                    realm_id,
-                    circle_id,
-                },
                 _ => anyhow::bail!("This Policy has an unsupported source scope"),
             };
             (Some(*policy), Some(row.revision), scope)
@@ -156,7 +149,7 @@ fn prepare_write(
         form.policy_id.trim() == current.id.as_str(),
         "Policy id changed; read the exact id first"
     );
-    let scope = form.scope(&current.realm)?;
+    let scope = ScopeRef::Realm { realm_id: current.realm.clone() };
     ensure_editor_scope(current.policy.is_some(), &current.scope, &scope)?;
     let payload = form.build(
         &current.realm,
@@ -393,7 +386,7 @@ mod tests {
             arkret_sdk::DigestSuite::Sha256,
             [11; 32],
         ));
-        let circle_id = arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
+        let other_realm = arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
             arkret_sdk::DigestSuite::Sha256,
             [14; 32],
         ));
@@ -401,10 +394,7 @@ mod tests {
             ScopeRef::Realm {
                 realm_id: realm_id.clone(),
             },
-            ScopeRef::Circle {
-                realm_id,
-                circle_id,
-            },
+            ScopeRef::Realm { realm_id: other_realm },
         )
     }
 
@@ -470,11 +460,11 @@ mod tests {
     }
 
     #[test]
-    fn present_circle_cannot_be_resaved_as_realm_by_clearing_form_scope() {
-        let (realm, circle) = scopes();
-        assert!(ensure_editor_scope(true, &circle, &realm).is_err());
-        assert!(ensure_editor_scope(true, &circle, &circle).is_ok());
-        assert!(ensure_editor_scope(false, &realm, &circle).is_ok());
+    fn present_policy_cannot_be_resaved_in_a_different_realm() {
+        let (realm, other_realm) = scopes();
+        assert!(ensure_editor_scope(true, &other_realm, &realm).is_err());
+        assert!(ensure_editor_scope(true, &other_realm, &other_realm).is_ok());
+        assert!(ensure_editor_scope(false, &realm, &other_realm).is_ok());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1200,17 +1190,6 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, realm: String) -> 
                 enabled,
                 move || read_state.load(),
             ),
-            draft_field(
-                scope,
-                context.clone(),
-                "agent-policy-circle".into(),
-                "Scope Circle id (blank means this Realm)",
-                form,
-                enabled,
-                false,
-                |draft| draft.circle.clone(),
-                |draft, value| draft.circle = value,
-            ),
             draft_choice(
                 scope,
                 "policy-default-effect".into(),
@@ -1270,7 +1249,7 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, realm: String) -> 
             ),
             paragraph(
                 "muted",
-                "Realm and Circle policies support the registered Agent operations and allow, deny or quarantine effects. Realm Join and Publish can require review; Circle review is unavailable. Saving a policy does not confirm runtime authorization.",
+                "Realm policies support allow, deny and quarantine. Join and Publish can also require review.",
             ),
             action(
                 scope,

@@ -135,6 +135,29 @@ fn build_sapid_palettes(manifest_dir: &Path) {
     fs::write(output.join("inkson_palettes.rs"), generated).expect("write Sapid palettes");
 }
 
+fn stamp_release_metadata(manifest_dir: &Path) {
+    let spec = manifest_dir.join("../arkret-spec/spec/v1/release-metadata.json");
+    println!("cargo:rerun-if-changed={}", spec.display());
+    let metadata: serde_json::Value = serde_json::from_slice(
+        &fs::read(spec).expect("read Arkret specification release metadata"),
+    )
+    .expect("parse Arkret specification release metadata");
+    let tag = metadata["release_tag"]
+        .as_str()
+        .filter(|tag| !tag.is_empty())
+        .expect("specification release metadata must contain a release_tag");
+    println!("cargo:rustc-env=INKSON_SPEC_RELEASE_TAG={tag}");
+
+    let releases = manifest_dir.join("docs/release-dates.json");
+    println!("cargo:rerun-if-changed={}", releases.display());
+    let dates: BTreeMap<String, chrono::NaiveDate> =
+        serde_json::from_slice(&fs::read(releases).expect("read Inkson release dates"))
+            .expect("release dates must map package versions to ISO dates");
+    if let Some(date) = dates.get(env!("CARGO_PKG_VERSION")) {
+        println!("cargo:rustc-env=INKSON_PACKAGE_RELEASE_DATE={date}");
+    }
+}
+
 fn git_output(manifest_dir: &Path, args: &[&str]) -> Option<String> {
     Command::new("git")
         .args(args)
@@ -150,6 +173,7 @@ fn main() {
     let manifest_dir = PathBuf::from(
         std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
     );
+    stamp_release_metadata(&manifest_dir);
     build_style_bundle(&manifest_dir);
     build_sapid_palettes(&manifest_dir);
 

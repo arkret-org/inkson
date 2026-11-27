@@ -275,7 +275,6 @@ pub enum StationFeature {
     Board,
     CreateRealm,
     CreateSpace,
-    Circles,
     PublishKeyPackage,
     MlsAdmission,
     WelcomeBootstrap,
@@ -288,7 +287,6 @@ impl StationFeature {
             Self::Board => "route.board",
             Self::CreateRealm => "route.setup_realms",
             Self::CreateSpace => "route.setup_new_space",
-            Self::Circles => "route.circles",
             Self::PublishKeyPackage | Self::MlsAdmission | Self::WelcomeBootstrap => {
                 "route.devices"
             }
@@ -320,7 +318,6 @@ impl StationFeature {
                 SelfSignerKeysReadResolveV1,
             ],
             Self::CreateSpace => &[SelfEventsCommandSubmitV1, SelfCommittedEventReadScanV1],
-            Self::Circles => &[SelfCircleReadListV1],
             Self::PublishKeyPackage => &[
                 SelfKeysKeypackagesUploadCreateV1,
                 SelfKeysKeypackagesCommandRevokeV1,
@@ -602,7 +599,7 @@ pub fn encrypt_private_sidecar_request(
         Some(arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE),
         Some(metadata),
         None,
-        None,
+
         Some(sidecar_id),
         content_material,
         Some(metadata_material),
@@ -937,7 +934,6 @@ mod tests {
             StationFeature::Board,
             StationFeature::CreateRealm,
             StationFeature::CreateSpace,
-            StationFeature::Circles,
             StationFeature::PublishKeyPackage,
             StationFeature::MlsAdmission,
             StationFeature::WelcomeBootstrap,

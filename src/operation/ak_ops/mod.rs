@@ -24,7 +24,6 @@ pub(super) use crate::payload::strand_id_value;
 mod account_profile;
 mod calendar;
 mod capability;
-mod circle;
 mod consent;
 mod device_mls;
 mod discussion;
@@ -40,7 +39,6 @@ mod strand;
 pub use account_profile::*;
 pub use calendar::*;
 pub use capability::*;
-pub use circle::*;
 pub use consent::*;
 pub use device_mls::*;
 pub use discussion::*;
@@ -74,11 +72,6 @@ pub(super) fn space_id_value(value: &str) -> anyhow::Result<arkret_sdk::SpaceId>
         .map_err(|err| anyhow::anyhow!("invalid space id {value:?}: {err:?}"))
 }
 
-pub(super) fn circle_id_value(value: &str) -> anyhow::Result<arkret_sdk::CircleId> {
-    arkret_sdk::CircleId::new(value.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid circle id {value:?}: {err:?}"))
-}
-
 #[cfg(test)]
 pub(super) fn morph_id_value(value: &str) -> anyhow::Result<arkret_sdk::MorphId> {
     arkret_sdk::MorphId::new(value.to_owned())
@@ -93,7 +86,6 @@ pub(crate) fn strand_create_payload(
             id: object.id,
             schema: object.schema,
             realm_id: object.realm_id,
-            scope_circle_id: object.scope_circle_id,
             schema_refs: None,
             agent_participation: object.agent_participation,
             metadata: object.metadata,

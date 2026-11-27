@@ -1,13 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { Buffer } from "node:buffer";
-import { buildMockProblem, guardMockRoute, mockArkretApi, mockOperationForRequest, validateMockSchema, validateMockTransportResponse, DEMO_REALM } from "../e2e/mockArkretApi";
-import { captureRouteHandler, concretePath, driveOnce, mockOperations } from "./mockShapeDriver";
+import { buildMockProblem, guardMockRoute, mockArkretApi, validateMockTransportResponse, DEMO_REALM } from "../e2e/mockArkretApi";
+import { captureRouteHandler, driveOnce, mockOperations } from "./mockShapeDriver";
 
-const circles = { method: "GET", url: "https://local.host/_arkret/self/circles" };
+const readCursors = { method: "GET", url: "https://local.host/_arkret/self/read-cursors" };
 const stream = { method: "GET", url: "https://local.host/_arkret/self/committed-events/subscribe" };
 const blob = { method: "GET", url: "https://local.host/_arkret/self/blob/get" };
 const signal = { method: "GET", url: "https://local.host/_arkret/self/signal/subscribe" };
-const validJson = { status: 200, contentType: "application/json", body: JSON.stringify({ realm_id: DEMO_REALM, circles: [] }) };
+const validJson = { status: 200, contentType: "application/json", body: JSON.stringify({ markers: [] }) };
 
 test("Account fixture observation preserves the exact validated NDJSON delivery", async () => {
   const captured = captureRouteHandler();
@@ -60,41 +60,16 @@ async function emit(request: Parameters<typeof driveOnce>[1], response: any) {
 }
 
 test("raw fulfill cannot bypass JSON status, media, fields, or operation ownership", async () => {
-  expect((await emit(circles, validJson)).emitted).toBe(1);
+  expect((await emit(readCursors, validJson)).emitted).toBe(1);
   for (const response of [
     { ...validJson, status: 201 }, { ...validJson, contentType: "text/plain" },
-    { ...validJson, body: JSON.stringify({ realm_id: DEMO_REALM, circles: [], result: [] }) },
+    { ...validJson, body: JSON.stringify({ markers: [], result: [] }) },
     { ...validJson, body: undefined }, { ...validJson, body: "{" },
     { ...validJson, body: Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d]) },
     { status: 404 }, { status: 404, contentType: "application/json", body: '{"error":{"code":"not_found"}}' },
     { ...validJson, json: {} }, { ...validJson, path: "uninspected.json" },
-  ]) await expect(emit(circles, response)).rejects.toThrow();
-  await expect(emit({ ...circles, url: "https://local.host/_arkret/not-registered" }, validJson)).rejects.toThrow("embedded OpenAPI operations");
-});
-
-test("Circle scope rotation requires a client MLS submission and an authority submit outcome", async () => {
-  const path = concretePath("/_arkret/self/circles/{circle_id}/scope-rotate");
-  const operation = mockOperationForRequest("POST", path);
-  expect(operation.operation_id).toBe("ak.self.circle.command.rotate_scope.v1");
-  const requestSchema = "schemas/authority-commit-operations.schema.json#/$defs/client_mls_commit_submission";
-  expect(operation.request).toMatchObject({ required: true, schema_ref: requestSchema });
-  expect(() => validateMockSchema(requestSchema, {})).toThrow();
-  const request = { method: "POST", url: `https://local.host${path}` };
-  const response = { status: 200, contentType: "application/json" };
-  const circle_id = concretePath("{circle_id}");
-  await expect(emit(request, { ...response, json: { circle_id } })).rejects.toThrow();
-  const outcome = { status: "rejected", reason_code: "schema_violation" };
-  expect((await emit(request, { ...response, json: outcome })).emitted).toBe(1);
-
-  const captured = captureRouteHandler();
-  try {
-    await mockArkretApi(captured.page as never);
-    let emitted = 0;
-    await expect(driveOnce(captured.handler(), {
-      ...request, postData: {}, onFulfill: () => { emitted += 1; },
-    })).rejects.toThrow(`mock operation is not implemented: ${operation.operation_id}`);
-    expect(emitted).toBe(0);
-  } finally { captured.close(); }
+  ]) await expect(emit(readCursors, response)).rejects.toThrow();
+  await expect(emit({ ...readCursors, url: "https://local.host/_arkret/not-registered" }, validJson)).rejects.toThrow("embedded OpenAPI operations");
 });
 
 test("raw fulfill validates every NDJSON frame, delimiters and media", async () => {
@@ -144,20 +119,20 @@ test("provided HTTP headers cannot bypass length and unsupported-schema checks",
 test("later Page route overrides remain behind the same response gate", async () => {
   const captured = captureRouteHandler();
   await mockArkretApi(captured.page as never);
-  await (captured.page as any).route("**/_arkret/self/circles", (route: any) => route.fulfill({ status: 200, contentType: "application/json", body: '{"old_row":[]}' }));
+  await (captured.page as any).route("**/_arkret/self/read-cursors", (route: any) => route.fulfill({ status: 200, contentType: "application/json", body: '{"old_row":[]}' }));
   let emitted = 0;
-  await expect(driveOnce(captured.handler(), { ...circles, onFulfill: () => { emitted += 1; } })).rejects.toThrow();
+  await expect(driveOnce(captured.handler(), { ...readCursors, onFulfill: () => { emitted += 1; } })).rejects.toThrow();
   expect(emitted).toBe(0);
-  await (captured.page as any).route("**/_arkret/self/circles", (route: any) => route.fulfill({ json: { realm_id: DEMO_REALM, circles: [] } }));
-  expect((await driveOnce(captured.handler(), circles))?.status).toBe(200);
+  await (captured.page as any).route("**/_arkret/self/read-cursors", (route: any) => route.fulfill({ json: { markers: [] } }));
+  expect((await driveOnce(captured.handler(), readCursors))?.status).toBe(200);
 });
 
 test("BrowserContext overrides also fail before unvalidated response emission", async () => {
   const captured = captureRouteHandler();
   await mockArkretApi(captured.page as never);
-  await (captured.page as any).context().route("**/_arkret/self/circles", (route: any) => route.fulfill({ json: { old_rows: [] } }));
+  await (captured.page as any).context().route("**/_arkret/self/read-cursors", (route: any) => route.fulfill({ json: { old_rows: [] } }));
   let emitted = 0;
-  await expect(driveOnce(captured.handler(), { ...circles, onFulfill: () => { emitted += 1; } })).rejects.toThrow();
+  await expect(driveOnce(captured.handler(), { ...readCursors, onFulfill: () => { emitted += 1; } })).rejects.toThrow();
   expect(emitted).toBe(0);
 });
 

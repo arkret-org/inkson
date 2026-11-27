@@ -274,7 +274,7 @@ pub fn capability_grant_actions(
 // error paths no caller can reach.
 #[allow(clippy::expect_used)]
 /// Build a capability grant with caller-supplied canonical resource selectors.
-/// Participation uses this form for Circle and Strand scopes; the ordinary
+/// Participation uses this form for Strand scopes; the ordinary
 /// Realm-admin helper above keeps its Realm-wide default.
 pub fn capability_grant_actions_with_resources(
     realm_id: &str,

@@ -157,10 +157,6 @@
   background: var(--editor-bg);
   color: var(--editor-ink);
 }
-.card-rich-editor .toastui-editor-popup-body input[type="text"]:focus {
-  border-color: var(--editor-accent);
-  outline: none;
-}
 .card-rich-editor .toastui-editor-defaultUI .toastui-editor-ok-button {
   background: var(--editor-accent);
   color: var(--accent-ink);

@@ -124,7 +124,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     let group_state_ref = crate::mls::group_events::mls_base_epoch_ref_for_scope(
         state_store,
         realm_id,
-        None,
+
         &group.group_id(),
         group.epoch(),
     )

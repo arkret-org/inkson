@@ -1077,7 +1077,7 @@ fn detail_contents(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
                                 detail.app.clone(),
                                 "card-detail-edit-button",
                                 "kanban.ui.add_summary",
-                                "ghost card-detail-mini-action",
+                                "btn ghost card-detail-mini-action",
                                 card_detail_edit_ready(&card),
                                 move || edit.begin(CardEditScope::Summary, None),
                             )],
@@ -2091,7 +2091,7 @@ fn details_fields(
             detail.app.clone(),
             "card-detail-add-labels",
             "kanban.ui.add_labels",
-            "ghost card-detail-mini-action",
+            "btn ghost card-detail-mini-action",
             card_detail_edit_ready(&card),
             move || edit.begin(CardEditScope::Summary, None),
         ));

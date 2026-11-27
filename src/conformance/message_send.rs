@@ -67,7 +67,7 @@ pub async fn send_native_ordinary_mls_message(
             None,
             None,
             None,
-            None,
+
             None,
             material,
             None,

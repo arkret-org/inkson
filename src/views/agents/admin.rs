@@ -993,13 +993,13 @@ fn details_view(scope: &Scope, state: &AgentPage, view: AgentAdminView, id: Stri
             lifecycle.push(line(
                 "agent-admin-lifecycle-toggle-row",
                 vec![
-                    paragraph(
-                        "agent-admin-section-title",
-                        context.translated(scope, "agents.enabled"),
-                    ),
                     line(
-                        "agent-admin-lifecycle-toggle-control",
+                        "agent-admin-lifecycle-summary",
                         vec![
+                            paragraph(
+                                "agent-admin-section-title",
+                                context.translated(scope, "agents.enabled"),
+                            ),
                             paragraph(
                                 if view.selected_status == "active" {
                                     "badge green"
@@ -1020,29 +1020,28 @@ fn details_view(scope: &Scope, state: &AgentPage, view: AgentAdminView, id: Stri
                                     agent_state_key(&view.selected_runtime_state),
                                 ),
                             ),
-                            Box::new(
-                                sapid::switch()
-                                    .unstyled()
-                                    .class("agent-admin-enabled-switch")
-                                    .name(context.translated(scope, "agents.enabled"))
-                                    .checked(view.selected_status == "active")
-                                    .enabled(view.selected_has_pcr_binding)
-                                    .on_checked_change(move |next| {
-                                        let Some(principal) = enable.context.principal_id.get()
-                                        else {
-                                            return;
-                                        };
-                                        enable.controller.clone().set_agent_enabled(
-                                            enable.context.base_url.get(),
-                                            enable.context.token.get(),
-                                            target.clone(),
-                                            principal,
-                                            key.clone(),
-                                            next,
-                                        );
-                                    }),
-                            ),
                         ],
+                    ),
+                    Box::new(
+                        sapid::switch()
+                            .unstyled()
+                            .class("agent-admin-enabled-switch")
+                            .name(context.translated(scope, "agents.enabled"))
+                            .checked(view.selected_status == "active")
+                            .enabled(view.selected_has_pcr_binding)
+                            .on_checked_change(move |next| {
+                                let Some(principal) = enable.context.principal_id.get() else {
+                                    return;
+                                };
+                                enable.controller.clone().set_agent_enabled(
+                                    enable.context.base_url.get(),
+                                    enable.context.token.get(),
+                                    target.clone(),
+                                    principal,
+                                    key.clone(),
+                                    next,
+                                );
+                            }),
                     ),
                 ],
             ));

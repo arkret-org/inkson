@@ -157,6 +157,13 @@ pub fn chat_panel(
                 return crate::presentation::widgets::empty();
             }
         };
+        if !props.embedded && !props.direct_mode && props.focus_message_id.is_empty() {
+            let route = Route::Chat {
+                realm_id: props.selected_realm_id.clone(),
+                message: String::new(),
+            };
+            context.on_realm_create_dialog(scope, route, move || controller.open_create_dialog());
+        }
         let target = controller.selected_channel;
         let context = context.clone();
         let props = props.clone();

@@ -7,6 +7,7 @@
 //! runs, never how it is issued or how its failure is reported.
 
 use super::*;
+use crate::runtime_helpers::boxed_future;
 
 fn invite_delivery_summary(outcome: &arkret_sdk::InviteDeliveryResponseBody) -> &'static str {
     use arkret_sdk::{DisclosedInviteDeliveryOutcome, InviteDeliveryOutcomeStatus};
@@ -388,54 +389,53 @@ impl RealmMembersController {
         let api_token = token.get();
         let owner = self.owner.clone();
         if let Some(scope) = owner.upgrade() {
-            crate::views::settings::widgets::spawn(&scope, async move {
-                self.run(context, api_token, command).await
-            });
+            crate::views::settings::widgets::spawn(
+                &scope,
+                self.command_task(context, api_token, command),
+            );
         };
     }
 
-    async fn run(
+    // Construct only the selected future. A shared async match reserves stack for
+    // every command while deeply nested Realm evidence is decoded on WASM.
+    fn command_task(
         self,
         context: RealmWriteContext,
         api_token: String,
         command: RealmMembersCommand,
-    ) {
+    ) -> futures_util::future::LocalBoxFuture<'static, ()> {
         match command {
-            RealmMembersCommand::LeaveRealm => self.leave_realm(context, api_token).await,
+            RealmMembersCommand::LeaveRealm => {
+                boxed_future(|| self.leave_realm(context, api_token))
+            }
             RealmMembersCommand::KickMember {
                 target_id,
                 target_label,
-            } => {
+            } => boxed_future(|| {
                 self.transition_member_out(context, api_token, target_id, target_label, false)
-                    .await
-            }
+            }),
             RealmMembersCommand::BanMember {
                 target_id,
                 target_label,
-            } => {
+            } => boxed_future(|| {
                 self.transition_member_out(context, api_token, target_id, target_label, true)
-                    .await
-            }
+            }),
             RealmMembersCommand::AddOwnedAgent {
                 target_id,
                 target_label,
-            } => {
-                self.add_owned_agent(context, api_token, target_id, target_label)
-                    .await
-            }
+            } => boxed_future(|| self.add_owned_agent(context, api_token, target_id, target_label)),
             RealmMembersCommand::RemoveOwnedAgent {
                 target_id,
                 target_label,
-            } => {
+            } => boxed_future(|| {
                 self.remove_owned_agent(context, api_token, target_id, target_label)
-                    .await
-            }
+            }),
             RealmMembersCommand::TerminatePendingInvite {
                 invite_id,
                 member_id,
                 member_label,
                 direct_invitee,
-            } => {
+            } => boxed_future(|| {
                 self.terminate_pending_invite(
                     context,
                     api_token,
@@ -444,14 +444,12 @@ impl RealmMembersController {
                     member_label,
                     direct_invitee,
                 )
-                .await
-            }
+            }),
             RealmMembersCommand::InviteContacts { targets } => {
-                self.invite_contacts(context, api_token, targets).await
+                boxed_future(|| self.invite_contacts(context, api_token, targets))
             }
             RealmMembersCommand::InviteResolvedTarget { target, wait_for } => {
-                self.invite_resolved_target(context, api_token, target, wait_for)
-                    .await
+                boxed_future(|| self.invite_resolved_target(context, api_token, target, wait_for))
             }
         }
     }
@@ -487,7 +485,7 @@ impl RealmMembersController {
         "; epoch_update_required"
     }
 
-    async fn leave_realm(&self, context: RealmWriteContext, api_token: String) {
+    async fn leave_realm(self, context: RealmWriteContext, api_token: String) {
         let RealmWriteContext {
             base_url,
             realm_id,

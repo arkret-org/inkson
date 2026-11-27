@@ -436,15 +436,7 @@ fn install_browser_navigation(scope: &Scope, context: &Rc<InksonContext>) {
                 } else {
                     surface
                         .map(|surface| surface.title().to_owned())
-                        .unwrap_or_else(|| {
-                            title_context.tr(match &route {
-                                Route::SettingsSection { section, .. } if section == "agents" => {
-                                    "settings.section.agents"
-                                }
-                                Route::Settings | Route::SettingsSection { .. } => "nav.settings",
-                                _ => super::route_label_key(&route),
-                            })
-                        })
+                        .unwrap_or_else(|| title_context.tr(super::route_label_key(&route)))
                 };
                 format!("{route_title} | Inkson | Arkret")
             }
@@ -457,21 +449,42 @@ fn install_browser_navigation(scope: &Scope, context: &Rc<InksonContext>) {
     let callback = Closure::new(move |_: web_sys::Event| {
         if let Some(context) = weak.upgrade().filter(|context| context.route.is_alive()) {
             let route = current_route();
-            context.workspace_navigation.navigate(&route);
-            context.route.revise(|current| *current = route);
+            context.apply_history_route(route);
         }
     });
     let target: web_sys::EventTarget = window.clone().into();
-    match target.add_event_listener_with_callback("popstate", callback.as_ref().unchecked_ref()) {
-        Ok(()) => {
-            if let Err(error) = scope.retain(Listener {
-                event: "popstate",
-                target,
-                callback,
-            }) {
-                scope.report_error(error);
+    context
+        .network_available
+        .revise(|value| *value = window.navigator().on_line());
+    let mut listeners = vec![("popstate", callback)];
+    for (event, available) in [("offline", false), ("online", true)] {
+        let context = Rc::downgrade(context);
+        listeners.push((
+            event,
+            Closure::new(move |_: web_sys::Event| {
+                if let Some(context) = context.upgrade() {
+                    if !available && context.network_state.get_untracked() == "online" {
+                        context
+                            .network_state
+                            .revise(|state| *state = "reconnecting".into());
+                    }
+                    context.network_available.revise(|value| *value = available);
+                }
+            }),
+        ));
+    }
+    for (event, callback) in listeners {
+        match target.add_event_listener_with_callback(event, callback.as_ref().unchecked_ref()) {
+            Ok(()) => {
+                if let Err(error) = scope.retain(Listener {
+                    event,
+                    target: target.clone(),
+                    callback,
+                }) {
+                    scope.report_error(error);
+                }
             }
+            Err(error) => tracing::error!(?error, event, "could not observe browser event"),
         }
-        Err(error) => tracing::error!(?error, "could not observe browser history"),
     }
 }

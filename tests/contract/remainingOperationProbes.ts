@@ -21,7 +21,7 @@ export const IMPLEMENTED_REMAINING_OPERATIONS = new Set([
   "ak.open.realm_authority.read.bundle.v1", "ak.root.identity.document.resource.get.v1",
   "ak.root.identity.log.read.list.v1", "ak.root.identity.receipts.read.list.v1",
   "ak.self.account_data.read.list.v1", "ak.self.account_data.resource.replace.v1", "ak.self.account_data.resource.delete.v1",
-  "ak.self.circle.resource.get.v1", "ak.self.blob.resource.head.v1", "ak.self.events.read.delivery_status.v1",
+  "ak.self.blob.resource.head.v1", "ak.self.events.read.delivery_status.v1",
   "ak.self.realm.resource.get.v1", "ak.self.realm.read.export.v1", "ak.self.realm_link.read.list.v1",
   "ak.self.realm_organization.read.list.v1", "ak.self.morph.read.list.v1", "ak.self.morph.resource.get.v1",
   "ak.self.read_cursor.read.list.v1", "ak.self.read_cursor.command.advance.v1", "ak.self.agent.participation.resource.replace.v1",
@@ -101,10 +101,6 @@ export async function additionalOperationProbe(operation: MockOperation, handler
     }
     if (request.postData) validateMockSchema(`schemas/account-data-operations.schema.json#/$defs/account_data_${request.method === "DELETE" ? "delete" : "replace"}_request_body`, request.postData);
     return request;
-  }
-  if (id === "ak.self.circle.resource.get.v1") {
-    const response = await driveOnce(handler, { method: "GET", url: `https://local.host/_arkret/self/circles?realm_id=${encodeURIComponent(DEMO_REALM)}` });
-    request.url = request.url.replace("{circle_id}", encodeURIComponent((response?.body as any).circles[0].circle_id)); return request;
   }
   if (id === "ak.self.blob.resource.head.v1") { request.url += `?blob_ref=${encodeURIComponent(AVATAR)}`; return request; }
   if (id === "ak.self.events.read.delivery_status.v1") {

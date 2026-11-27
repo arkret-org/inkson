@@ -55,7 +55,11 @@ impl WorkspaceNavigation {
 fn route_opens_detail(route: &Route) -> bool {
     !matches!(
         route,
-        Route::Contacts | Route::RealmsManage | Route::Settings
+        Route::PrivateChats
+            | Route::NewPrivateChat
+            | Route::Contacts
+            | Route::RealmsManage
+            | Route::Settings
     ) && !matches!(route, Route::SettingsSection { section, .. } if section == "agents")
 }
 
@@ -87,6 +91,8 @@ mod tests {
     #[test]
     fn entry_routes_show_the_list_and_deep_links_show_detail() {
         for route in [
+            Route::PrivateChats,
+            Route::NewPrivateChat,
             Route::Contacts,
             Route::RealmsManage,
             Route::Settings,

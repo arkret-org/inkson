@@ -26,10 +26,7 @@ fn scopes() -> Vec<ScopeRef> {
         ScopeRef::Realm {
             realm_id: realm_id.clone(),
         },
-        ScopeRef::Circle {
-            realm_id: realm_id.clone(),
-            circle_id: arkret_sdk::CircleId::from_event_id(&event(2)),
-        },
+        ScopeRef::Realm { realm_id: arkret_sdk::RealmId::from_event_id(&event(2)) },
         ScopeRef::Sidecar {
             realm_id,
             sidecar_id: arkret_sdk::SidecarId::from_event_id(&event(3)),

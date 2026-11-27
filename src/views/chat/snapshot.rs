@@ -9,7 +9,7 @@ pub(super) struct ChatSnapshot {
     pub(super) selected_channel_category: String,
     pub(super) selected_channel_unread: usize,
     pub(super) selected_channel_security_encrypted: bool,
-    pub(super) selected_scope_circle: Option<String>,
+
     pub(super) send_scope: Option<arkret_sdk::ScopeRef>,
     pub(super) selected_realm_pending_mls_binding_reason: Option<String>,
     pub(super) selected_realm_pending_mls_binding: bool,
@@ -126,12 +126,7 @@ pub(super) fn snapshot(
         .map(|channel| channel.unread)
         .unwrap_or(0);
     // Unknown scope current keeps the secure path blocked until verification.
-    let selected_scope_circle = selected_channel_info.as_ref().and_then(|channel| {
-        channel
-            .scope_circle
-            .as_ref()
-            .map(|circle| circle.circle_id.clone())
-    });
+
     let send_scope = selected_channel_info
         .as_ref()
         .and_then(|channel| channel.effective_scope(&selected_realm_id));
@@ -157,12 +152,8 @@ pub(super) fn snapshot(
                     &arkret_sdk::ActorId::account(account.authority),
                 )
             });
-    let mut selected_realm_pending_mls_binding_reason = if selected_scope_circle.is_none() {
-        store
-            .realm_pending_mls_binding_reason(&selected_realm_id)
-    } else {
-        None
-    };
+    let mut selected_realm_pending_mls_binding_reason = store
+            .realm_pending_mls_binding_reason(&selected_realm_id);
     if (selected_channel_security_encrypted || direct_mode)
         && selected_realm_pending_mls_binding_reason.is_none()
     {
@@ -201,23 +192,19 @@ pub(super) fn snapshot(
             selected_realm_pending_mls_binding_reason = Some(reason);
         } else {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            let roster_matches = if selected_scope_circle.is_none() {
-                crate::mls::runtime::realm_mls_roster_matches_complete_membership_hint(
+            let roster_matches = crate::mls::runtime::realm_mls_roster_matches_complete_membership_hint(
                     store,
                     secure_store.as_ref(),
                     &selected_realm_id,
                     &authority,
                     &account_device_id,
-                )
-            } else {
-                None
-            };
+                );
             let local_group_available =
                 crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
                     store,
                     secure_store.as_ref(),
                     &selected_realm_id,
-                    selected_scope_circle.as_deref(),
+
                     &authority,
                     &account_device_id,
                 )
@@ -375,10 +362,9 @@ pub(super) fn snapshot(
     // Realm epoch for subsequent durable invalidation.
     let account_sync_ready = crate::app::account_sync_ready(&sync_cursor.get());
     let agent_participation_sync_key = format!(
-        "{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}",
         selected_realm_id,
         selected_channel_value,
-        selected_scope_circle.as_deref().unwrap_or_default(),
         account_sync_ready as u8,
         realm_live_epoch.get(),
         readable_participation_agent_ids.join(",")
@@ -536,11 +522,11 @@ pub(super) fn snapshot(
     let direct_mls_epoch = direct_mode
         .then(|| {
             store
-                .mls_checkpoint_for_effective_scope(&selected_realm_id, None)
+                .mls_checkpoint_for_effective_scope(&selected_realm_id)
                 .map(|snapshot| snapshot.epoch.to_string())
         })
         .flatten();
 
-ChatSnapshot {sidecar_session,visible_message_count,visible_channels,selected_channel_info,selected_channel_name,selected_channel_category,selected_channel_unread,selected_channel_security_encrypted,selected_scope_circle,send_scope,selected_realm_pending_mls_binding_reason,selected_realm_pending_mls_binding,send_readiness_checking,sidecar_security_label:sidecar_security_label.map(str::to_owned),sidecar_send_block_reason,participants,participants_for_messages,composer_participants,presence_participants,sidecar_owned_agents,public_agent_ids,public_agent_accounts,interaction_modes_snapshot,readable_participation_agent_ids,agent_participation_sync_key,participant_ids_for_presence,has_remote_presence,presence_sync_key,self_presence_actor,discussion_feed_loading,sidecar_delivery_diagnostics,direct_mls_epoch,shared_sync_finished,account_display_label,mode_key}
+ChatSnapshot {sidecar_session,visible_message_count,visible_channels,selected_channel_info,selected_channel_name,selected_channel_category,selected_channel_unread,selected_channel_security_encrypted,send_scope,selected_realm_pending_mls_binding_reason,selected_realm_pending_mls_binding,send_readiness_checking,sidecar_security_label:sidecar_security_label.map(str::to_owned),sidecar_send_block_reason,participants,participants_for_messages,composer_participants,presence_participants,sidecar_owned_agents,public_agent_ids,public_agent_accounts,interaction_modes_snapshot,readable_participation_agent_ids,agent_participation_sync_key,participant_ids_for_presence,has_remote_presence,presence_sync_key,self_presence_actor,discussion_feed_loading,sidecar_delivery_diagnostics,direct_mls_epoch,shared_sync_finished,account_display_label,mode_key}
 })
 }

@@ -52,7 +52,7 @@ fn admitted() -> crate::runtime::projection::AdmittedSignal {
         product_authority: None,
         call_invitation: None,
         authority_commit_id: arkret_sdk::RealmCommitId::from_digest([41; 32]),
-        parent_realm_authority_commit_id: None,
+
         payload: arkret_sdk::SignalPlaintext::ReadReceipt(arkret_sdk::ReadReceipt::new(
             3, reader(), EVENT.parse().unwrap(),
             serde_json::from_value(serde_json::json!({"kind":"strand", "object_ref":STRAND, "track_name":"discussion"})).unwrap(),
@@ -254,13 +254,7 @@ fn receipt_consumer_rejects_missing_or_mismatched_verified_target() {
     );
     assert!(
         render_case(
-            |case| case.targets[0].scope_ref = arkret_sdk::ScopeRef::Circle {
-                realm_id: REALM.parse().unwrap(),
-                circle_id: arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
-                    arkret_sdk::DigestSuite::Sha256,
-                    [46; 32]
-                ))
-            }
+            |case| case.targets[0].scope_ref = arkret_sdk::ScopeRef::Realm { realm_id: "ak:realm:AQJmSg1s9QyzppFeJL40dN92YVHZeLdBBt3UWHa9XNOD".parse().unwrap() }
         )
         .is_empty()
     );

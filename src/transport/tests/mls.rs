@@ -228,10 +228,7 @@ fn keypackage_claim_preserves_subscope_and_rejects_mismatched_group() {
         realm_id: realm_id.clone(),
     };
     let scopes = [
-        arkret_sdk::ScopeRef::Circle {
-            realm_id: realm_id.clone(),
-            circle_id: arkret_sdk::CircleId::from_event_id(&authorize),
-        },
+        arkret_sdk::ScopeRef::Realm { realm_id: arkret_sdk::RealmId::from_event_id(&authorize) },
         arkret_sdk::ScopeRef::Sidecar {
             realm_id,
             sidecar_id: arkret_sdk::SidecarId::from_event_id(&authorize),
@@ -279,6 +276,7 @@ fn keypackage_claim_preserves_subscope_and_rejects_mismatched_group() {
         .unwrap();
         key.verify(&input, &proof).unwrap();
         let mut redirected = unsigned;
+        redirected.intended_realm_id = realm_scope.realm_id().clone();
         redirected.effective_scope = realm_scope.clone();
         redirected.mls_group_id = realm_group.clone();
         let altered = arkret_sdk::keypackage_claim_authorization_signing_bytes(

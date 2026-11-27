@@ -3,6 +3,25 @@ import { byClass, gotoAndDismissRecovery, registerStrandsBeforeEach, readLocalCo
 
 registerStrandsBeforeEach();
 
+test('settings rows stay readable and the sidebar scrolls at the pane edge', async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 560 });
+  await gotoAndDismissRecovery(page, '/settings/notifications');
+  const list = page.locator('.settings-nav-list');
+  const sidebar = page.locator('.settings-sidebar-column');
+  const heading = sidebar.locator('.workspace-list-heading');
+  const row = list.getByRole('link').first();
+  const listBox = (await list.boundingBox())!;
+  const sidebarBox = (await sidebar.boundingBox())!;
+  expect(Math.abs(sidebarBox.x + sidebarBox.width - listBox.x - listBox.width)).toBeLessThanOrEqual(1);
+  expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(40);
+  const headingBox = await heading.boundingBox();
+  const last = list.getByRole('link').last();
+  await last.focus();
+  await expect(last).toBeInViewport();
+  expect(await list.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+  expect(await heading.boundingBox()).toEqual(headingBox);
+});
+
 test('one theme selector follows system appearance and translates in place on narrow screens', async ({ page }, info) => {
   await page.setViewportSize({ width: 320, height: 720 });
   await page.emulateMedia({ colorScheme: 'dark' });
@@ -129,6 +148,65 @@ test('contacts distinguish loading, failure, first use and filtered results in t
   await page.screenshot({ path: info.outputPath('contacts-first-use.png') });
   await list.locator('.contacts-empty-add-button').click();
   await expect(page.locator('.add-contact-modal')).toBeVisible();
+});
+
+test('global search focuses on its shortcut and leaves focus alone on reload', async ({ page }) => {
+  await gotoAndDismissRecovery(page, '/settings/notifications');
+  await page.keyboard.press('Control+/');
+  const dismiss = page.locator('.shortcut-help-card button').last();
+  await dismiss.focus();
+  await dismiss.press('Control+f');
+  await expect(page).toHaveURL(/settings\/notifications$/);
+  await expect(dismiss).toBeFocused();
+  await dismiss.press('Escape');
+  await expect(dismiss).toBeHidden();
+  await page.keyboard.press('Control+f');
+  const input = page.locator('.global-search-input');
+  await expect(input).toBeFocused();
+  await page.reload();
+  await expect(input).toBeVisible();
+  await expect(input).not.toBeFocused();
+  await page.keyboard.press('Control+f');
+  await expect(input).toBeFocused();
+});
+
+test('navigation search keeps disclosure focus and paints the focused field inward', async ({ page }) => {
+  for (const route of ['/realms/manage', '/settings']) {
+    await gotoAndDismissRecovery(page, route);
+    const disclosure = page.locator('.workspace-search-disclosure');
+    const trigger = disclosure.getByRole('button');
+    const input = disclosure.getByRole('textbox');
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await trigger.click();
+    await expect(input).toBeVisible();
+    await expect(trigger).toBeFocused();
+    await expect(input).toHaveCSS('box-shadow', 'none');
+    const bounds = await input.boundingBox();
+
+    await input.click();
+    await expect(input).toBeFocused();
+    await expect(input).toHaveCSS('outline-style', 'none');
+    await expect(input).toHaveCSS('box-shadow', /inset/);
+    expect(await input.boundingBox()).toEqual(bounds);
+    await input.fill('sample');
+    await page.keyboard.press('Escape');
+    await expect(input).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await expect(trigger).toHaveCSS('outline-style', 'solid');
+
+    await page.keyboard.press('Enter');
+    await expect(input).toBeVisible();
+    await expect(trigger).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue('');
+    await expect(input).toHaveCSS('outline-style', 'none');
+    await expect(input).toHaveCSS('box-shadow', /inset/);
+    await page.emulateMedia({ forcedColors: 'active' });
+    await expect(input).toHaveCSS('outline-style', 'solid');
+    await expect(input).toHaveCSS('outline-offset', '-2px');
+    await page.emulateMedia({ forcedColors: 'none' });
+  }
 });
 
 test('contact search has an actionable no-results state', async ({ page }, info) => {

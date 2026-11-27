@@ -3,7 +3,7 @@ import { nativeReadProbe } from "./nativeReadEvidence";
 import { expect } from "@playwright/test";
 import {
   BOB_ACCOUNT_ID, CURRENT_ACCOUNT_ACTOR_ID, CURRENT_ACCOUNT_ID, CURRENT_ASSISTANT_ACCOUNT_ID, CURRENT_ASSISTANT_CORE_ID,
-  CURRENT_PRINCIPAL_DID, DEMO_INVITE_ID, DEMO_PARENT_MEMBERSHIP_REVISION, DEMO_REALM,
+  CURRENT_PRINCIPAL_DID, DEMO_INVITE_ID, DEMO_REALM,
   INVITED_REALM, inksonWire, validateMockSchema,
 } from "../e2e/mockArkretApi";
 import { concretePath, driveOnce, type MockOperation } from "./mockShapeDriver";
@@ -15,7 +15,6 @@ const native = () => inksonWire<Record<string, any>>("mock-realm-fixture", { sal
 let cachedNative: Record<string, any> | undefined;
 
 export const VALID_REQUEST_OPERATIONS = new Set([
-  "ak.self.circle.member.command.add.v1", "ak.self.circle.member.resource.delete.v1",
   "ak.self.agent.command.deactivate.v1", "ak.self.agent.command.pause.v1", "ak.self.agent.command.resume.v1", "ak.self.media.read.ice_config.v1",
   "ak.self.invite_receive_policy.resource.replace.v1",
 ]);
@@ -41,29 +40,6 @@ export async function operationProbe(operation: MockOperation, handler: Handler)
   if (directory) {
     if (path.endsWith("/search-realms")) request.postData = { query: "demo", limit: 1 };
     if (path.endsWith("/resolve-realm")) request.postData = { realm_id: DEMO_REALM };
-    return request;
-  }
-  if (operation.operation_id.startsWith("ak.self.circle.member.")) {
-    const listed = await driveOnce(handler, { method: "GET", url: `https://local.host/_arkret/self/circles?realm_id=${encodeURIComponent(DEMO_REALM)}` });
-    const currentCircle = (listed?.body as Record<string, any>).circles[0];
-    const circle = currentCircle.circle_id;
-    const deletion = operation.method === "DELETE";
-    const configuration = { operation: "circle_member", realm_id: DEMO_REALM,
-      controller_account_id: CURRENT_ACCOUNT_ID, controller_did: CURRENT_PRINCIPAL_DID,
-      payload: { circle_id: circle, member_id: CURRENT_ACCOUNT_ACTOR_ID, membership: "join",
-        parent_membership_revision: DEMO_PARENT_MEMBERSHIP_REVISION, expected_membership: currentCircle.viewer_membership ?? null } };
-    const joined = inksonWire<Record<string, any>>("mock-operation-request", configuration);
-    const collection = `https://local.host/_arkret/self/circles/${encodeURIComponent(circle)}/members`;
-    request.url = collection;
-    request.postData = joined;
-    if (deletion) {
-      expect((await driveOnce(handler, { method: "POST", url: collection, postData: joined }))?.status).toBe(200);
-      request.postData = inksonWire("mock-operation-request", { ...configuration, delete: true,
-        payload: { circle_id: circle, member_id: CURRENT_ACCOUNT_ACTOR_ID, membership: "leave", expected_membership: "join" } });
-      const actor = inksonWire<{ canonical: string }>("canonical-json", { value: CURRENT_ACCOUNT_ACTOR_ID }).canonical;
-      request.url += `/${encodeURIComponent(actor)}`;
-    }
-    validateMockSchema(`schemas/circle-operations.schema.json#/$defs/circle_member_${deletion ? "delete_" : ""}request_body`, request.postData);
     return request;
   }
   switch (operation.operation_id) {

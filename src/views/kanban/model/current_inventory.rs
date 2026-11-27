@@ -85,10 +85,7 @@ pub(crate) fn kanban_inventory_from_current(
                     "Kanban current Strand differs from its selector"
                 );
                 let scope_matches = match source_stream_ref {
-                    CommitStreamRef::Realm { .. } => strand.scope_circle_id.is_none(),
-                    CommitStreamRef::Circle { circle_id, .. } => {
-                        strand.scope_circle_id.as_ref() == Some(circle_id)
-                    }
+                    CommitStreamRef::Realm { .. } => true,
                     _ => false,
                 };
                 anyhow::ensure!(
@@ -522,7 +519,6 @@ mod tests {
                     20_000 + index as u32,
                 ))),
                 realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
-                scope_circle_id: None,
                 effective_scope: None,
                 relation_kind: arkret_sdk::RelationKind::AssignedTo,
                 from_ref: strand.to_string().into(),

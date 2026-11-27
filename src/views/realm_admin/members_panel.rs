@@ -1032,7 +1032,7 @@ fn owned_agent(scope: &Scope, state: &MembersPage, agent: MemberAgentRow) -> Vie
         };
         let command = state.clone();
         let id = id.clone();
-        behavior.push(toggle(
+        behavior.push(switch_toggle(
             scope,
             context.clone(),
             &format!("member-agent-behavior-toggle member-agent-behavior-{index}"),

@@ -24,9 +24,79 @@ import {
 registerStrandsBeforeEach();
 
 async function openBoardOptions(page: import("@playwright/test").Page) {
-  const trigger = page.locator(".board-toolbar-options > .sapid-collapsible-trigger");
+  const trigger = page.locator(".board-toolbar-options .sapid-menu-trigger");
   if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click();
 }
+
+test("board options opens below the gear without shifting the board", async ({ page }, testInfo) => {
+  await openKanban(page);
+  const trigger = page.getByRole("button", { name: "Board options", exact: true });
+  const menu = page.getByRole("menu").filter({ has: page.locator(".board-new-item") });
+  const toolbar = page.locator(".board-toolbar");
+  const grid = page.locator(".kanban-board-grid");
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(trigger).toBeVisible();
+    await expect(trigger).toHaveText("");
+    await trigger.click({ trial: true });
+    const headerBefore = await toolbar.boundingBox();
+    const boardBefore = await grid.boundingBox();
+    await trigger.click();
+    await expect(menu).toBeVisible();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const gear = (await trigger.boundingBox())!;
+    const popup = (await menu.boundingBox())!;
+    expect(popup.y).toBeGreaterThanOrEqual(gear.y + gear.height - 1);
+    expect(Math.abs(popup.x + popup.width - gear.x - gear.width)).toBeLessThanOrEqual(2);
+    expect(popup.x).toBeGreaterThanOrEqual(0);
+    expect(popup.x + popup.width).toBeLessThanOrEqual(width);
+    expect(await toolbar.boundingBox()).toEqual(headerBefore);
+    expect(await grid.boundingBox()).toEqual(boardBefore);
+    await expect(menu.getByRole("menuitem", { name: "Archive board" })).toBeEnabled();
+    await page.screenshot({ path: testInfo.outputPath(`board-options-${width}.png`) });
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+    await expect(trigger).toBeFocused();
+  }
+  await trigger.click();
+  await toolbar.click({ position: { x: 2, y: 2 } });
+  await expect(menu).toBeHidden();
+  await trigger.press("ArrowDown");
+  await expect(menu).toBeVisible();
+  await menu.getByRole("menuitem", { name: "Archive board" }).click();
+  await expect(menu).toBeHidden();
+  await expect(page.locator(".archive-board-confirm-modal")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".archive-board-confirm-modal")).toBeHidden();
+});
+
+test("a board without archives keeps its toolbar and columns in place when adding a list", async ({ page }) => {
+  await openKanban(page);
+  await expect(page.locator(".kanban-maintenance")).toHaveCount(0);
+  const toolbar = page.locator(".board-toolbar");
+  const columns = page.locator(".kanban-board-grid");
+  const add = toolbar.locator(".board-toolbar-add-list .sapid-popover-trigger");
+  const title = inputByClass(page, "new-column-input");
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 800 });
+    await add.click({ trial: true });
+    const toolbarBefore = await toolbar.boundingBox();
+    const columnsBefore = await columns.boundingBox();
+    await add.click();
+    await expect(title).toBeInViewport();
+    expect(await toolbar.boundingBox()).toEqual(toolbarBefore);
+    expect(await columns.boundingBox()).toEqual(columnsBefore);
+    await title.fill("Planning");
+    await page.keyboard.press("Escape");
+    await expect(title).toBeHidden();
+    await add.click();
+    await expect(title).toBeVisible();
+    await expect(title).toHaveValue("Planning");
+    await page.keyboard.press("Escape");
+    await expect(title).toBeHidden();
+    await expect(add).toHaveAttribute("aria-expanded", "false");
+  }
+});
 
 test("kanban coalesces delayed inventory reads into one worker", async ({ page }, testInfo) => {
   const projectionStarted = Date.now();
@@ -331,9 +401,10 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
   );
 
   await openBoardOptions(page);
-  await page.locator(".board-popover-host .sapid-popover-trigger").click();
+  await expect(page.getByRole("menuitem", { name: "Archive board" })).toBeDisabled();
+  await page.getByRole("menuitem", { name: "New Board" }).click();
   await expect(inputByClass(page, "new-board-title-input")).toBeVisible();
-  await page.mouse.click(12, 12);
+  await page.keyboard.press("Escape");
   await expect(inputByClass(page, "new-board-title-input")).toHaveCount(0);
 
   let acceptBoardCreate: (() => void) | undefined;
@@ -349,16 +420,17 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
     const event = submittedEvent(request.postDataJSON());
     const object = event?.payload?.object;
     if (event?.kind === "ak.space.create" && object?.kind === "board") {
+      expect(object.rank).toMatch(/^[A-Za-z0-9]{1,128}$/);
       await boardCreateGate;
     }
     await route.fallback();
   });
 
   await openBoardOptions(page);
-  await page.locator(".board-popover-host .sapid-popover-trigger").click();
+  await page.getByRole("menuitem", { name: "New Board" }).click();
   await inputByClass(page, "new-board-title-input").fill("Design board");
   await byClass(page, "create-board-space-button").click();
-  await page.locator(".board-toolbar-add-list > .sapid-collapsible-trigger").click();
+  await page.locator(".board-toolbar-add-list .sapid-popover-trigger").click();
   await expect(byClass(page, "add-column-button")).toBeVisible();
   await expect(byClass(page, "add-column-button")).toBeDisabled();
   await expect(byClass(page, "board-space-selector")).toContainText(
@@ -494,6 +566,47 @@ test("kanban board selector swaps projected board columns", async ({
   await expect(byClass(page, "kanban-board-grid")).not.toContainText(
     "Legal review for public beta",
   );
+});
+
+test("a new Board follows the existing Boards regardless of title", async ({ page }) => {
+  await openKanban(page);
+  await openBoardOptions(page);
+  await page.getByRole("menuitem", { name: "New Board" }).click();
+  await inputByClass(page, "new-board-title-input").fill("Aardvark");
+  const create = page.waitForRequest(request => {
+    if (request.method() !== "POST" || new URL(request.url()).pathname !== "/_arkret/self/events") return false;
+    const event = submittedEvent(request.postDataJSON());
+    return event?.kind === "ak.space.create" && event.payload.object.kind === "board";
+  });
+  await byClass(page, "create-board-space-button").click();
+  const event = submittedEvent((await create).postDataJSON());
+  expect(event.payload.object.rank > "V").toBe(true);
+  await page.locator(".board-select-menu-host .sapid-popover-trigger").click();
+  const rows = page.locator(".board-select-menu-panel .board-order-row");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.last().getByRole("button")).toHaveText("Aardvark");
+});
+
+test("dragging a Board in the selector persists its new rank", async ({ page }) => {
+  await openKanban(page);
+  await page.locator(".board-select-menu-host .sapid-popover-trigger").click();
+  const rows = page.locator(".board-select-menu-panel .board-order-row");
+  await expect(rows).toHaveCount(2);
+  const moved = await rows.nth(1).getByRole("button").innerText();
+  const first = await rows.first().boundingBox();
+  const grip = rows.nth(1).locator(".board-order-grip");
+  const update = page.waitForRequest(request => {
+    if (request.method() !== "POST" || new URL(request.url()).pathname !== "/_arkret/self/events") return false;
+    return submittedEvent(request.postDataJSON())?.kind === "ak.space.update";
+  });
+  await grip.dragTo(rows.first(), { targetPosition: { x: 12, y: Math.floor(first!.height / 4) } });
+  const event = submittedEvent((await update).postDataJSON());
+  expect(event.payload.patch).toEqual({ rank: { $op: "set", value: expect.stringMatching(/^[A-Za-z0-9]{1,128}$/) } });
+  await expect(rows.first().getByRole("button")).toHaveText(moved);
+  await page.reload();
+  await dismissBlockingRecoveryModal(page);
+  await page.locator(".board-select-menu-host .sapid-popover-trigger").click();
+  await expect(rows.first().getByRole("button")).toHaveText(moved);
 });
 
 test("kanban card drag submits a strand move", async ({ page }, testInfo) => {

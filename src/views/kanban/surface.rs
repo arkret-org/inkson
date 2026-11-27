@@ -7,10 +7,9 @@ use crate::presentation::widgets::reactive_distinct;
 mod lifetime_tests;
 fn disclosure(
     scope: &Scope,
-    _app: Rc<InksonContext>,
     key: &str,
     label: String,
-    open: bool,
+    open: Cage<bool>,
     children: Rc<dyn Fn(&Scope) -> View>,
 ) -> View {
     let owner = scope.id().slot();
@@ -19,7 +18,8 @@ fn disclosure(
             .unstyled()
             .class(format!("event board-maintenance {key}"))
             .label(label)
-            .default_open(open)
+            .open(open)
+            .on_open_change(move |next| open.revise(|value| *value = next))
             .content(move || {
                 let children = children.clone();
                 glory::ui::widget(move |scope| children(scope).show_in(scope))
@@ -27,49 +27,38 @@ fn disclosure(
     )
 }
 
-pub(super) fn toolbar_popover(
+pub(super) fn board_selector(
     scope: &Scope,
     state: Cage<BoardToolbarPopover>,
-    kind: BoardToolbarPopover,
     label: glory::Vary<String>,
     trigger: View,
     body: View,
 ) -> View {
-    let select = kind == BoardToolbarPopover::SelectBoard;
-    let open = scope.bond(move || state.get() == kind);
+    let open = scope.bond(move || state.get() == BoardToolbarPopover::SelectBoard);
     let mut trigger = Some(trigger);
     let mut body = Some(body);
-    let host = if select {
-        "board-select-menu-host"
-    } else {
-        "board-popover-host"
-    };
     Box::new(
-        glory::ui::view().class(host).fill(
-            sapid::popover(format!("board-toolbar-{}-{select}", scope.id().slot()))
+        glory::ui::view().class("board-select-menu-host").fill(
+            sapid::popover(format!("board-selector-{}", scope.id().slot()))
                 .unstyled()
                 .class("board-toolbar-popover")
                 .content_policy(sapid::ContentPolicy::KeepMounted)
                 .label(label)
                 .open(open)
                 .show_close(false)
-                .width(sapid::PopoverWidth::Px(if select { 240.0 } else { 360.0 }))
+                .width(sapid::PopoverWidth::Px(240.0))
                 .placement(
                     glory::render::AnchorPlacement::new(
                         glory::render::AnchorSide::Bottom,
-                        if select {
-                            glory::render::AnchorAlign::Start
-                        } else {
-                            glory::render::AnchorAlign::End
-                        },
+                        glory::render::AnchorAlign::Start,
                     )
                     .gap(8.0),
                 )
                 .on_open_change(move |next| {
                     state.revise(|value| {
                         if next {
-                            *value = kind;
-                        } else if *value == kind {
+                            *value = BoardToolbarPopover::SelectBoard;
+                        } else if *value == BoardToolbarPopover::SelectBoard {
                             *value = BoardToolbarPopover::None;
                         }
                     })
@@ -80,16 +69,136 @@ pub(super) fn toolbar_popover(
     )
 }
 
-fn toolbar_disclosure(scope: &Scope, key: &str, label: glory::Vary<String>, body: View) -> View {
+pub(super) fn board_options(
+    scope: &Scope,
+    app: &InksonContext,
+    state: Cage<BoardToolbarPopover>,
+    can_archive: impl Into<glory::Vary<bool>>,
+    archive: impl FnMut() + 'static,
+) -> View {
+    let menu = sapid::dropdown_menu(format!("board-options-{}", scope.id().slot()))
+        .unstyled()
+        .class("board-options-menu")
+        .label(app.translated(scope, "kanban.ui.board_options"))
+        .trigger_content(crate::components::ui_icon("settings"))
+        .width(192.)
+        .position(
+            glory::render::AnchorPlacement::new(
+                glory::render::AnchorSide::Bottom,
+                glory::render::AnchorAlign::End,
+            )
+            .gap(4.),
+        )
+        .open(scope.bond(move || state.get() == BoardToolbarPopover::Options))
+        .on_open_change(move |open| {
+            state.revise(|current| {
+                if open {
+                    *current = BoardToolbarPopover::Options;
+                } else if *current == BoardToolbarPopover::Options {
+                    *current = BoardToolbarPopover::None;
+                }
+            });
+        })
+        .item(
+            sapid::menu_item("create")
+                .class("board-new-item")
+                .label(app.translated(scope, "kanban.ui.new_board"))
+                .left_section(crate::components::ui_icon("plus"))
+                .on_activate(move || state.revise(|v| *v = BoardToolbarPopover::CreateBoard)),
+        )
+        .item(
+            sapid::menu_item("archive")
+                .class("archive-board-button")
+                .label(app.translated(scope, "kanban.archive_board_action"))
+                .left_section(crate::components::ui_icon("archive"))
+                .enabled(can_archive)
+                .on_activate(archive),
+        );
+    Box::new(glory::ui::view().class("board-toolbar-options").fill(menu))
+}
+
+pub(super) fn create_dialog(
+    app: Rc<InksonContext>,
+    state: Cage<BoardToolbarPopover>,
+    title: Cage<String>,
+    ready: impl Into<glory::Vary<bool>>,
+    create: impl Fn() + Clone + 'static,
+) -> View {
+    let ready = ready.into();
+    reactive_distinct(state, move |scope, open| {
+        if open != BoardToolbarPopover::CreateBoard {
+            return empty();
+        }
+        confirmation(
+            scope,
+            app.clone(),
+            "board-create-dialog",
+            app.translated(scope, "kanban.ui.new_board"),
+            stack(
+                "modal-body workflow-form",
+                vec![
+                    input(
+                        scope,
+                        app.clone(),
+                        "new-board-title-input",
+                        "kanban.ui.board_title",
+                        title,
+                        true,
+                    ),
+                    line(
+                        "modal-foot",
+                        vec![action(
+                            scope,
+                            app.clone(),
+                            "create-board-space-button",
+                            "kanban.ui.create_board",
+                            "primary",
+                            ready.clone(),
+                            create.clone(),
+                        )],
+                    ),
+                ],
+            ),
+            move || state.revise(|v| *v = BoardToolbarPopover::None),
+        )
+    })
+}
+
+fn add_list_popover(
+    scope: &Scope,
+    state: Cage<BoardToolbarPopover>,
+    label: glory::Vary<String>,
+    body: View,
+) -> View {
     let mut body = Some(body);
     Box::new(
-        sapid::collapsible(format!("board-{key}-{}", scope.id().slot()))
-            .unstyled()
-            .class(format!("board-toolbar-disclosure board-toolbar-{key}"))
-            .label(label)
-            .default_open(false)
-            .content_policy(sapid::ContentPolicy::KeepMounted)
-            .content(move || body.take().unwrap_or_else(empty)),
+        glory::ui::view().class("board-toolbar-add-list").fill(
+            sapid::popover(format!("board-add-list-{}", scope.id().slot()))
+                .unstyled()
+                .class("board-toolbar-popover board-add-list-panel")
+                .label(label)
+                .open(scope.bond(move || state.get() == BoardToolbarPopover::AddList))
+                .on_open_change(move |open| {
+                    state.revise(|current| {
+                        if open {
+                            *current = BoardToolbarPopover::AddList;
+                        } else if *current == BoardToolbarPopover::AddList {
+                            *current = BoardToolbarPopover::None;
+                        }
+                    })
+                })
+                .show_close(false)
+                .width(sapid::PopoverWidth::Px(288.0))
+                .placement(
+                    glory::render::AnchorPlacement::new(
+                        glory::render::AnchorSide::Bottom,
+                        glory::render::AnchorAlign::Start,
+                    )
+                    .gap(4.0),
+                )
+                .content_policy(sapid::ContentPolicy::KeepMounted)
+                .content(move || body.take().unwrap_or_else(empty)),
+        ),
     )
 }
 
@@ -122,10 +231,19 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
         reactive(c.board_popover, move |scope, popover| match popover {
             BoardToolbarPopover::None => empty(),
             BoardToolbarPopover::SelectBoard => {
-                let revision = board.app.state_revision;
-                let source = scope.bond(move || (c.board_space_options.get(), revision.get()));
+                let inventory = board.clone();
+                let source = scope.bond(move || {
+                    let _ = inventory.app.state_revision.get();
+                    let pending = inventory.app.state_store.read(|store| {
+                        pending_board_creates_from_ops(
+                            &store.load().raw_operations,
+                            &inventory.local_realm,
+                        )
+                    });
+                    (c.board_space_options.get(), pending, inventory.ready.get())
+                });
                 let board = board.clone();
-                reactive(source, move |scope, (options, _revision)| {
+                reactive_distinct(source, move |scope, (options, pending, writable)| {
                     let mut rows = vec![Box::new(
                         sapid::button()
                             .unstyled()
@@ -147,6 +265,7 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
                                 move || board.select(None)
                             }),
                     ) as View];
+                    let drag = drag_surface::BoardDrag::new(scope, board.clone());
                     rows.extend(options.into_iter().map(|option| {
                         let board = board.clone();
                         let label = kanban_title_label(
@@ -155,7 +274,36 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
                             &crate::i18n::tr("kanban.title_pending"),
                         );
                         let selected = option.id.clone();
-                        Box::new(
+                        let id = selected.clone();
+                        let row_id = selected.clone();
+                        let node = scope.cage(None);
+                        drag.board_row(scope, node, id.clone());
+                        let target = drag.board_target;
+                        let mut controls: Vec<View> = Vec::new();
+                        if option.state == SpaceContainerLifecycleState::Active && writable {
+                            let drag = drag.clone();
+                            controls.push(Box::new(
+                                glory::prelude::view()
+                                    .class("board-order-grip")
+                                    .name(format!(
+                                        "{} {}",
+                                        crate::i18n::tr("kanban.ui.move_board"),
+                                        label
+                                    ))
+                                    .semantics(Some(Box::new(glory::render::Semantics {
+                                        drag_capture: Some(glory::render::DragCapture::Press),
+                                        ..Default::default()
+                                    })))
+                                    .fill(crate::components::ui_icon("grip-vertical"))
+                                    .on(glory::render::EventKind::Drag, move |event| {
+                                        drag.event(
+                                            event,
+                                            drag_surface::DragSubject::Board(id.clone()),
+                                        );
+                                    }),
+                            ));
+                        }
+                        controls.push(Box::new(
                             sapid::button()
                                 .unstyled()
                                 .class(scope.bond(move || {
@@ -169,14 +317,25 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
                                 .name(label.clone())
                                 .fill(vec![crate::components::ui_icon("board"), plain(label)])
                                 .on_press(move || board.select(Some(option.id.clone()))),
+                        ));
+                        Box::new(
+                            glory::ui::view()
+                                .node_ref(node)
+                                .class(scope.bond(move || {
+                                    match target.get() {
+                                        Some((id, true)) if id == row_id => {
+                                            "board-order-row drop-after"
+                                        }
+                                        Some((id, false)) if id == row_id => {
+                                            "board-order-row drop-before"
+                                        }
+                                        _ => "board-order-row",
+                                    }
+                                    .to_owned()
+                                }))
+                                .fill(controls),
                         ) as View
                     }));
-                    let pending = board.app.state_store.read(|store| {
-                        pending_board_creates_from_ops(
-                            &store.load().raw_operations,
-                            &board.local_realm,
-                        )
-                    });
                     for pending in pending {
                         let retry = board.clone();
                         let ready = board.ready;
@@ -196,7 +355,9 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
                     stack("board-select-menu-panel", rows)
                 })
             }
-            BoardToolbarPopover::CreateBoard => empty(),
+            BoardToolbarPopover::Options
+            | BoardToolbarPopover::CreateBoard
+            | BoardToolbarPopover::AddList => empty(),
         })
     };
     let add_list = {
@@ -252,55 +413,21 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
                         ),
                     ],
                 );
-                toolbar_disclosure(scope, "add-list", label, content)
+                add_list_popover(scope, c.board_popover, label, content)
             } else {
                 empty()
             }
         })
     };
-    let create_panel = {
-        let board = board.clone();
-        reactive(c.board_popover, move |scope, open| {
-            if open != BoardToolbarPopover::CreateBoard {
-                return empty();
-            }
-            let create = board.clone();
-            stack(
-                "board-popover-panel board-create-popover",
-                vec![
-                    input(
-                        scope,
-                        board.app.clone(),
-                        "new-board-title-input",
-                        "kanban.ui.board_title",
-                        c.new_board_title,
-                        true,
-                    ),
-                    action(
-                        scope,
-                        board.app.clone(),
-                        "create-board-space-button",
-                        "kanban.ui.create_board",
-                        "primary",
-                        board.ready,
-                        move || create.create_board(),
-                    ),
-                ],
-            )
-        })
-    };
-    let archive = action(
-        scope,
+    let create = board.clone();
+    let create_panel = create_dialog(
         app.clone(),
-        "archive-board-button",
-        "kanban.archive_board_action",
-        "secondary btn board-archive-board",
-        {
-            let ready = board.ready;
-            scope.bond(move || ready.get() && c.selected_board.get().is_some())
-        },
-        move || c.archive_board_confirm_open.revise(|value| *value = true),
+        c.board_popover,
+        c.new_board_title,
+        board.ready,
+        move || create.create_board(),
     );
+    let ready = board.ready;
     let header = stack(
         "event board-header board-toolbar",
         vec![line(
@@ -313,10 +440,9 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
                             "board-select-label",
                             app.translated(scope, "kanban.board_header"),
                         ),
-                        toolbar_popover(
+                        board_selector(
                             scope,
                             c.board_popover,
-                            BoardToolbarPopover::SelectBoard,
                             app.translated(scope, "kanban.ui.switch_board").into(),
                             switch,
                             popover,
@@ -324,24 +450,12 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
                         add_list,
                     ],
                 ),
-                toolbar_disclosure(
+                board_options(
                     scope,
-                    "options",
-                    app.translated(scope, "kanban.ui.board_options").into(),
-                    line(
-                        "actions board-toolbar-actions",
-                        vec![
-                            archive,
-                            toolbar_popover(
-                                scope,
-                                c.board_popover,
-                                BoardToolbarPopover::CreateBoard,
-                                app.translated(scope, "kanban.ui.new_board").into(),
-                                plain(app.translated(scope, "kanban.ui.new_board")),
-                                create_panel,
-                            ),
-                        ],
-                    ),
+                    &app,
+                    c.board_popover,
+                    scope.bond(move || ready.get() && c.selected_board.get().is_some()),
+                    move || c.archive_board_confirm_open.revise(|v| *v = true),
                 ),
             ],
         )],
@@ -375,6 +489,7 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
         "timeline kanban-panel",
         vec![
             header,
+            create_panel,
             paragraph("muted board-status", status),
             grid,
             maintenance,
@@ -1025,9 +1140,27 @@ fn card_tile(
     )
 }
 
-fn maintenance(_scope: &Scope, board: Board) -> View {
+fn maintenance(scope: &Scope, board: Board) -> View {
     let columns = board.columns;
-    reactive(columns, move |scope, columns| {
+    let archived_lists_open = scope.cage(false);
+    let archived_cards_open = scope.cage(false);
+    let relevant_columns = scope.bond(move || {
+        let mut columns = columns.get();
+        columns.retain_mut(|column| {
+            if column.state != SpaceContainerLifecycleState::Active {
+                return true;
+            }
+            column.cards.retain(|card| {
+                matches!(
+                    card.lifecycle,
+                    StrandLifecycleState::Archived | StrandLifecycleState::Unavailable
+                )
+            });
+            !column.cards.is_empty()
+        });
+        columns
+    });
+    reactive_distinct(relevant_columns, move |scope, columns| {
         let mut sections = vec![];
         let unavailable = columns
             .iter()
@@ -1036,13 +1169,11 @@ fn maintenance(_scope: &Scope, board: Board) -> View {
             .cloned()
             .collect::<Vec<_>>();
         if !unavailable.is_empty() {
-            let app = board.app.clone();
             sections.push(disclosure(
                 scope,
-                app.clone(),
                 "kanban-lifecycle-unavailable",
                 crate::i18n::tr("kanban.ui.canonical_lifecycle_state_is_unavailable"),
-                true,
+                scope.cage(true),
                 Rc::new(move |_| {
                     stack(
                         "kanban-lifecycle-unavailable-list",
@@ -1073,10 +1204,9 @@ fn maintenance(_scope: &Scope, board: Board) -> View {
         if !positions.is_empty() {
             sections.push(disclosure(
                 scope,
-                board.app.clone(),
                 "kanban-position-unavailable",
                 crate::i18n::tr("kanban.ui.canonical_position_is_unavailable"),
-                true,
+                scope.cage(true),
                 Rc::new(move |_| {
                     stack(
                         "",
@@ -1105,67 +1235,65 @@ fn maintenance(_scope: &Scope, board: Board) -> View {
             .cloned()
             .collect::<Vec<_>>();
         if !conflicts.is_empty() {
-            sections.push(disclosure(scope,board.app.clone(),"kanban-space-conflicts",crate::i18n::tr_args("kanban.ui.unavailable_lists",&[("count",conflicts.len().to_string())]),true,Rc::new(move|_|stack("",conflicts.iter().map(|column|stack("event",vec![paragraph("entity-title",column.id.clone()),plain(crate::i18n::tr("kanban.ui.canonical_space_state_is_unavailable_refresh_to_retry"))])).collect()))));
+            sections.push(disclosure(scope,"kanban-space-conflicts",crate::i18n::tr_args("kanban.ui.unavailable_lists",&[("count",conflicts.len().to_string())]),scope.cage(true),Rc::new(move|_|stack("",conflicts.iter().map(|column|stack("event",vec![paragraph("entity-title",column.id.clone()),plain(crate::i18n::tr("kanban.ui.canonical_space_state_is_unavailable_refresh_to_retry"))])).collect()))));
         }
         let lists = columns
             .iter()
             .filter(|column| column.state == SpaceContainerLifecycleState::Archived)
             .cloned()
             .collect::<Vec<_>>();
-        let count = lists.len();
-        let st = board.clone();
-        sections.push(disclosure(
-            scope,
-            board.app.clone(),
-            "kanban-archived-lists",
-            format!(
-                "{} ({count})",
-                crate::i18n::tr("kanban.archived_lists_header")
-            ),
-            false,
-            Rc::new(move |scope| {
-                if lists.is_empty() {
-                    return paragraph("muted", crate::i18n::tr("kanban.archived_lists_empty"));
-                }
-                stack(
-                    "",
-                    lists
-                        .iter()
-                        .map(|column| {
-                            let restored = column.clone();
-                            let st = st.clone();
-                            stack(
-                                "event kanban-archived-list-row",
-                                vec![
-                                    line(
-                                        "event-head",
-                                        vec![
-                                            paragraph("entity-title", column.title.clone()),
-                                            plain(crate::i18n::tr_args(
-                                                "kanban.ui.list_card_count",
-                                                &[
-                                                    ("rank", column.rank.clone()),
-                                                    ("count", column.cards.len().to_string()),
-                                                ],
-                                            )),
-                                        ],
-                                    ),
-                                    action(
-                                        scope,
-                                        st.app.clone(),
-                                        "list-restore-button",
-                                        "kanban.restore_action",
-                                        "secondary",
-                                        true,
-                                        move || st.restore_list(&restored),
-                                    ),
-                                ],
-                            )
-                        })
-                        .collect(),
-                )
-            }),
-        ));
+        if !lists.is_empty() {
+            let count = lists.len();
+            let st = board.clone();
+            sections.push(disclosure(
+                scope,
+                "kanban-archived-lists",
+                format!(
+                    "{} ({count})",
+                    crate::i18n::tr("kanban.archived_lists_header")
+                ),
+                archived_lists_open,
+                Rc::new(move |scope| {
+                    stack(
+                        "",
+                        lists
+                            .iter()
+                            .map(|column| {
+                                let restored = column.clone();
+                                let st = st.clone();
+                                stack(
+                                    "event kanban-archived-list-row",
+                                    vec![
+                                        line(
+                                            "event-head",
+                                            vec![
+                                                paragraph("entity-title", column.title.clone()),
+                                                plain(crate::i18n::tr_args(
+                                                    "kanban.ui.list_card_count",
+                                                    &[
+                                                        ("rank", column.rank.clone()),
+                                                        ("count", column.cards.len().to_string()),
+                                                    ],
+                                                )),
+                                            ],
+                                        ),
+                                        action(
+                                            scope,
+                                            st.app.clone(),
+                                            "list-restore-button",
+                                            "kanban.restore_action",
+                                            "secondary",
+                                            true,
+                                            move || st.restore_list(&restored),
+                                        ),
+                                    ],
+                                )
+                            })
+                            .collect(),
+                    )
+                }),
+            ));
+        }
         let cards = columns
             .iter()
             .flat_map(|column| {
@@ -1177,59 +1305,60 @@ fn maintenance(_scope: &Scope, board: Board) -> View {
                     .map(move |card| (column.title.clone(), card))
             })
             .collect::<Vec<_>>();
-        let count = cards.len();
-        let st = board.clone();
-        sections.push(disclosure(
-            scope,
-            board.app.clone(),
-            "kanban-archived-cards",
-            format!(
-                "{} ({count})",
-                crate::i18n::tr("kanban.archived_cards_header")
-            ),
-            count > 0,
-            Rc::new(move |scope| {
-                if cards.is_empty() {
-                    return paragraph("muted", crate::i18n::tr("kanban.archived_cards_empty"));
-                }
-                stack(
-                    "",
-                    cards
-                        .iter()
-                        .map(|(column, card)| {
-                            let restored = card.clone();
-                            let st = st.clone();
-                            stack(
-                                "event kanban-archived-card-row",
-                                vec![
-                                    line(
-                                        "event-head",
-                                        vec![
-                                            paragraph("entity-title", card.title.clone()),
-                                            plain(column.clone()),
-                                        ],
-                                    ),
-                                    action(
-                                        scope,
-                                        st.app.clone(),
-                                        "card-restore-button",
-                                        "kanban.restore_action",
-                                        "secondary",
-                                        true,
-                                        move || {
-                                            st.lifecycle_card(
-                                                &restored,
-                                                StrandLifecycleState::Active,
-                                            )
-                                        },
-                                    ),
-                                ],
-                            )
-                        })
-                        .collect(),
-                )
-            }),
-        ));
+        if !cards.is_empty() {
+            let count = cards.len();
+            let st = board.clone();
+            sections.push(disclosure(
+                scope,
+                "kanban-archived-cards",
+                format!(
+                    "{} ({count})",
+                    crate::i18n::tr("kanban.archived_cards_header")
+                ),
+                archived_cards_open,
+                Rc::new(move |scope| {
+                    stack(
+                        "",
+                        cards
+                            .iter()
+                            .map(|(column, card)| {
+                                let restored = card.clone();
+                                let st = st.clone();
+                                stack(
+                                    "event kanban-archived-card-row",
+                                    vec![
+                                        line(
+                                            "event-head",
+                                            vec![
+                                                paragraph("entity-title", card.title.clone()),
+                                                plain(column.clone()),
+                                            ],
+                                        ),
+                                        action(
+                                            scope,
+                                            st.app.clone(),
+                                            "card-restore-button",
+                                            "kanban.restore_action",
+                                            "secondary",
+                                            true,
+                                            move || {
+                                                st.lifecycle_card(
+                                                    &restored,
+                                                    StrandLifecycleState::Active,
+                                                )
+                                            },
+                                        ),
+                                    ],
+                                )
+                            })
+                            .collect(),
+                    )
+                }),
+            ));
+        }
+        if sections.is_empty() {
+            return empty();
+        }
         stack("kanban-maintenance", sections)
     })
 }

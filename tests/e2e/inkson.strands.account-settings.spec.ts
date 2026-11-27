@@ -840,6 +840,24 @@ test("deactivated Agents are available only through the audit deep link", async 
   await expect(terminalAgentNote(page)).toBeVisible();
 });
 
+test("Agent lifecycle keeps its switch at the end of the row on wide and narrow screens", async ({ page }) => {
+  await gotoAndDismissRecovery(page, "/agents");
+  await byClass(page, "agent-admin-row").filter({ hasText: "assistant" }).click();
+  const row = byClass(page, "agent-admin-lifecycle-toggle-row");
+  for (const width of [1077, 390]) {
+    await page.setViewportSize({ width, height: 810 });
+    await expect(row.getByRole("switch")).toBeVisible();
+    await expect.poll(() => row.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const rightEdge = element.getBoundingClientRect().right
+        - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth);
+      const track = element.querySelector(".sapid-switch-track")!.getBoundingClientRect();
+      const title = element.querySelector(".agent-admin-section-title")!.getBoundingClientRect();
+      return title.right <= track.left && Math.abs(track.right - rightEdge) <= 1;
+    })).toBe(true);
+  }
+});
+
 test("active Agents never expose stale pairing credentials", async ({ page }) => {
   await writeSessionGrantInjection(page);
   await page.reload({ waitUntil: "domcontentloaded" });

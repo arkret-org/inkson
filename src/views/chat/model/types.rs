@@ -24,40 +24,13 @@ pub(crate) struct ChannelEntity {
     /// Explicit Strand security state from Strand metadata. `None` inherits
     /// the current Realm / Space security posture.
     pub(crate) security_encrypted: Option<bool>,
-    /// P3B.2.3 / P3B.2.4 — Circle scope this Strand was
-    /// created under, when the Strand projection carries a
-    /// `scope_circle_id`. The composer banner and the per-message
-    /// accent rail read from this field; `None` means the Strand
-    /// inherits the parent Realm scope and no banner / rail is
-    /// rendered.
-    pub(crate) scope_circle: Option<StrandScopeCircle>,
-}
-
-/// Minimal Circle-scope projection embedded on each [`ChannelEntity`].
-/// Mirrors the subset of [`crate::circle::CircleSummary`] needed by
-/// the chat composer banner and message accent rail.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct StrandScopeCircle {
-    /// `ak:circle:…`
-    pub(crate) circle_id: String,
-    /// Circle title used in the banner heading + accent-rail tooltip.
-    pub(crate) title: String,
-    /// Cached member count for the banner subline. `0` means the
-    /// projection has not been hydrated yet — render "members" with
-    /// no count rather than `0 members`.
-    pub(crate) member_count: u32,
 }
 
 impl ChannelEntity {
     pub(crate) fn effective_scope(&self, realm_id: &str) -> Option<arkret_sdk::ScopeRef> {
         let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?;
-        match self.scope_circle.as_ref() {
-            Some(circle) => Some(arkret_sdk::ScopeRef::Circle {
-                realm_id,
-                circle_id: arkret_sdk::CircleId::new(circle.circle_id.clone()).ok()?,
-            }),
-            None => Some(arkret_sdk::ScopeRef::Realm { realm_id }),
-        }
+        if self.is_private_sidecar { return None; }
+        Some(arkret_sdk::ScopeRef::Realm { realm_id })
     }
 }
 

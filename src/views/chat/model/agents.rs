@@ -166,7 +166,7 @@ pub(crate) fn merge_agent_metadata(
 pub(crate) fn participation_allows_public_reply(
     entries: &[arkret_models_collaboration::governance::agent_participation::AgentParticipationView],
     realm_id: &str,
-    circle_id: Option<&str>,
+
     strand_id: &str,
 ) -> bool {
     let strand_match = entries.iter().find(|entry| {
@@ -186,19 +186,7 @@ pub(crate) fn participation_allows_public_reply(
             } if entry_realm.as_str() == realm_id
         )
     });
-    let circle_match = circle_id.and_then(|circle_id| {
-        entries.iter().find(|entry| {
-            matches!(
-                &entry.target_scope,
-                arkret_models_collaboration::governance::agent_participation::ParticipationScope::Circle {
-                    realm_id: entry_realm,
-                    circle_id: entry_circle,
-                } if entry_realm.as_str() == realm_id && entry_circle.as_str() == circle_id
-            )
-        })
-    });
     strand_match
-        .or(circle_match)
         .or(realm_match)
         .is_some_and(|entry| entry.selection.message_creation_allowed)
 }

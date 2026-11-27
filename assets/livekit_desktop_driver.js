@@ -120,8 +120,10 @@
           try { await local.setScreenShareEnabled(command.enabled); }
           catch (_) {
             // Capture requires a real gesture on engines that do not transfer native activation.
-            if (share && command.enabled) { share.hidden = false; share.focus(); }
-            else fail("screen_permission");
+            if (share && command.enabled) {
+              share.hidden = false;
+              if (document.hasFocus() && document.activeElement === document.body) share.focus();
+            } else fail("screen_permission");
           }
           break;
         case "leave": await leave(); break;

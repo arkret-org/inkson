@@ -1538,7 +1538,7 @@ impl InksonAccountProjector {
                 .is_some_and(|schedule| schedule.has_pending())
         {
             crate::runtime::boxed_future_from(|| {
-                run_circle_scope_rotate_pass(
+                run_realm_membership_removal_pass(
                     self.start_generation,
                     self.generation.clone(),
                     &self.ctx,
@@ -2725,7 +2725,7 @@ fn removal_schedule_lock(
     }
 }
 
-async fn run_circle_scope_rotate_pass(
+async fn run_realm_membership_removal_pass(
     start_generation: u64,
     generation: crate::runtime::input::ValueReader<u64>,
     ctx: &SyncEngineContext,
@@ -2764,48 +2764,7 @@ async fn run_circle_scope_rotate_pass(
                 desired_members.clone(),
             ));
         }
-        // CircleView is the authenticated governing Station's complete current
-        // view. Unlike a local event projection it has no partial-page
-        // semantics, so its member_ids may drive conservative reconciliation.
-        let circles =
-            crate::transport::auth::with_authed_sdk_client(&base, token.clone(), |http| {
-                let realm = realm.clone();
-                async move { crate::transport::circle::list_circles(&http, realm.as_str()).await }
-            })
-            .await;
-        let mut all_reconciled = circles.is_ok() && matches!(realm_desired_members, Ok(Some(_)));
-
-        if let Ok(circles) = circles {
-            for circle in circles.circles {
-                let arkret_sdk::CircleReadView::Full(circle) = circle else {
-                    // A directory preview has no verified member set and
-                    // cannot drive an MLS membership reconciliation.
-                    continue;
-                };
-                if circle.state != arkret_sdk::CircleState::Active {
-                    continue;
-                }
-                // There is no create-locked `encryption_profile` on a Circle
-                // any more: a scope is plaintext until its own
-                // `ak.mls.genesis` is accepted and irreversibly RFC 9420
-                // afterwards, so the typed current results are what decide
-                // whether this scope has RFC MLS leaves to reconcile at all.
-                let scope = arkret_sdk::ScopeRef::Circle {
-                    realm_id: realm.clone(),
-                    circle_id: circle.circle_id,
-                };
-                let has_mls_genesis = ctx.state_store.read(|store| {
-                    crate::current_projection::current_mls_group(
-                        &store.realm_current_state_entries(realm.as_str()),
-                        &scope,
-                    )
-                    .is_some()
-                });
-                if has_mls_genesis {
-                    scopes.push((scope, circle.member_ids.into_iter().collect()));
-                }
-            }
-        }
+        let mut all_reconciled = matches!(realm_desired_members, Ok(Some(_)));
         let relevant_scopes = scopes
             .into_iter()
             .filter(|(scope, _)| {
@@ -2841,17 +2800,13 @@ async fn run_circle_scope_rotate_pass(
             {
                 continue;
             }
-            let circle_id = match &scope {
-                arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str()),
-                _ => None,
-            };
             let secure = crate::secure_key_store::default_secure_key_store("inkson");
             let Some(group_members) = ctx.state_store.read(|store| {
                 crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
                     store,
                     secure.as_ref(),
                     realm.as_str(),
-                    circle_id,
+
                     authority,
                     device,
                 )
@@ -2885,7 +2840,7 @@ async fn run_circle_scope_rotate_pass(
                 continue;
             }
             let frozen = match ctx.state_store.read(|store| {
-                crate::circle_mls::MembershipRemovalSnapshot::capture(store, scope.clone(), targets)
+                crate::mls::membership_removal::MembershipRemovalSnapshot::capture(store, scope.clone(), targets)
             }) {
                 Ok(value) => value,
                 Err(error) => {
@@ -2917,7 +2872,7 @@ async fn run_circle_scope_rotate_pass(
                     // against the group state it already holds.
                     fence()?;
                     let local = ctx.state_store.read(Clone::clone);
-                    let draft = crate::circle_mls::build_remove_scope_rotate_draft(
+                    let draft = crate::mls::membership_removal::build_remove_scope_rotate_draft(
                         &local,
                         secure.as_ref(),
                         authority,

@@ -240,7 +240,7 @@ pub(super) async fn encrypt_private_card_detail_patch_values_with_store(
     state_store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Result<(EncryptedPatchPlan, EncryptedWriteMlsEvents), String> {
-    let scope = crate::test_support::content::scope(realm_id, None, None);
+    let scope = crate::test_support::content::scope(realm_id, None);
     let reference = state_store
         .mls_checkpoint_for_scope(&scope)
         .and_then(|s| s.group_state_event_id)
@@ -342,7 +342,6 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
             &plaintext_values,
             event_kind_str::STRAND_UPDATE,
             accepted_group_state_ref.clone(),
-            None,
             sidecar_id,
             materials,
         )
@@ -514,7 +513,7 @@ pub(super) async fn dispatch_card_detail_update(
         if !private_values.is_empty()
             && matches!(
                 &source_scope,
-                arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+                arkret_sdk::ScopeRef::Realm { .. }
             )
         {
             let device = match arkret_sdk::DeviceId::new(device_id.clone()) {
@@ -934,7 +933,7 @@ pub(super) async fn dispatch_card_detail_update(
                         crate::mls::coverage_liveness::note_e2ee_submit_refusal_in_store(
                             store,
                             &realm_id,
-                            None,
+
                             err.inner(),
                         )
                     });

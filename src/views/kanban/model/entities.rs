@@ -226,6 +226,7 @@ pub(crate) struct DraggedColumn {
 /// derived [`PendingBoardCreate`] state instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BoardSpaceOption {
+    pub(crate) rank: Option<String>,
     pub(crate) id: arkret_sdk::SpaceId,
     pub(crate) title: String,
     pub(crate) state: SpaceContainerLifecycleState,
@@ -243,6 +244,7 @@ pub(crate) struct BoardSpaceOption {
 /// `SpaceId::from_event_id(..)` identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PendingBoardCreate {
+    pub(crate) rank: Option<String>,
     pub(crate) operation_id: crate::operation::LocalOperationId,
     pub(crate) title: String,
     pub(crate) state: CardState,
@@ -273,6 +275,8 @@ pub(crate) enum BoardToolbarPopover {
     #[default]
     None,
     SelectBoard,
+    AddList,
+    Options,
     CreateBoard,
 }
 

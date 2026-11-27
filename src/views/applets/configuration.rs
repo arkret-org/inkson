@@ -55,7 +55,6 @@ struct ConfigurationState {
     applet_id: String,
     service_id: String,
     name: Cage<String>,
-    circle: Cage<String>,
     busy: Cage<bool>,
     ready: Cage<bool>,
     pending: Cage<Option<ConfigurationRecord>>,
@@ -72,7 +71,6 @@ impl ConfigurationState {
         let applet_id = self.applet_id.clone();
         let service_id = self.service_id.clone();
         let name = self.name;
-        let circle = self.circle;
         let busy = self.busy;
         let _ready = self.ready;
         let pending = self.pending;
@@ -84,7 +82,7 @@ impl ConfigurationState {
                     return;
                 };
                 let intent = (|| -> anyhow::Result<_> {
-                    let scope = applet_effective_scope(&realm_id, Some(&circle.get()))
+                    let scope = applet_effective_scope(&realm_id)
                         .map_err(anyhow::Error::msg)?;
                     let label = name.get().trim().to_owned();
                     Ok(ConfigurationRecord {
@@ -188,7 +186,6 @@ impl ConfigurationState {
         let _applet_id = self.applet_id.clone();
         let _service_id = self.service_id.clone();
         let _name = self.name;
-        let _circle = self.circle;
         let busy = self.busy;
         let _ready = self.ready;
         let pending = self.pending;
@@ -254,14 +251,12 @@ pub(super) fn page(
         applet_id: applet_id.clone(),
         service_id: service_id.clone(),
         name: scope.cage(String::new()),
-        circle: scope.cage(String::new()),
         busy: scope.cage(false),
         ready: scope.cage(false),
         pending: scope.cage(None),
         feedback: scope.cage(String::new()),
     };
     let name = state.name;
-    let circle = state.circle;
     let busy = state.busy;
     let ready = state.ready;
     let pending = state.pending;
@@ -288,9 +283,6 @@ pub(super) fn page(
             *value = String::new();
         });
         name.revise(|value| {
-            *value = String::new();
-        });
-        circle.revise(|value| {
             *value = String::new();
         });
         pending.revise(|value| {
@@ -328,12 +320,6 @@ pub(super) fn page(
                                     *value = display_name.clone().unwrap_or_default();
                                 });
                             }
-                            circle.revise(|value| {
-                                *value = match &record.intent.effective_scope {
-                                    ScopeRef::Circle { circle_id, .. } => circle_id.to_string(),
-                                    _ => String::new(),
-                                };
-                            });
                         }
                         pending.revise(|value| {
                             *value = record;
@@ -408,16 +394,6 @@ pub(super) fn page(
                 editable,
                 true,
                 move |next| name.revise(|v| *v = next),
-            ),
-            field(
-                scope,
-                context.clone(),
-                "applet-bot-circle",
-                "applets.circle_placeholder",
-                circle,
-                editable,
-                true,
-                move |next| circle.revise(|v| *v = next),
             ),
             create,
             commands,

@@ -1,5 +1,4 @@
 // Shared signed originals and current cuts for SQLite and IndexedDB searches.
-use arkret_models_collaboration::governance::circle::{Circle, CircleState};
 use arkret_sdk::*;
 use arkret_test_kit::signed_event::SignedEventFixtureBuilder;
 use chrono::{TimeZone, Utc};
@@ -93,7 +92,7 @@ pub struct Fixture {
 }
 
 pub fn account_scope_removal_frame(realm: &RealmId) -> String {
-    // The account list counter deliberately exceeds every Realm/Circle position.
+    // The account list counter deliberately exceeds every Realm stream position.
     json!({"kind":"delta", "cursor":"ak:cursor:YQ", "realm_list_changes":{
         "upserts":[], "removals":[{"realm_id":realm, "revision":100_000}]
     }})
@@ -171,7 +170,7 @@ pub fn policy_cases() -> Vec<(&'static str, Fixture, Vec<PolicyCheck>)> {
         policy.validate().unwrap();
         fixture.install_policy(&policy);
         if scenario == "history_floor" {
-            // A real later revision advances the Circle stream. A repeated
+            // A real later revision advances the Realm stream. A repeated
             // join would be an illegal same-state membership transition.
             fixture.revise_message();
             fixture
@@ -515,7 +514,9 @@ impl Fixture {
             match scenario {
                 "wrong_source" => {
                     *source_stream_ref = CommitStreamRef::Realm {
-                        realm_id: self.message.event.realm_id.clone(),
+                        realm_id: "ak:realm:AQJmSg1s9QyzppFeJL40dN92YVHZeLdBBt3UWHa9XNOD"
+                            .parse()
+                            .unwrap(),
                     }
                 }
                 "wrong_commit" => revision.commit_id = RealmCommitId::from_digest([91; 32]),
@@ -549,9 +550,15 @@ impl Fixture {
                 .unwrap(),
         );
         let event = SignedEventFixtureBuilder::new("ak.message.revise", self.message.event.scope_ref.clone(), self.actor.clone(),
-            json!({"message_id":MessageId::from_event_id(&self.message.event.event_id),"content":{"kind":"ak.content.text","format":"plain","body":"revised private circle needle"}}))
+            json!({"message_id":MessageId::from_event_id(&self.message.event.event_id),"content":{"kind":"ak.content.text","format":"plain","body":"revised private realm needle"}}))
             .with_created_at(at(6)).sign_verifiable(&signer).unwrap().expect_verifiable();
-        let full = accepted(event, Some(&self.message));
+        let previous = self
+            .originals
+            .iter()
+            .rev()
+            .find(|full| full.commit.stream_ref == self.message.commit.stream_ref)
+            .unwrap();
+        let full = accepted(event, Some(previous));
         let head = self
             .snapshot
             .visible_stream_heads
@@ -650,43 +657,10 @@ impl Fixture {
             ),
             None,
         );
-        let mut circle = Circle::create_object(
-            realm.clone(),
-            "Private discussion",
-            serde_json::from_value(
-                json!({"short_name":"Private","color_token":"slate","symbol":{"glyph":"lock"}}),
-            )
-            .unwrap(),
-            actor.clone(),
-        );
-        circle.created_at = at(2);
-        let create = accepted(
-            event("ak.circle.create", realm_scope, json!({"object":circle}), 2),
-            Some(&parent),
-        );
-        let circle_id = CircleId::from_event_id(&create.event.event_id);
-        circle.id = Some(circle_id.clone());
-        let scope = ScopeRef::Circle {
-            realm_id: realm.clone(),
-            circle_id: circle_id.clone(),
-        };
-        let parent_revision = CurrentRevision {
-            commit_id: parent.commit.commit_id.clone(),
-            stream_position: parent.commit.stream_position,
-        };
-        let join = accepted(
-            event(
-                "ak.circle.member.state",
-                scope.clone(),
-                json!({"circle_id":circle_id,"member_id":actor,"membership":"join","parent_membership_revision":parent_revision}),
-                3,
-            ),
-            None,
-        );
+        let scope = realm_scope;
         let mut strand = Strand::new_create(realm.clone(), "Discussion", actor.clone());
         strand.created_at = at(4);
         strand.state = Some(ObjectState::Active);
-        strand.scope_circle_id = Some(circle_id.clone());
         strand.tracks = serde_json::from_value(json!({"discussion":{}})).unwrap();
         let strand_create = accepted(
             event(
@@ -695,7 +669,7 @@ impl Fixture {
                 json!({"object":strand}),
                 4,
             ),
-            Some(&join),
+            Some(&parent),
         );
         let strand_id = StrandId::from_event_id(&strand_create.event.event_id);
         strand.id = Some(strand_id.clone());
@@ -703,7 +677,7 @@ impl Fixture {
             event(
                 "ak.message.create",
                 scope,
-                json!({"strand_id":strand_id,"track_name":"discussion","content":{"kind":"ak.content.text","format":"plain","body":"private circle search needle"}}),
+                json!({"strand_id":strand_id,"track_name":"discussion","content":{"kind":"ak.content.text","format":"plain","body":"private realm search needle"}}),
                 5,
             ),
             Some(&strand_create),
@@ -714,7 +688,7 @@ impl Fixture {
             snapshot_id: RealmSnapshotId::from_digest([0; 32]),
             realm_id: realm,
             governance_generation: 0,
-            visible_stream_heads: [&create, &message]
+            visible_stream_heads: [&message]
                 .map(|full| CommitStreamHead {
                     stream_ref: full.commit.stream_ref.clone(),
                     commit_id: full.commit.commit_id.clone(),
@@ -728,21 +702,6 @@ impl Fixture {
                         actor_id: actor.clone(),
                     },
                     json!({"membership":"join"}),
-                ),
-                row(
-                    &create,
-                    CurrentSelector::Circle {
-                        circle_id: circle_id.clone(),
-                    },
-                    json!(circle),
-                ),
-                row(
-                    &join,
-                    CurrentSelector::CircleMemberState {
-                        circle_id,
-                        member_actor_id: actor.clone(),
-                    },
-                    json!({"membership":"join","parent_membership_revision":parent_revision,"effective_at":at(3).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)}),
                 ),
                 row(
                     &strand_create,
@@ -759,7 +718,7 @@ impl Fixture {
             ],
             retention_and_history_floor: RetentionAndHistoryFloor {
                 history_access: HistoryAccess::SinceJoin,
-                stream_floors: [&create, &message]
+                stream_floors: [&message]
                     .map(|full| StreamHistoryFloor {
                         stream_ref: full.commit.stream_ref.clone(),
                         oldest_position: 0,
@@ -772,7 +731,7 @@ impl Fixture {
         seal(&mut snapshot);
         Self {
             snapshot,
-            originals: vec![parent, create, join, strand_create, message.clone()],
+            originals: vec![parent, strand_create, message.clone()],
             actor,
             message,
         }
@@ -787,8 +746,7 @@ impl Fixture {
     }
 
     pub fn change(&mut self, scenario: &str) {
-        // A newer signed cut removes or replaces the Circle without deleting
-        // the cached message, Strand or canonical Circle join.
+        // Replace the Strand current while retaining the accepted Message.
         let head = &mut self.snapshot.visible_stream_heads[0];
         head.stream_position += 1;
         head.commit_id = RealmCommitId::from_digest([91; 32]);
@@ -798,10 +756,10 @@ impl Fixture {
         revision.stream_position = head.stream_position;
         revision.commit_id = head.commit_id.clone();
         match scenario {
-            "archived" => value["state"] = json!(CircleState::Archived),
-            "tombstoned" => value["state"] = json!(CircleState::Tombstoned),
+            "archived" => value["state"] = json!(ObjectState::Archived),
+            "redacted" => value["state"] = json!(ObjectState::Redacted),
             "wrong_id" => {
-                value["id"] = json!(CircleId::from_event_id(&EventId::from_digest(
+                value["id"] = json!(StrandId::from_event_id(&EventId::from_digest(
                     DigestSuite::Sha256,
                     [92; 32]
                 )))
@@ -809,14 +767,18 @@ impl Fixture {
             "wrong_realm" => {
                 value["realm_id"] = json!("ak:realm:AQJmSg1s9QyzppFeJL40dN92YVHZeLdBBt3UWHa9XNOD")
             }
-            "wrong_schema" => value["schema"] = json!(SchemaId::STRAND_V1),
+            "wrong_schema" => value["schema"] = json!("ak.schema.message.v1"),
             "wrong_source" => {
                 let CurrentState::Value {
                     source_stream_ref,
                     revision,
                     ..
                 } = &mut self.snapshot.current_state_entries[1];
-                *source_stream_ref = self.message.commit.stream_ref.clone();
+                *source_stream_ref = CommitStreamRef::Realm {
+                    realm_id: "ak:realm:AQJmSg1s9QyzppFeJL40dN92YVHZeLdBBt3UWHa9XNOD"
+                        .parse()
+                        .unwrap(),
+                };
                 *revision = CurrentRevision {
                     commit_id: self.message.commit.commit_id.clone(),
                     stream_position: self.message.commit.stream_position,
@@ -825,16 +787,25 @@ impl Fixture {
             "missing" => {
                 self.snapshot.current_state_entries.remove(1);
             }
-            _ => panic!("unknown Circle search scenario"),
+            _ => panic!("unknown Strand search scenario"),
         }
         self.snapshot.created_at = at(11);
         seal(&mut self.snapshot);
     }
 }
 
+pub fn expected_search_result<T>(scenario: &str, hidden: T) -> std::result::Result<T, String> {
+    match scenario {
+        "wrong_id" | "wrong_realm" | "wrong_schema" => {
+            Err("Strand current differs from its selected subject".into())
+        }
+        _ => Ok(hidden),
+    }
+}
+
 pub const SCENARIOS: [&str; 7] = [
     "archived",
-    "tombstoned",
+    "redacted",
     "missing",
     "wrong_id",
     "wrong_realm",
@@ -928,8 +899,11 @@ pub fn authorization_cases() -> Vec<SearchAuthorizationCase> {
                 if name == "missing_strand" {
                     fixture.snapshot.current_state_entries.remove(position);
                 } else {
-                    let CurrentState::Value { value, .. } =
-                        &mut fixture.snapshot.current_state_entries[position];
+                    let CurrentState::Value {
+                        value,
+                        source_stream_ref,
+                        ..
+                    } = &mut fixture.snapshot.current_state_entries[position];
                     match name {
                         "wrong_strand_id" => {
                             value["id"] = json!(StrandId::from_event_id(&EventId::from_digest(
@@ -938,9 +912,11 @@ pub fn authorization_cases() -> Vec<SearchAuthorizationCase> {
                             )))
                         }
                         "wrong_strand_scope" => {
-                            value["scope_circle_id"] = json!(CircleId::from_event_id(
-                                &EventId::from_digest(DigestSuite::Sha256, [94; 32])
-                            ))
+                            *source_stream_ref = CommitStreamRef::Realm {
+                                realm_id: "ak:realm:AQJmSg1s9QyzppFeJL40dN92YVHZeLdBBt3UWHa9XNOD"
+                                    .parse()
+                                    .unwrap(),
+                            };
                         }
                         "wrong_strand_realm" => {
                             value["realm_id"] =

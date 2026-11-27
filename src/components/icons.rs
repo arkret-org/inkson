@@ -78,6 +78,7 @@ fn icon(name: &str, class: &str, fixed_size: bool) -> View {
         "calendar" => {
             "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"
         }
+        "circle-plus" => "M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0ZM8 12h8m-4-4v8",
         "check" => "M20 6 9 17l-5-5",
         "chevron-down" => "m6 9 6 6 6-6",
         "chevron-left" => "m15 18-6-6 6-6",

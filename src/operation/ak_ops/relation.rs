@@ -8,7 +8,6 @@ fn relation_definition(
     to_ref: arkret_sdk::RelationEndpoint,
 ) -> anyhow::Result<arkret_sdk::RelationDefinition> {
     let definition = arkret_sdk::RelationDefinition {
-        scope_circle_id: None,
         relation_kind: arkret_sdk::RelationKind::from_wire(kind),
         from_ref,
         to_ref,

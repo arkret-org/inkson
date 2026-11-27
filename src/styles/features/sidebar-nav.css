@@ -11,7 +11,7 @@
   padding: 18px;
   overflow: hidden;
 }
-.realm-tree-list { display: grid; gap: 8px; align-content: start; overflow: auto; }
+.realm-tree-list { display: grid; gap: 8px; align-content: start; }
 .realm-tree-node-button.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 20%, var(--nav-bg-2)); }
 .sidebar .card-meta, .sidebar .muted { color: var(--nav-muted); }
 .brand {
@@ -324,7 +324,6 @@
   border-color: color-mix(in srgb, var(--accent) 52%, var(--accent-2));
   color: var(--nav-text);
   background: color-mix(in srgb, var(--accent) 14%, var(--nav-input-bg));
-  outline: none;
 }
 
 .sidebar-toolbar-action:hover,
@@ -346,6 +345,23 @@
 .contact-sidebar-row {
   min-height: 36px;
   grid-template-columns: var(--sidebar-icon-track) minmax(0, 1fr) repeat(2, auto);
+}
+
+/* Reserve the first line for the recipient. Status badges wrap underneath
+   when the agent disclosure and row menu share the available width. */
+.contact-sidebar-row.direct-conversation-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  text-align: start;
+}
+.contact-sidebar-row.direct-conversation-row > .grow {
+  flex: 1 0 calc(100% - var(--sidebar-icon-track) - 6px);
+}
+.contact-sidebar-row.direct-conversation-row > .pill {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .contact-sidebar-group {
@@ -443,6 +459,64 @@
 .sidebar-row-main.sidebar-row-depth-4 { padding-inline-start: 58px; }
 .sidebar-row-main.sidebar-row-depth-5 { padding-inline-start: 70px; }
 .sidebar-row-main.sidebar-row-depth-6 { padding-inline-start: 82px; }
+.realm-action-row {
+  --realm-action-size: 32px;
+}
+.realm-action-row .realm-tree-item {
+  grid-template-columns: var(--sidebar-icon-track) minmax(0, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  min-height: var(--realm-action-size);
+  padding-inline-end: calc(var(--realm-action-size) + 8px);
+}
+.realm-row-actions {
+  position: absolute;
+  inset-inline-end: 3px;
+  align-self: center;
+}
+.realm-row-actions .sapid-popover-trigger {
+  display: grid;
+  place-items: center;
+  width: var(--realm-action-size);
+  height: var(--realm-action-size);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+}
+.realm-row-actions .sapid-popover-trigger:is(:hover, [aria-expanded="true"]) {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+.realm-row-actions .sapid-popover-trigger .ui-icon path { stroke-width: 3.5; }
+.realm-row-actions-panel {
+  width: 188px;
+  padding: 0;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-lg);
+}
+.realm-row-actions-list {
+  display: grid;
+  padding: 4px;
+  gap: 2px;
+}
+.realm-row-actions-list .sidebar-row-menu-item {
+  min-height: var(--control-md);
+  padding: 6px 10px;
+  color: var(--text);
+  font: inherit;
+}
+.realm-row-actions-list .sidebar-row-menu-item.danger { color: var(--danger); }
+@media (pointer: coarse) {
+  .realm-action-row { --realm-action-size: var(--control-lg); }
+  .realm-row-actions-list .sidebar-row-menu-item { min-height: var(--control-lg); }
+}
 .sidebar-row-menu-host {
   position: absolute;
   top: 50%;
@@ -507,7 +581,6 @@
   color: var(--text);
   background: var(--surface-3);
   border-color: var(--border-strong);
-  outline: none;
 }
 .sidebar-row-menu-host.is-open .sidebar-row-menu-button {
   position: relative;
@@ -542,8 +615,9 @@
   border: 0;
   border-radius: 6px;
   padding: 6px 8px;
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
+  display: flex;
+  justify-content: flex-start;
+  white-space: nowrap;
   align-items: center;
   gap: 8px;
   color: var(--nav-text);
@@ -558,7 +632,6 @@
 .sidebar-row-menu-item:focus-visible {
   color: var(--nav-text);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
-  outline: none;
 }
 .sidebar-row-menu-item.danger {
   color: var(--danger);
@@ -911,14 +984,42 @@
   color: var(--nav-muted);
   text-decoration: none;
 }
-.navigation-rail .rail-link:hover { background: var(--nav-bg-2); color: var(--nav-text); }
+@media (hover: hover) {
+  .navigation-rail .rail-link:hover { background: var(--nav-bg-2); color: var(--nav-text); }
+}
 .navigation-rail .rail-link.is-active {
   background: var(--accent-soft);
   color: var(--accent-ink);
-  box-shadow: inset 2px 0 var(--accent);
 }
-.navigation-rail .rail-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.navigation-rail .rail-link:active {
+  background: color-mix(in srgb, var(--accent) 20%, var(--accent-soft));
+  color: var(--accent-ink);
+}
+.navigation-rail .rail-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (forced-colors: active) {
+  .navigation-rail .rail-link.is-active { outline: 1px solid Highlight; outline-offset: -2px; }
+  .navigation-rail .rail-link:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+}
 .navigation-rail .rail-brand { margin-bottom: 12px; }
+.rail-brand-icon { position: relative; display: grid; place-items: center; }
+.rail-brand-mobile-label { display: none; }
+.rail-connection {
+  position: absolute;
+  inset-inline-end: 0;
+  inset-block-end: 0;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--nav-bg);
+  border-radius: 50%;
+  background: var(--success);
+}
+.rail-connection.is-offline { background: var(--nav-bg); box-shadow: inset 0 0 0 2px var(--text-3); }
+.rail-connection.is-pending { background: var(--warning); border-radius: 3px; }
+.rail-connection.is-attention { background: var(--danger); border-radius: 2px; }
+@media (forced-colors: active) {
+  .rail-connection { forced-color-adjust: none; background: Highlight; border-color: Canvas; }
+  .rail-connection.is-offline { background: Canvas; box-shadow: inset 0 0 0 2px CanvasText; }
+}
 .navigation-rail .rail-logo { display: block; width: 38px; height: 38px; object-fit: contain; }
 .navigation-rail .rail-icon { width: 22px; height: 22px; }
 .navigation-rail .rail-settings { margin-top: auto; }
@@ -944,13 +1045,14 @@
 .workspace.workspace-has-list { grid-template-columns: 264px minmax(0, 1fr); }
 .workspace > .main.realm { height: 100%; min-height: 0; grid-column: auto; grid-row: auto; }
 .workspace-outer-header { display: contents; }
+.workspace-shell { --list-inset: 12px; }
 .workspace-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-width: 0;
   min-height: 0;
-  padding: 0 12px 12px;
+  padding: 0 var(--list-inset) var(--list-inset);
   border-inline-end: 1px solid var(--border);
   background: var(--surface-2);
   overflow: hidden;
@@ -978,7 +1080,7 @@
 .workspace-shell .settings-page > .settings-shell { flex: 1 1 0; height: auto; }
 .workspace-shell .settings-page .settings-sidebar-column,
 .workspace-shell .agent-admin-list-pane,
-.workspace-shell .contacts-list-pane { padding: 0 12px 12px; border: 0; border-inline-end: 1px solid var(--border); border-radius: 0; background: var(--surface-2); overflow-y: auto; min-height: 0; align-content: start; gap: 12px; }
+.workspace-shell .contacts-list-pane { padding: 0 var(--list-inset) var(--list-inset); border: 0; border-inline-end: 1px solid var(--border); border-radius: 0; background: var(--surface-2); overflow-y: auto; min-height: 0; align-content: start; gap: 12px; }
 .workspace-shell .contacts-list-pane,
 .workspace-shell .agent-admin-list-pane { display: flex; flex-direction: column; overflow: hidden; }
 .contacts-list-pane > .workspace-list-heading,
@@ -997,6 +1099,16 @@
 .workspace-shell .settings-page .settings-content-column,
 .workspace-shell .agent-admin-detail-content,
 .workspace-shell .contacts-detail-pane { padding: 24px; overflow-y: auto; min-height: 0; min-width: 0; align-content: start; }
+/* Extend the scrollport to the pane border while keeping its rows inset. */
+.workspace-list > .workspace-list-rows,
+.settings-sidebar-column > .settings-nav-list,
+.contacts-list-pane > .contact-list-items,
+.agent-admin-list-pane > .agent-admin-list-content {
+  margin-inline: calc(-1 * var(--list-inset));
+  margin-block-end: calc(-1 * var(--list-inset));
+  padding-inline: var(--list-inset);
+  padding-block-end: var(--list-inset);
+}
 .workspace-shell .settings-page .settings-sidebar-column { display: flex; flex-direction: column; }
 .workspace-shell .settings-page .settings-sidebar-column > :last-child { min-height: 0; overflow-y: auto; }
 .workspace-shell .realm-body > .agent-admin-page { display: flex; flex-direction: column; overflow: hidden; }
@@ -1036,16 +1148,15 @@
     border-inline-end: 0;
     border-top: 1px solid var(--border);
   }
-  .navigation-rail .rail-brand, .navigation-rail .rail-settings { display: none; }
-  .navigation-rail .rail-link.is-active { box-shadow: inset 0 2px var(--accent); }
+  .navigation-rail .rail-settings { display: none; }
   .workspace.workspace-has-list { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
-  .workspace-list { padding: 0 12px 12px; border-inline-end: 0; border-bottom: 1px solid var(--border); }
+  .workspace-list { border-inline-end: 0; border-bottom: 1px solid var(--border); }
   .workspace-shell .settings-page > .settings-shell,
   .workspace-shell .agent-admin-layout,
   .workspace-shell .contacts-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   .workspace-shell .settings-page .settings-sidebar-column,
   .workspace-shell .agent-admin-list-pane,
-  .workspace-shell .contacts-list-pane { padding: 0 12px 12px; border-inline-end: 0; border-bottom: 1px solid var(--border); }
+  .workspace-shell .contacts-list-pane { border-inline-end: 0; border-bottom: 1px solid var(--border); }
   .workspace-shell .settings-page .settings-content-column,
   .workspace-shell .agent-admin-detail-content,
   .workspace-shell .contacts-detail-pane { padding: 14px; }
@@ -1059,7 +1170,7 @@
   .workspace-shell .agent-admin-list-pane { overflow-y: auto; }
   .workspace-list > .workspace-list-rows,
   .contacts-list-pane > .contact-list-items,
-  .agent-admin-list-pane > .agent-admin-list-rows { flex: 0 0 auto; overflow: visible; }
+  .agent-admin-list-pane > .agent-admin-list-content { flex: 0 0 auto; overflow: visible; }
   .workspace-shell .settings-page .settings-sidebar-column > :last-child { flex-shrink: 0; overflow: visible; }
 }
 
@@ -1094,7 +1205,7 @@
 .settings-list-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .workspace-shell .topbar-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .agent-admin-list-content { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; flex: 1; }
-.agent-admin-list-content .agent-admin-list-rows { flex: 1; min-height: 0; overflow-y: auto; }
+.agent-admin-list-content .agent-admin-list-rows { flex: none; max-height: none; overflow: visible; }
 @keyframes workspace-detail-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }
 @media (prefers-reduced-motion: no-preference) {
   .workspace-mobile .workspace-pane-detail.is-visible > .realm-body,
@@ -1135,6 +1246,10 @@
     gap: 3px;
     padding: 4px;
   }
+  .navigation-rail .rail-brand { margin: 0; }
+  .navigation-rail .rail-brand .rail-logo { width: 28px; height: 28px; }
+  .navigation-rail .rail-brand .rail-brand-tooltip { display: none; }
+  .rail-brand-mobile-label { display: block; font-size: var(--text-caption); line-height: var(--leading-tight); }
   .navigation-rail .rail-icon { flex: 0 0 28px; height: 28px; }
   .navigation-rail .rail-account-avatar { width: 28px; height: 28px; }
   .navigation-rail .rail-label { display: block; max-width: 100%; font-size: var(--text-caption); line-height: var(--leading-tight); font-weight: var(--weight-medium); overflow-wrap: anywhere; text-align: center; }

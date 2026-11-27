@@ -1,6 +1,6 @@
 //! The MLS send gate of one effective scope.
 //!
-//! A Realm or Circle scope is plaintext until its own accepted
+//! A Realm scope is plaintext until its own accepted
 //! `ak.mls.genesis` and irreversibly standard RFC 9420 afterwards. The only
 //! client-side evidence of that state is the Station's typed `mls_group`
 //! current result, read from the durable current index at a complete verified
@@ -127,9 +127,7 @@ pub(crate) async fn read_durable_mls_current(
         })
     })
     .await?;
-    index
-        .read_mls_group_ready(scope, &arkret_sdk::ActorId::account(authority.clone()))
-        .await
+    index.read_mls_group_ready(scope).await
 }
 
 /// Decide the gate from the durable read and this device's installed group.
@@ -451,18 +449,6 @@ pub(crate) async fn resolve_restorable_mls_send_gate(
         group.local_content_sender_domain()?;
     }
     Ok(gate)
-}
-
-/// A retry keeps its original ciphertext and epoch. Recheck current Circle
-/// qualification locally; the authority decides acceptance or exact replay.
-pub(crate) async fn check_circle_send_membership(
-    input: &MlsSendGateInput,
-    scope: &arkret_sdk::ScopeRef,
-) -> Result<(), MlsSendGateBlocked> {
-    read_durable_mls_current(input, scope)
-        .await
-        .map(|_| ())
-        .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))
 }
 
 /// The encryption shape of one already built application body.

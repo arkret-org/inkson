@@ -19,19 +19,11 @@ pub(crate) fn public_refs(info: &[u8], tree: &[u8]) -> (arkret_sdk::BlobRef, ark
 
 pub(crate) fn scope(
     realm: &str,
-    circle: Option<&str>,
     sidecar: Option<&arkret_sdk::SidecarId>,
 ) -> arkret_sdk::ScopeRef {
     let realm_id = arkret_sdk::RealmId::new(realm).unwrap();
-    match (circle, sidecar) {
-        (_, Some(id)) => arkret_sdk::ScopeRef::Sidecar {
-            realm_id,
-            sidecar_id: id.clone(),
-        },
-        (Some(id), _) => arkret_sdk::ScopeRef::Circle {
-            realm_id,
-            circle_id: arkret_sdk::CircleId::new(id).unwrap(),
-        },
+    match sidecar {
+        Some(id) => arkret_sdk::ScopeRef::Sidecar { realm_id, sidecar_id: id.clone() },
         _ => arkret_sdk::ScopeRef::Realm { realm_id },
     }
 }

@@ -94,11 +94,7 @@ pub(crate) fn automatic_read_receipt_plan(
                 &target.accepted_ref.event_id,
             )
             .ok()?;
-        let circle = match &target.scope_ref {
-            arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str()),
-            _ => None,
-        };
-        crate::signal::key_material_for_scope(store, realm, circle).ok()
+        crate::signal::key_material_for_scope(store, realm).ok()
     });
     Some(AutomaticReadReceiptPlan {
         event_id,

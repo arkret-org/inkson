@@ -297,7 +297,7 @@ impl LocalOperation {
         self
     }
 
-    /// Narrow this write to its accepted effective scope (Circle or Sidecar).
+    /// Narrow this write to its accepted effective scope (Sidecar).
     pub fn with_effective_scope(mut self, scope_ref: ScopeRef) -> anyhow::Result<Self> {
         self.intent = self
             .intent
@@ -508,24 +508,9 @@ impl TypedOperationBuilder {
         })
     }
 
-    pub fn circle_id(self, circle_id: impl Into<String>) -> Self {
-        self.map_intent(|intent| {
-            let realm_id = intent
-                .realm_id_opt()
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("a Realm genesis has no Circle scope"))?;
-            let circle_id = arkret_sdk::CircleId::new(circle_id.into())
-                .map_err(|err| anyhow::anyhow!("invalid circle_id: {err}"))?;
-            intent
-                .with_scope_ref(ScopeRef::Circle {
-                    realm_id,
-                    circle_id,
-                })
-                .map_err(|err| anyhow::anyhow!("{err}"))
-        })
-    }
 
-    /// Narrow this write to its accepted effective scope (Circle or Sidecar).
+
+    /// Narrow this write to its accepted effective scope (Sidecar).
     ///
     /// `scope_ref` is producer-signed, so it is part of the content the identity
     /// is derived from; setting it here keeps it inside the one finalize

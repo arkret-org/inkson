@@ -21,10 +21,10 @@ fn encrypt_values_with_device_snapshot_for_effective_scope(
     values: &[Vec<u8>],
     kind: &str,
     reference: arkret_sdk::EventId,
-    circle: Option<&str>,
+
     sidecar: Option<&arkret_sdk::SidecarId>,
 ) -> Result<(Vec<arkret_sdk::DidCoreId>, Vec<serde_json::Value>), MlsRuntimeError> {
-    let scope = fixture::content::scope(realm, circle, sidecar);
+    let scope = fixture::content::scope(realm, sidecar);
     let materials = values
         .iter()
         .map(|_| {
@@ -34,8 +34,7 @@ fn encrypt_values_with_device_snapshot_for_effective_scope(
         })
         .collect::<Vec<_>>();
     crate::mls::runtime::encrypt_values_with_device_snapshot_for_effective_scope(
-        state, secure, realm, account, device, mime, values, kind, reference, circle, sidecar,
-        &materials,
+        state, secure, realm, account, device, mime, values, kind, reference, sidecar, &materials,
     )
 }
 
@@ -53,10 +52,10 @@ fn encrypt_message_with_device_snapshot(
     metadata_mime: Option<&str>,
     metadata: Option<&[u8]>,
     sender: Option<&str>,
-    circle: Option<&str>,
+
     sidecar: Option<&arkret_sdk::SidecarId>,
 ) -> Result<crate::mls::runtime::DeviceSnapshotEncryption, MlsRuntimeError> {
-    let scope = fixture::content::scope(realm, circle, sidecar);
+    let scope = fixture::content::scope(realm, sidecar);
     let material = fixture::content::checkpoint_material(
         state, secure, account, device, &scope, kind, &reference,
     );
@@ -78,7 +77,6 @@ fn encrypt_message_with_device_snapshot(
         metadata_mime,
         metadata,
         sender,
-        circle,
         sidecar,
         material,
         metadata_material,
@@ -124,7 +122,7 @@ fn coverage_commit_pins_durable_revision_when_product_view_lags() {
     };
     super::seed_human_creator_authorization(actor, device.as_str());
     ensure_creator_mls_checkpoint_for_effective_scope(
-        &mut state, &secure, realm, None, &authority, &device,
+        &mut state, &secure, realm, &authority, &device,
     )
     .unwrap();
     fixture::install_accepted_mls_group(&mut state, &scope);
@@ -167,93 +165,88 @@ fn coverage_commit_pins_durable_revision_when_product_view_lags() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn circle_commit_restoration_uses_only_its_own_accepted_epoch() {
+fn independent_commit_restoration_uses_only_its_own_accepted_epoch() {
     // Creator fixtures share the session tests' exact device-directory cache.
     let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
-    let mut state = temp_state_store("circle-own-commit-floor");
+    let mut state = temp_state_store("independent-own-commit-floor");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001");
     let authority = fixture::authority(actor);
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-    let circle = "ak:circle:AZSmUwZFkNevUaVm0adiKDKw0OuAQqfAX6DFwhnIqF9I";
+    let independent = "ak:realm:AZSmUwZFkNevUaVm0adiKDKw0OuAQqfAX6DFwhnIqF9I";
     let realm_scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
     };
-    let circle_scope = arkret_sdk::ScopeRef::Circle {
-        realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
-        circle_id: arkret_sdk::CircleId::new(circle).unwrap(),
+    let independent_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: independent.parse().unwrap(),
     };
     super::seed_human_creator_authorization(actor, device.as_str());
     ensure_creator_mls_checkpoint_for_effective_scope(
         &mut state,
         &secure,
-        realm,
-        Some(circle),
+        independent,
         &authority,
         &device,
     )
     .unwrap();
     fixture::install_accepted_mls_group_at_epoch(&mut state, &realm_scope, 7, 0);
-    fixture::install_accepted_mls_group(&mut state, &circle_scope);
-    let before = state.mls_checkpoint_for_scope(&circle_scope).unwrap();
+    seed_complete_rfc9420_projection(&mut state, independent, actor);
+    let before = state.mls_checkpoint_for_scope(&independent_scope).unwrap();
     assert!(matches!(
         force_epoch_rotation_commit_for_effective_scope(
             &state,
             &secure,
-            realm,
-            Some(circle),
+            independent,
             &authority,
             &device,
         ),
         Err(MlsRuntimeError::Commit(_))
     ));
-    let circle_base = state
-        .current_mls_group_for_scope(&circle_scope)
+    let independent_base = state
+        .current_mls_group_for_scope(&independent_scope)
         .unwrap()
         .current_mls_commit_event_ref;
     state
         .record_mls_group_state_ref_for_scope(
-            &circle_scope,
+            &independent_scope,
             &before.group_id,
             before.epoch,
-            circle_base,
+            independent_base,
         )
         .unwrap();
-    let before = state.mls_checkpoint_for_scope(&circle_scope).unwrap();
+    let before = state.mls_checkpoint_for_scope(&independent_scope).unwrap();
     let staged = force_epoch_rotation_commit_for_effective_scope(
         &state,
         &secure,
-        realm,
-        Some(circle),
+        independent,
         &authority,
         &device,
     )
-    .expect("the Circle's epoch-zero private state must not inherit the Realm's epoch-seven floor");
+    .expect("the Realm's epoch-zero private state must not inherit the Realm's epoch-seven floor");
     assert_eq!(staged.staged_checkpoint.epoch, 0);
     assert_eq!(
-        state.mls_checkpoint_for_scope(&circle_scope),
+        state.mls_checkpoint_for_scope(&independent_scope),
         Some(before.clone())
     );
     let state_ref = state
-        .current_mls_group_for_scope(&circle_scope)
+        .current_mls_group_for_scope(&independent_scope)
         .unwrap()
         .current_mls_commit_event_ref;
     let plaintext = arkret_sdk::canonical::canonical_json_bytes(&arkret_sdk::ContentBlock::text(
-        "independent Circle",
+        "independent Realm",
     ))
     .unwrap();
     let (_, values) = encrypt_values_with_device_snapshot_for_effective_scope(
         &mut state,
         &secure,
-        realm,
+        independent,
         &authority,
         &device,
         "application/vnd.arkret.message+json",
         std::slice::from_ref(&plaintext),
         arkret_sdk::EventKind::MessageCreate.as_str(),
         state_ref.clone(),
-        Some(circle),
         None,
     )
     .unwrap();
@@ -261,7 +254,7 @@ fn circle_commit_restoration_uses_only_its_own_accepted_epoch() {
     encrypt_message_with_device_snapshot(
         &mut state,
         &secure,
-        realm,
+        independent,
         &authority,
         &device,
         "application/vnd.arkret.message+json",
@@ -271,27 +264,28 @@ fn circle_commit_restoration_uses_only_its_own_accepted_epoch() {
         None,
         None,
         None,
-        Some(circle),
         None,
     )
     .unwrap();
-    let before = state.mls_checkpoint_for_scope(&circle_scope).unwrap();
-    fixture::install_accepted_mls_group_at_epoch(&mut state, &circle_scope, 2, 0);
+    let before = state.mls_checkpoint_for_scope(&independent_scope).unwrap();
+    fixture::install_accepted_mls_group_at_epoch(&mut state, &independent_scope, 2, 0);
     assert!(
         matches!(
             force_epoch_rotation_commit_for_effective_scope(
                 &state,
                 &secure,
-                realm,
-                Some(circle),
+                independent,
                 &authority,
                 &device
             ),
             Err(MlsRuntimeError::CheckpointRestore(_))
         ),
-        "the same private state is stale under its own accepted Circle epoch"
+        "the same private state is stale under its own accepted Realm epoch"
     );
-    assert_eq!(state.mls_checkpoint_for_scope(&circle_scope), Some(before));
+    assert_eq!(
+        state.mls_checkpoint_for_scope(&independent_scope),
+        Some(before)
+    );
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -563,7 +557,6 @@ fn direct_epoch_zero_send_requires_exact_verified_founder_bootstrap_context() {
         arkret_wire::event_kind_str::MESSAGE_CREATE,
         reference.clone(),
         None,
-        None,
     )
     .unwrap();
     assert_eq!(encrypted.len(), 1);
@@ -573,7 +566,6 @@ fn direct_epoch_zero_send_requires_exact_verified_founder_bootstrap_context() {
             &state,
             &secure,
             realm,
-            None,
             &authority,
             &fixture::device_id(device)
         )
@@ -689,7 +681,6 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
         Some(br#"{"sidecar_exchange_binding":{}}"#.as_slice()),
         None,
         None,
-        None,
     )
     .unwrap();
     for (payload, plaintext) in [
@@ -709,7 +700,6 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
             &fixture::authority(actor),
             &fixture::device_id(device),
             payload,
-            None,
             None,
         )
         .expect("authored content remains readable without decrypting the own-leaf echo");
@@ -783,7 +773,6 @@ fn replacement_sender_domain_blocks_before_counter_advance() {
         None,
         None,
         Some("ak:did_core:key:z6Mkreplacement"),
-        None,
         None,
     )
     .err()
@@ -1275,7 +1264,6 @@ fn historical_author_view_survives_epoch_rotation() {
     state
         .record_mls_group_state_ref_for_effective_scope(
             realm,
-            None,
             &epoch_one_snapshot.group_id,
             epoch_one_snapshot.epoch,
             epoch_one_ref.clone(),
@@ -1372,7 +1360,6 @@ fn historical_author_view_survives_epoch_rotation() {
     state
         .record_mls_group_state_ref_for_effective_scope(
             realm,
-            None,
             &epoch_two_snapshot.group_id,
             epoch_two_snapshot.epoch,
             epoch_two_ref,
@@ -1604,8 +1591,8 @@ fn retained_content_reopens_after_restart_without_private_group_state() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn circle_content_root_never_borrows_or_advances_the_realm_checkpoint() {
-    let mut state = temp_state_store("circle-content-root");
+fn sidecar_content_root_never_borrows_or_advances_the_realm_checkpoint() {
+    let mut state = temp_state_store("sidecar-content-root");
     let secure = MemorySecureKeyStore::new();
     let realm = "ak:realm:Ab-u0alSwVcrUhqmeFQmMzuYs83_IrjXlRSBnpm-B-JL";
     let account = fixture::authority("did:web:bob.example");
@@ -1618,9 +1605,9 @@ fn circle_content_root_never_borrows_or_advances_the_realm_checkpoint() {
         device.as_str(),
     );
     let realm_checkpoint = state.mls_checkpoint_for(realm).unwrap();
-    let scope = arkret_sdk::ScopeRef::Circle {
+    let scope = arkret_sdk::ScopeRef::Sidecar {
         realm_id: realm.parse().unwrap(),
-        circle_id: "ak:circle:AZSmUwZFkNevUaVm0adiKDKw0OuAQqfAX6DFwhnIqF9I"
+        sidecar_id: "ak:sidecar:AZSmUwZFkNevUaVm0adiKDKw0OuAQqfAX6DFwhnIqF9I"
             .parse()
             .unwrap(),
     };
@@ -1652,7 +1639,7 @@ fn circle_content_root_never_borrows_or_advances_the_realm_checkpoint() {
         material,
     )
     .unwrap();
-    let payload = group.encrypt_payload(header, b"circle original").unwrap();
+    let payload = group.encrypt_payload(header, b"sidecar original").unwrap();
     let open = |scope: &arkret_sdk::ScopeRef| {
         decrypt_application_payload_for_scope_from_verified_sender(
             &state,
@@ -1671,7 +1658,10 @@ fn circle_content_root_never_borrows_or_advances_the_realm_checkpoint() {
         })
         .is_none()
     );
-    assert_eq!(open(&scope).as_deref(), Some(b"circle original".as_slice()));
+    assert_eq!(
+        open(&scope).as_deref(),
+        Some(b"sidecar original".as_slice())
+    );
     assert!(
         open(&arkret_sdk::ScopeRef::Realm {
             realm_id: realm.parse().unwrap()
@@ -1716,7 +1706,6 @@ fn out_of_order_retained_content_survives_restart() {
         &fixture::device_id(bob_device),
         &m3,
         None,
-        None,
     )
     .expect("bob decrypts m3 ahead of m1/m2");
     assert_eq!(plain3, br#""three""#);
@@ -1730,7 +1719,6 @@ fn out_of_order_retained_content_survives_restart() {
         &fixture::authority(bob_actor),
         &fixture::device_id(bob_device),
         &m1,
-        None,
         None,
     )
     .expect("retained root decrypts the earlier original after restart");
@@ -1783,7 +1771,6 @@ fn own_author_original_reopens_without_presentation_cache_or_state_regression() 
         &fixture::device_id(device),
         &payload,
         None,
-        None,
     );
     assert_eq!(decrypted.as_deref(), Some(br#""mine""#.as_slice()));
     let mut uncached = temp_state_store("own-ciphertext-no-cache");
@@ -1801,7 +1788,6 @@ fn own_author_original_reopens_without_presentation_cache_or_state_regression() 
             &fixture::authority(actor),
             &fixture::device_id(device),
             &payload,
-            None,
             None,
         )
         .as_deref(),
@@ -1839,7 +1825,6 @@ fn plaintext_cache_outlives_group_state() {
         &fixture::device_id(bob_device),
         &m1,
         None,
-        None,
     )
     .expect("first decrypt");
     assert_eq!(first, br#""cached""#);
@@ -1853,7 +1838,6 @@ fn plaintext_cache_outlives_group_state() {
         &fixture::authority(bob_actor),
         &fixture::device_id(bob_device),
         &m1,
-        None,
         None,
     )
     .expect("cache hit requires no group state");
@@ -2399,7 +2383,7 @@ fn accepted_metadata_survives_later_messages_without_opening_its_view() {
             .unwrap();
         assert_eq!(
             decrypt_application_payload_for_effective_scope_internal(
-                &state, &secure, realm, &account, &device, &message, None, None,
+                &state, &secure, realm, &account, &device, &message, None,
             )
             .unwrap(),
             b"later discussion"
@@ -2698,7 +2682,7 @@ fn rsvp_original_survives_a_cold_empty_tail_and_rejects_header_rebinding() {
     let selected: arkret_models_collaboration::objects::strand::Strand =
         serde_json::from_value(value.clone()).unwrap();
     assert_eq!(selected.id.as_ref(), Some(&strand));
-    assert!(selected.scope_circle_id.is_none());
+    assert_eq!(selected.realm_id, event.realm_id);
     assert_eq!(
         event.payload.get("occurrence"),
         Some(&serde_json::Value::Null)
@@ -2787,7 +2771,6 @@ fn calendar_current_projection_cannot_replace_missing_original_encryption_header
     state
         .record_mls_group_state_ref_for_effective_scope(
             realm,
-            None,
             &snapshot.group_id,
             snapshot.epoch,
             group_ref.clone(),

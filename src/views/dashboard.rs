@@ -479,63 +479,33 @@ fn dashboard_health(
                     }),
                 ],
             ),
-            line(
-                "actions",
-                vec![
-                    nav_view(
-                        context.clone(),
-                        Route::SettingsSection {
-                            section: "release".into(),
-                            filter: String::new(),
-                        },
-                        "secondary",
-                        vec![
-                            crate::components::ui_icon("settings"),
-                            plain(context.translated(scope, "dashboard.advanced_diagnostics")),
-                        ],
-                    ),
-                    health_button,
-                ],
-            ),
+            line("actions", vec![health_button]),
             stack("dashboard-health-results", vec![health]),
         ],
     )
 }
-fn recent_strands_table(rows: Vec<Vec<View>>, empty_label: String) -> View {
+fn recent_strands_table(rows: Vec<Vec<View>>) -> View {
     let head = sapid::table_head().row(
         sapid::table_row("head").cells(
             [
-                "",
                 "dashboard.strand_title",
-                "dashboard.strand_space",
                 "dashboard.strand_state",
-                "dashboard.strand_updated",
+                "kanban.ui.due_date",
             ]
             .into_iter()
             .enumerate()
             .map(|(index, key)| sapid::table_header_cell(format!("column-{index}")).text(tr(key))),
         ),
     );
-    let body = if rows.is_empty() {
-        sapid::table_body().row(
-            sapid::table_row("empty").cell(
-                sapid::table_cell("message")
-                    .class("dim")
-                    .column_span(5)
-                    .text(empty_label),
-            ),
-        )
-    } else {
-        sapid::table_body().rows(rows.into_iter().enumerate().map(|(index, cells)| {
-            sapid::table_row(format!("row-{index}")).cells(cells.into_iter().enumerate().map(
-                |(column, view)| {
-                    let mut view = Some(view);
-                    sapid::table_cell(format!("column-{column}"))
-                        .content(move || view.take().unwrap_or_else(empty))
-                },
-            ))
-        }))
-    };
+    let body = sapid::table_body().rows(rows.into_iter().enumerate().map(|(index, cells)| {
+        sapid::table_row(format!("row-{index}")).cells(cells.into_iter().enumerate().map(
+            |(column, view)| {
+                let mut view = Some(view);
+                sapid::table_cell(format!("column-{column}"))
+                    .content(move || view.take().unwrap_or_else(empty))
+            },
+        ))
+    }));
     Box::new(
         sapid::table("dashboard-recent-strands")
             .unstyled()
@@ -545,9 +515,15 @@ fn recent_strands_table(rows: Vec<Vec<View>>, empty_label: String) -> View {
     )
 }
 
-pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
+pub(super) fn client_status(scope: &Scope, context: Rc<InksonContext>) -> View {
     let protocol_health = scope.cage(Vec::<DashboardHealthCheck>::new());
     let health_loading = scope.cage(false);
+    reactive(context.locale, move |scope, _| {
+        dashboard_health(scope, context.clone(), protocol_health, health_loading)
+    })
+}
+
+pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
     let contacts = {
         let ctx = context.clone();
         crate::presentation::widgets::resource(scope, move || {
@@ -607,7 +583,6 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
         let strands = dashboard_recent_strands(&snapshot.raw_operations, &realm)
             .into_iter()
             .filter(|s| s.state == arkret_sdk::ObjectState::Active)
-            .take(5)
             .collect::<Vec<_>>();
         let notices = dashboard_notification_summaries(&snapshot);
         let unread = notices.iter().filter(|n| !n.read).count();
@@ -700,13 +675,6 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
                 tr("dashboard.setup_help"),
                 "",
             ));
-            metrics.push(metric(
-                Route::Onboarding,
-                tr("dashboard.onboarding"),
-                tr("dashboard.onboarding_steps"),
-                tr("dashboard.onboarding_help"),
-                "",
-            ));
         }
         let mut realm_rows = vec![];
         for node in &nodes {
@@ -780,62 +748,35 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
                 children,
             ));
         }
-        if realm_rows.is_empty() {
-            realm_rows.push(line(
-                "m-list-item dashboard-realm-tree-empty",
+        let mut workspace_sections = Vec::new();
+        if !realm_rows.is_empty() {
+            workspace_sections.push(stack(
+                "surface realm-tree-summary",
                 vec![
-                    paragraph("avatar", "0"),
-                    stack(
-                        "grow",
+                    line(
+                        "row surface-head",
                         vec![
-                            paragraph(
-                                "title",
-                                tr(if session {
-                                    projection_collection_empty_label(has_realms, has_spaces)
-                                } else {
-                                    projection_collection_signin_label(has_realms, has_spaces)
-                                }),
-                            ),
-                            paragraph(
-                                "sub",
-                                tr(if session {
-                                    projection_collection_empty_help_label(has_realms, has_spaces)
-                                } else {
-                                    "dashboard.no_session_help"
-                                }),
+                            plain(tr(recent_projection_collection_label(
+                                has_realms, has_spaces,
+                            ))),
+                            nav_view(
+                                ctx.clone(),
+                                Route::Directory,
+                                "btn icon sm ghost ml-auto",
+                                vec![crate::components::ui_icon("search")],
                             ),
                         ],
                     ),
+                    stack("stack-sm dashboard-realm-list", realm_rows),
                 ],
             ));
         }
-        let realm_surface = stack(
-            "surface realm-tree-summary",
-            vec![
-                line(
-                    "row surface-head",
-                    vec![
-                        plain(tr(recent_projection_collection_label(
-                            has_realms, has_spaces,
-                        ))),
-                        nav_view(
-                            ctx.clone(),
-                            Route::Directory,
-                            "btn icon sm ghost ml-auto",
-                            vec![crate::components::ui_icon("search")],
-                        ),
-                    ],
-                ),
-                stack("stack-sm dashboard-realm-list", realm_rows),
-            ],
-        );
         let strand_rows = strands
             .into_iter()
+            .take(5)
             .map(|strand| {
                 vec![
-                    empty(),
                     plain(strand.title),
-                    plain(tr("dashboard.current_board")),
                     plain(tr(projection_object_state_label(&strand.state))),
                     plain(
                         strand
@@ -849,57 +790,19 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
                 ]
             })
             .collect::<Vec<_>>();
-        let recent = stack(
-            "surface recent-boards",
-            vec![
-                line(
-                    "row surface-head",
-                    vec![surface_title(tr("dashboard.recent_strands"))],
-                ),
-                recent_strands_table(
-                    strand_rows,
-                    tr(if session {
-                        "dashboard.strands_empty"
-                    } else {
-                        "dashboard.strands_signin"
-                    }),
-                ),
-            ],
-        );
-        let activity = stack(
-            "surface pad activity-feed",
-            vec![
-                paragraph("section-title mb-8", tr("dashboard.recent_activity")),
-                line(
-                    "m-list-item",
-                    vec![
-                        paragraph("pill muted xs", tr("dashboard.activity_empty")),
-                        stack(
-                            "grow",
-                            vec![
-                                paragraph(
-                                    "title",
-                                    tr(if session {
-                                        "dashboard.no_activity"
-                                    } else {
-                                        "dashboard.no_session_activity"
-                                    }),
-                                ),
-                                paragraph(
-                                    "sub",
-                                    tr(if session {
-                                        "dashboard.activity_sync_help"
-                                    } else {
-                                        "dashboard.activity_signin_help"
-                                    }),
-                                ),
-                            ],
-                        ),
-                    ],
-                ),
-            ],
-        );
-        let mut notice_rows = notices
+        if !strand_rows.is_empty() {
+            workspace_sections.push(stack(
+                "surface recent-boards",
+                vec![
+                    line(
+                        "row surface-head",
+                        vec![surface_title(tr("dashboard.recent_strands"))],
+                    ),
+                    recent_strands_table(strand_rows),
+                ],
+            ));
+        }
+        let notice_rows = notices
             .into_iter()
             .take(3)
             .map(|notice| -> View {
@@ -958,65 +861,30 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
                 )
             })
             .collect::<Vec<_>>();
-        if notice_rows.is_empty() {
-            notice_rows.push(line(
-                "m-list-item",
+        let mut columns = Vec::new();
+        if !workspace_sections.is_empty() {
+            columns.push(stack("stack", workspace_sections));
+        }
+        if !notice_rows.is_empty() {
+            columns.push(stack(
+                "surface pinned-notifications",
                 vec![
-                    paragraph("avatar xs", "0"),
-                    stack(
-                        "grow",
+                    line(
+                        "row surface-head",
                         vec![
-                            paragraph(
-                                "title f-13",
-                                tr(if session {
-                                    "dashboard.no_notifications"
-                                } else {
-                                    "dashboard.notifications_signin"
-                                }),
-                            ),
-                            paragraph("sub", tr("dashboard.notifications_empty_sub")),
+                            surface_title(tr("nav.notifications")),
+                            notifications_open(scope, ctx.clone()),
                         ],
                     ),
+                    stack("stack-sm dashboard-notification-list", notice_rows),
                 ],
             ));
         }
-        let notice_surface = stack(
-            "surface pinned-notifications",
-            vec![
-                line(
-                    "row surface-head",
-                    vec![
-                        surface_title(tr("nav.notifications")),
-                        notifications_open(scope, ctx.clone()),
-                    ],
-                ),
-                stack("stack-sm dashboard-notification-list", notice_rows),
-            ],
-        );
-        stack(
-            "dashboard-live",
-            vec![
-                stack("metric-grid dashboard-metrics", metrics),
-                stack(
-                    "dashboard-two-col",
-                    vec![
-                        stack("stack", vec![realm_surface, recent, activity]),
-                        stack(
-                            "stack dashboard-right-column",
-                            vec![
-                                notice_surface,
-                                dashboard_health(
-                                    scope,
-                                    ctx.clone(),
-                                    protocol_health,
-                                    health_loading,
-                                ),
-                            ],
-                        ),
-                    ],
-                ),
-            ],
-        )
+        let mut sections = vec![stack("metric-grid dashboard-metrics", metrics)];
+        if !columns.is_empty() {
+            sections.push(stack("dashboard-two-col", columns));
+        }
+        stack("dashboard-live", sections)
     });
     stack("timeline dashboard-panel", vec![panels])
 }
@@ -1163,25 +1031,6 @@ fn projection_collection_signin_label(has_realms: bool, has_product_spaces: bool
     }
 }
 
-fn projection_collection_empty_label(has_realms: bool, has_product_spaces: bool) -> &'static str {
-    match (has_realms, has_product_spaces) {
-        (true, true) => "dashboard.collection.empty_realms_and_spaces",
-        (false, true) => "dashboard.collection.empty_spaces",
-        _ => "dashboard.collection.empty_realms",
-    }
-}
-
-fn projection_collection_empty_help_label(
-    has_realms: bool,
-    has_product_spaces: bool,
-) -> &'static str {
-    match (has_realms, has_product_spaces) {
-        (true, true) => "dashboard.collection.empty_help_realms_and_spaces",
-        (false, true) => "dashboard.collection.empty_help_spaces",
-        _ => "dashboard.collection.empty_help_realms",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use arkret_sdk::contact_operations::ContactScope;
@@ -1195,43 +1044,49 @@ mod tests {
     use crate::state::RawOperationRecord;
 
     #[test]
-    fn empty_recent_strands_keeps_real_headers_and_spanning_message() {
-        use glory::render::{DocumentPart, Props, TableMetadata};
+    fn recent_strands_table_labels_due_dates_and_renders_the_row() {
+        use glory::render::{DocumentPart, Props};
         crate::i18n::with_test_locale(crate::i18n::UiLocale::En, || {
             let app = glory::App::memory();
-            app.mount(super::recent_strands_table(
-                vec![],
-                "No loaded strands".into(),
-            ))
-            .unwrap();
+            let row = ["A task", "Active", "2026-11-27"]
+                .into_iter()
+                .map(super::plain)
+                .collect();
+            app.mount(super::recent_strands_table(vec![row])).unwrap();
             app.flush().unwrap();
             let tree = app.tree();
             let mut pending = tree.roots().to_vec();
             let mut headers = 0;
-            let mut spans = Vec::new();
-            let mut messages = Vec::new();
+            let mut texts = Vec::new();
             while let Some(id) = pending.pop() {
                 let node = tree.node(id).unwrap();
                 pending.extend(node.children.iter().copied());
-                if let Some(semantics) = node.descriptor.view().semantics.as_ref() {
-                    if semantics.document_part == Some(DocumentPart::ColumnHeader) {
-                        headers += 1;
-                    }
-                    if let Some(TableMetadata::Cell { column_span, .. }) = semantics.table.as_ref()
-                        && *column_span > 1
-                    {
-                        spans.push(*column_span);
-                    }
-                }
-                if let Props::Text(text) = node.descriptor.view().props
-                    && text.content == "No loaded strands"
+                if node
+                    .descriptor
+                    .view()
+                    .semantics
+                    .as_ref()
+                    .is_some_and(|semantics| {
+                        semantics.document_part == Some(DocumentPart::ColumnHeader)
+                    })
                 {
-                    messages.push(text.content.clone());
+                    headers += 1;
+                }
+                if let Props::Text(text) = node.descriptor.view().props {
+                    texts.push(text.content.clone());
                 }
             }
-            assert_eq!(headers, 5);
-            assert_eq!(spans, vec![5]);
-            assert_eq!(messages, vec!["No loaded strands"]);
+            assert_eq!(headers, 3);
+            for expected in [
+                "Title",
+                "State",
+                "Due date",
+                "A task",
+                "Active",
+                "2026-11-27",
+            ] {
+                assert!(texts.iter().any(|value| value == expected), "{expected}");
+            }
         });
     }
 

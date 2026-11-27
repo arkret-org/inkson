@@ -41,3 +41,5 @@
   grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
   gap: 16px;
 }
+.dashboard-two-col > :only-child { grid-column: 1 / -1; }
+.dashboard-two-col > .pinned-notifications { align-self: start; }

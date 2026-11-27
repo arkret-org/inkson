@@ -436,12 +436,6 @@ impl LocalStateStore {
                         arkret_sdk::CommitStreamRef::Realm { realm_id: committed },
                         arkret_sdk::ScopeRef::Realm { realm_id: signed },
                     ) if committed == signed
-                ) && !matches!(
-                    (&commit.stream_ref, &event.scope_ref),
-                    (
-                        arkret_sdk::CommitStreamRef::Circle { realm_id: committed_realm, circle_id: committed_circle },
-                        arkret_sdk::ScopeRef::Circle { realm_id: signed_realm, circle_id: signed_circle },
-                    ) if committed_realm == signed_realm && committed_circle == signed_circle
                 )
             {
                 return Err("verified message Commit and Event coordinates differ".to_owned());

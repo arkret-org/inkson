@@ -404,7 +404,7 @@ impl InksonSignalSink {
             plaintext,
             effective_expires_at,
             authority_commit_id,
-            parent_realm_authority_commit_id,
+
             product_authority,
             call_invitation,
             signer_verification_method,
@@ -416,7 +416,7 @@ impl InksonSignalSink {
             expires_at: effective_expires_at,
             domain: *domain,
             authority_commit_id,
-            parent_realm_authority_commit_id,
+
             product_authority,
             call_invitation,
             signer_verification_method,
@@ -513,12 +513,8 @@ fn plaintext_strand_target(signal: &AdmittedSignal) -> garth::Result<Option<arkr
 fn strand_scope_matches(current: &arkret_sdk::Strand, scope: &arkret_sdk::ScopeRef) -> bool {
     match scope {
         arkret_sdk::ScopeRef::Realm { realm_id } => {
-            current.realm_id == *realm_id && current.scope_circle_id.is_none()
+            current.realm_id == *realm_id
         }
-        arkret_sdk::ScopeRef::Circle {
-            realm_id,
-            circle_id,
-        } => current.realm_id == *realm_id && current.scope_circle_id.as_ref() == Some(circle_id),
         _ => false,
     }
 }
@@ -620,8 +616,7 @@ impl InksonSignalSink {
             && !self.typing_blocked(signal, now)
             && signal.product_authority.as_deref().is_some_and(|material| {
                 material.authority_commit_id == signal.authority_commit_id
-                    && material.parent_realm_authority_commit_id
-                        == signal.parent_realm_authority_commit_id
+
                     && arkret_policy::signal_authorization::typing_visible(
                         material,
                         &arkret_sdk::ActorId::account(recipient.clone()),
@@ -1154,12 +1149,7 @@ impl InksonSignalSink {
             .read_parent_membership_revision_at_complete_cut(signal.scope_ref().realm_id(), &holder)
             .await
             .ok()??;
-        if matches!(signal.scope_ref(), arkret_sdk::ScopeRef::Circle { .. }) {
-            index
-                .read_mls_group_ready(signal.scope_ref(), &holder)
-                .await
-                .ok()?;
-        }
+
         let policy = match index
             .read_read_receipt_policy_ready(signal.scope_ref())
             .await
@@ -1780,7 +1770,7 @@ mod tests {
                 .unwrap(),
             product_authority: None,
             authority_commit_id: arkret_sdk::RealmCommitId::from_digest([41; 32]),
-            parent_realm_authority_commit_id: None,
+
             expires_at: at(30),
             domain: arkret_sdk::SignalSequenceDomain {
                 sender_actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
@@ -1831,7 +1821,7 @@ mod tests {
     }
 
     #[test]
-    fn decrypted_strand_target_requires_exact_realm_and_circle_scope() {
+    fn decrypted_strand_target_requires_exact_realm() {
         let id = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
             arkret_sdk::DigestSuite::Sha256,
             [31; 32],
@@ -1855,30 +1845,6 @@ mod tests {
             &strand,
             &arkret_sdk::ScopeRef::Realm { realm_id: other }
         ));
-        let circle = arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
-            arkret_sdk::DigestSuite::Sha256,
-            [33; 32],
-        ));
-        strand.scope_circle_id = Some(circle.clone());
-        assert!(!strand_scope_matches(&strand, signal.scope_ref()));
-        assert!(strand_scope_matches(
-            &strand,
-            &arkret_sdk::ScopeRef::Circle {
-                realm_id: realm.clone(),
-                circle_id: circle
-            }
-        ));
-        let other_circle = arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
-            arkret_sdk::DigestSuite::Sha256,
-            [34; 32],
-        ));
-        assert!(!strand_scope_matches(
-            &strand,
-            &arkret_sdk::ScopeRef::Circle {
-                realm_id: realm,
-                circle_id: other_circle
-            }
-        ));
     }
 
     fn authorize_typing(signal: &mut AdmittedSignal) {
@@ -1899,7 +1865,7 @@ mod tests {
         })).unwrap();
         signal.product_authority = Some(Box::new(arkret_sdk::SignalProductAuthority {
             authority_commit_id: signal.authority_commit_id.clone(),
-            parent_realm_authority_commit_id: signal.parent_realm_authority_commit_id.clone(),
+
             current_realm_head: head.clone(),
             current_scope_head: head,
             sent_at: crate::clock::now_utc(),
@@ -2274,7 +2240,7 @@ mod tests {
             call_invitation: None,
             domain: Box::new(signal.domain),
             authority_commit_id: signal.authority_commit_id,
-            parent_realm_authority_commit_id: signal.parent_realm_authority_commit_id,
+
             signer_verification_method: signal.signer_verification_method,
             product_authority: signal.product_authority,
             plaintext: Box::new(signal.payload),
@@ -2332,7 +2298,7 @@ mod tests {
                 plaintext,
                 effective_expires_at,
                 authority_commit_id,
-                parent_realm_authority_commit_id,
+
                 product_authority,
                 call_invitation,
                 signer_verification_method,
@@ -2343,7 +2309,7 @@ mod tests {
             let signal = AdmittedSignal {
                 domain: *domain,
                 authority_commit_id,
-                parent_realm_authority_commit_id,
+
                 product_authority,
                 call_invitation,
                 signer_verification_method,
@@ -2411,7 +2377,7 @@ mod tests {
             call_invitation: None,
             domain: Box::new(signal.domain),
             authority_commit_id: signal.authority_commit_id,
-            parent_realm_authority_commit_id: signal.parent_realm_authority_commit_id,
+
             signer_verification_method: signal.signer_verification_method,
             product_authority: signal.product_authority,
             plaintext: Box::new(signal.payload),

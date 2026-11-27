@@ -19,7 +19,7 @@ Realm's **current governance Station**, which answers with an authority-signed
 | Submission DTO | `EventInitialSubmission` (+ lease, Control Proposal Ack, CBS proof bundles, submit context) | `arkret_wire::EventCommitSubmission { event }` inside `AuthoritySubmitRequestBody::Event` |
 | Submission result | `EventsSubmitOutcome { status, accepted[], duplicate[], rejections[], cursor, ingress_receipts[] }` | `AuthoritySubmitResponseBody::{Accepted{status, commit}, Rejected{status, reason_code}}` |
 | Ordering | producer `actor_seq` + `hlc` + `prev_refs` | `RealmCommit { stream_ref, stream_position, previous_commit_ref }`, one commit per Event |
-| Streams | one Realm-global cursor | independent `CommitStreamRef::{Realm, Circle, Sidecar}` streams, each with its own position |
+| Streams | one Realm-global cursor | independent `CommitStreamRef::{Realm, Sidecar}` streams, each with its own position |
 | Catch-up | `ak.self.events.read.query` pages | `StreamScanRequestBody{realm_id, stream_ref, after_position, limit}` → `StreamScanResponseBody{commits, truncated}` |
 | Current state | `ak:cell:*` current results | `RealmStateSnapshot.current_state_entries` — `CurrentState` keyed by `CurrentSelector` with a `CurrentRevision{commit_id, stream_position}` |
 | Realm authority | `ak.component.realm.authority_root.v1` cell + controller epoch | `RealmAuthorityBundle` (genesis + double-signed handoff chain + nonce-bound current assertion); `IssuerAuthorityRef::RealmAuthority{realm_id, governance_station_id, authority_generation, basis}` |
@@ -69,7 +69,7 @@ Realm's **current governance Station**, which answers with an authority-signed
 | MLS Welcome admission and durable consume | `src/mls/runtime/artifact_consumer.rs` over SDK accepted originals and `garth::mls::verify_welcome_claim`; `src/mls/welcome_delivery.rs` reads the endpoint inbox | runtime tests reject other Device/Station endpoints, require the exact installed group and epoch, and preserve the durable consume command across cancellation and restart; Welcome inbox tests cover closed parsing, journalling and dedup hints |
 | Current-state projection | `src/current_projection.rs` over `CurrentState` / `CurrentSelector`, incl. `scope_has_accepted_mls_genesis` | `src/state/tests/projections.rs` |
 | Chat, Direct Conversation, reactions, polls, read receipts, mentions | `src/views/chat/`, `src/messaging/`, `src/state/direct_conversation.rs` | `src/views/chat/tests/`, `tests/e2e/inkson.strands.chat-discussion.spec.ts` |
-| Circle, Realm, Space, Strand, Kanban, calendar | `src/circle.rs`, `src/circle_mls.rs`, `src/realm_tree.rs`, `src/views/kanban/`, `src/calendar.rs` | `src/views/kanban/tests/`, `tests/e2e/inkson.strands.kanban.spec.ts` |
+| Realm, Space, Strand, Kanban, calendar | `src/realm_tree.rs`, `src/views/kanban/`, `src/calendar.rs` | `src/views/kanban/tests/`, `tests/e2e/inkson.strands.kanban.spec.ts` |
 | Media / WebRTC (SFrame RFC 9420 exporter), push | `src/media/`, `src/rtc_transport/`, `src/push/` | `src/push/tests.rs` |
 | Account / device recovery, key backup | `src/recovery_flow.rs`, `src/key_backup/`, `src/mls/account_recovery/`, `garth::security_transaction` | `src/views/recovery/tests.rs`, `src/key_backup/tests.rs` |
 | Signal / WebSocket receive, observable sync state | `src/signal.rs`, `src/signal_receive_engine.rs`, `src/sync_engine.rs`, `src/transport/`, `garth::run`, `garth::replica` | `tests/server_contract.rs`, `src/state/tests/sync_states.rs` |

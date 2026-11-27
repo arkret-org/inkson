@@ -37,24 +37,12 @@ pub fn applet_install_material_from_manifest(
     ))
 }
 
-/// The effective-scope object an install/revoke targets. A blank `circle_id`
-/// installs the applet Realm-wide; a `ak:circle:…` id scopes it to that Circle
-/// only (spec §4b: a single install carries exactly one `effective_scope`, and a
-/// Circle install MUST NOT widen to a Realm-wide grant). The Station checks
-/// current management authority, operation policy and review at the exact scope.
-pub fn applet_effective_scope(realm_id: &str, circle_id: Option<&str>) -> Result<ScopeRef, String> {
+/// Select the Realm in which the Station authorizes the Applet operation.
+pub fn applet_effective_scope(realm_id: &str) -> Result<ScopeRef, String> {
     let realm_id = crate::operation::trim_realm_id(realm_id);
     let realm = arkret_sdk::RealmId::new(realm_id.clone())
         .map_err(|err| format!("invalid Realm id {realm_id:?}: {err:?}"))?;
-    match circle_id.map(str::trim).filter(|value| !value.is_empty()) {
-        None => Ok(ScopeRef::Realm { realm_id: realm }),
-        Some(circle) => arkret_sdk::CircleId::new(circle.to_owned())
-            .map(|circle_id| ScopeRef::Circle {
-                realm_id: realm,
-                circle_id,
-            })
-            .map_err(|err| format!("invalid Circle id {circle:?}: {err:?}")),
-    }
+    Ok(ScopeRef::Realm { realm_id: realm })
 }
 
 /// A conservative default approval request: no ghost / delegated-native actors,
@@ -151,32 +139,14 @@ fn operation_builder_for_scope<K: arkret_sdk::EventSpec>(
             actor_id,
             payload,
         ),
-        ScopeRef::Circle {
-            realm_id,
-            circle_id,
-        } => crate::operation::TypedOperationBuilder::new::<K>(
-            realm_id.to_string(),
-            actor_id,
-            payload,
-        )
-        .circle_id(circle_id.to_string()),
-        _ => unreachable!("Applet install schema only permits Realm and Circle scopes"),
+        _ => unreachable!("Applet install schema only permits Realm scope"),
     }
 }
 
 fn applet_install_resource(scope: &ScopeRef) -> anyhow::Result<arkret_sdk::WireResourceSelector> {
     let selector = match scope {
         ScopeRef::Realm { realm_id } => arkret_sdk::WireResourceSelector::realm(realm_id.clone()),
-        ScopeRef::Circle {
-            realm_id,
-            circle_id,
-        } => {
-            let mut selector =
-                arkret_sdk::WireResourceSelector::circle(realm_id.clone(), circle_id.clone());
-            selector.match_scope = Some(arkret_sdk::ResourceMatchScope::Exact);
-            selector
-        }
-        _ => anyhow::bail!("Applet install schema only permits Realm and Circle scopes"),
+        _ => anyhow::bail!("Applet install schema only permits Realm scope"),
     };
     selector.validate()?;
     Ok(selector)
@@ -250,7 +220,7 @@ fn build_formal_applet_install_events(
     );
     let resource = applet_install_resource(effective_scope)?;
     let realm_id = match effective_scope {
-        ScopeRef::Realm { realm_id } | ScopeRef::Circle { realm_id, .. } => realm_id.clone(),
+        ScopeRef::Realm { realm_id } => realm_id.clone(),
         _ => unreachable!("validated Applet effective scope"),
     };
     let mut grant_events = Vec::with_capacity(actions.len());
@@ -476,9 +446,7 @@ struct AppletPage {
     install_preview: Cage<Option<AppletInstallPreviewSnapshot>>,
     install_approve_actions: Cage<String>,
     install_ghost_actors_allowed: Cage<bool>,
-    install_circle_id: Cage<String>,
     trace_open_for: Cage<Option<(String, String)>>,
-    revoke_circle_id: Cage<String>,
 }
 impl AppletPage {
     fn preview(self) {
@@ -494,9 +462,7 @@ impl AppletPage {
         let install_preview = self.install_preview;
         let install_approve_actions = self.install_approve_actions;
         let install_ghost_actors_allowed = self.install_ghost_actors_allowed;
-        let install_circle_id = self.install_circle_id;
         let _trace_open_for = self.trace_open_for;
-        let _revoke_circle_id = self.revoke_circle_id;
         let handler = {
             let base = base_url.clone();
             let realm = selected_realm_id.clone();
@@ -545,7 +511,6 @@ impl AppletPage {
                     });
                     return;
                 };
-                let circle = install_circle_id.get();
                 let approve_actions = parse_applet_approval_actions(&install_approve_actions.get());
                 let ghost_actor_mode = if install_ghost_actors_allowed.get() {
                     AppletGhostActorMode::PolicyDeclared
@@ -560,7 +525,6 @@ impl AppletPage {
                     let _ = task_owner.spawn(async move {
                                                let effective_scope = match applet_effective_scope(
                                                    &realm,
-                                                   Some(circle.as_str()),
                                                ) {
                                                    Ok(scope) => scope,
                                                    Err(err) => {
@@ -710,9 +674,7 @@ impl AppletPage {
         let install_preview = self.install_preview;
         let install_approve_actions = self.install_approve_actions;
         let install_ghost_actors_allowed = self.install_ghost_actors_allowed;
-        let install_circle_id = self.install_circle_id;
         let _trace_open_for = self.trace_open_for;
-        let _revoke_circle_id = self.revoke_circle_id;
         let handler = {
             let base = base_url.clone();
             move |_| {
@@ -762,7 +724,6 @@ impl AppletPage {
                                                        if installed {
                                                            install_open.revise(|value|{*value=false;});
                                                            install_manifest.revise(|value|{*value=String::new();});
-                                                           install_circle_id.revise(|value|{*value=String::new();});
                                                            install_approve_actions.revise(|value|{*value=String::new();});
                                                            install_ghost_actors_allowed.revise(|value|{*value=false;});
                                                            install_preview.revise(|value|{*value=None;});
@@ -789,9 +750,7 @@ impl AppletPage {
         let _install_preview = self.install_preview;
         let _install_approve_actions = self.install_approve_actions;
         let _install_ghost_actors_allowed = self.install_ghost_actors_allowed;
-        let _install_circle_id = self.install_circle_id;
         let _trace_open_for = self.trace_open_for;
-        let revoke_circle_id = self.revoke_circle_id;
         let handler = {
             let base = base_url.clone();
             let realm = selected_realm_id.clone();
@@ -801,7 +760,7 @@ impl AppletPage {
                 let base = base.clone();
                 let realm = crate::operation::trim_realm_id(&realm);
                 let effective_scope =
-                    match applet_effective_scope(&realm, Some(&revoke_circle_id.get())) {
+                    match applet_effective_scope(&realm) {
                         Ok(scope) => scope,
                         Err(error) => {
                             install_status.revise(|value| {
@@ -1231,9 +1190,7 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
         install_preview: scope.cage(None),
         install_approve_actions: scope.cage(String::new()),
         install_ghost_actors_allowed: scope.cage(false),
-        install_circle_id: scope.cage(String::new()),
         trace_open_for: scope.cage(None),
-        revoke_circle_id: scope.cage(String::new()),
     };
     let open = state.install_open;
     let preview = state.install_preview;
@@ -1245,18 +1202,10 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
             }
             let mut fields = vec![];
             let proposal_actions = state.install_approve_actions;
-            for (key, label, value) in [
-                (
-                    "applet-install-manifest-input",
-                    "applets.manifest_placeholder",
-                    state.install_manifest,
-                ),
-                (
-                    "applet-install-circle-input",
-                    "applets.circle_placeholder",
-                    state.install_circle_id,
-                ),
-            ] {
+            {
+                let key = "applet-install-manifest-input";
+                let label = "applets.manifest_placeholder";
+                let value = state.install_manifest;
                 let placeholder = state.context.translated(scope, label);
                 let control: View = Box::new(
                     sapid::field(key)
@@ -1273,9 +1222,7 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
                                 .multiline(true)
                                 .on_value_change(move |next| {
                                     value.revise(|v| *v = next);
-                                    if key == "applet-install-manifest-input" {
-                                        proposal_actions.revise(String::clear);
-                                    }
+                                    proposal_actions.revise(String::clear);
                                     preview.revise(|v| *v = None);
                                 })
                         }),
@@ -1531,14 +1478,6 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
                         ),
                         form,
                         services,
-                        input(
-                            scope,
-                            context.clone(),
-                            "applet-revoke-circle-input",
-                            "applets.circle_placeholder",
-                            state.revoke_circle_id,
-                            true,
-                        ),
                     ],
                 ),
                 trace,
@@ -1726,7 +1665,6 @@ mod tests {
     fn effective_scope_trims_realm_prefix_consistently() {
         let scope = applet_effective_scope(
             "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-            None,
         )
         .unwrap();
         assert!(matches!(
@@ -1737,34 +1675,9 @@ mod tests {
     }
 
     #[test]
-    fn effective_scope_circle_id_targets_circle() {
-        let scope = applet_effective_scope(
-            "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-            Some("ak:circle:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN"),
-        )
-        .unwrap();
-        assert!(matches!(
-            scope,
-            arkret_wire::ScopeRef::Circle { ref realm_id, ref circle_id }
-                if realm_id.as_str() == "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h"
-                    && circle_id.as_str() == "ak:circle:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN"
-        ));
-        // Blank circle falls back to a Realm-wide install.
-        assert!(matches!(
-            applet_effective_scope(
-                "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-                Some("  ")
-            )
-            .unwrap(),
-            arkret_wire::ScopeRef::Realm { .. }
-        ));
-    }
-
-    #[test]
     fn applet_grant_resource_is_the_exact_effective_scope() {
         let realm_scope = applet_effective_scope(
             "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-            None,
         )
         .unwrap();
         assert_eq!(
@@ -1775,20 +1688,6 @@ mod tests {
             })
         );
 
-        let circle_scope = applet_effective_scope(
-            "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-            Some("ak:circle:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN"),
-        )
-        .unwrap();
-        assert_eq!(
-            serde_json::to_value(applet_install_resource(&circle_scope).unwrap()).unwrap(),
-            serde_json::json!({
-                "kind": "circle",
-                "realm_id": "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-                "circle_id": "ak:circle:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN",
-                "match_scope": "exact"
-            })
-        );
     }
 
     #[test]

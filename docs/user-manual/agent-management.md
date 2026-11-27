@@ -19,7 +19,7 @@ The agent surface lives under **Settings → Agents**.
 | **Service** actor | A first-party service principal (blue badge). |
 | **Agent** | A controller-provisioned Agent with its own DID/PCR and Agent Runtime (green badge). |
 | **Bot** | Applet-created or Applet-hosted automation with `actor_kind="bot"` (amber badge). |
-| **Private Sidecar** | A controller-private, Realm-scoped AI object hosted inside the current Strand. Eligible owned Agents derive its access; its backing MLS scope is not a user-visible Circle. |
+| **Private Sidecar** | A private object hosted by the controller’s home Station. A project Strand supplies context. Eligible owned Agents access the Sidecar through its own MLS group. |
 | **Capability proof** | A signed grant that lets the agent invoke specific operations. 14 capability actions land in v1. |
 
 <!-- TODO(screenshot): agents-panel-overview.png -->

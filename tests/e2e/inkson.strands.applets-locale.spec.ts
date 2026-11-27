@@ -32,7 +32,6 @@ test("applet registry and install form copy follow the active language without a
   });
   await refreshServer(page);
   const literalManifest = '{"description":"applets.registry {value} 原文"}';
-  const literalCircle = "ak:circle:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
 
   for (const language of ["en", "zh", "en"] as const) {
     await openSettings(page);
@@ -62,14 +61,10 @@ test("applet registry and install form copy follow the active language without a
     await toggle.click();
     await expect(toggle).toHaveText(zh ? "关闭安装表单" : "Close install");
     const manifest = inputByClass(panel, "applet-install-manifest-input");
-    const circle = inputByClass(panel, "applet-install-circle-input");
     await expect(manifest).toHaveAttribute("placeholder", zh ? "完整注册材料 JSON（AppletInstallPreviewRequestBody）" : "Complete registration material JSON (AppletInstallPreviewRequestBody)");
-    await expect(circle).toHaveAttribute("placeholder", zh ? "可选 Circle 标识（ak:circle:…）；留空表示整个 Realm" : "optional Circle id (ak:circle:…) — blank = Realm-wide");
     await expect(panel.locator(".applet-permission-choice")).toHaveCount(0);
     await expect(manifest).toHaveValue("");
-    await expect(circle).toHaveValue("");
     await manifest.fill(literalManifest);
-    await circle.fill(literalCircle);
     const ghost = byClass(panel, "applet-install-allow-ghost").getByRole("checkbox");
     await expect(ghost).not.toBeChecked();
     await ghost.click();
@@ -84,7 +79,6 @@ test("applet registry and install form copy follow the active language without a
     await expect(manifest).toHaveCount(0);
     await toggle.click();
     await expect(manifest).toHaveValue(literalManifest);
-    await expect(circle).toHaveValue(literalCircle);
     await expect(ghost).toBeChecked();
     await expect(confirm).toBeDisabled();
     await ghost.click();
@@ -108,7 +102,6 @@ test("applet preview validation follows the selected language and preserves lite
   });
   await refreshServer(page);
   const literalManifest = '{"description":"applets.feedback.invalid_manifest {error} 原文"}';
-  const literalCircle = "applets.registry {value} 原文";
   for (const language of ["en", "zh", "en"] as const) {
     await openSettings(page);
     await byClass(page, "settings-nav-item-theme").click();
@@ -121,9 +114,7 @@ test("applet preview validation follows the selected language and preserves lite
     const toggle = byClass(panel, "applet-install-button");
     await toggle.click();
     const manifest = inputByClass(panel, "applet-install-manifest-input");
-    const circle = inputByClass(panel, "applet-install-circle-input");
     await manifest.fill(literalManifest);
-    await circle.fill(literalCircle);
     const ghost = byClass(panel, "applet-install-allow-ghost").getByRole("checkbox");
     await ghost.click();
     await expect(ghost).toBeChecked();
@@ -137,7 +128,6 @@ test("applet preview validation follows the selected language and preserves lite
       : "input must be a closed AppletInstallPreviewRequestBody whose registration Event manifest carries registration_epoch_evidence";
     await expect(status).toHaveText(expected);
     await expect(manifest).toHaveValue(literalManifest);
-    await expect(circle).toHaveValue(literalCircle);
     await expect(ghost).toBeChecked();
     await expect(confirm).toBeDisabled();
     await expect(byClass(panel, "applet-row")).toHaveCount(0);
@@ -146,7 +136,6 @@ test("applet preview validation follows the selected language and preserves lite
     await toggle.click();
     await expect(status).toHaveText(expected);
     await expect(manifest).toHaveValue(literalManifest);
-    await expect(circle).toHaveValue(literalCircle);
     await expect(ghost).toBeChecked();
     await expect(confirm).toBeDisabled();
   }

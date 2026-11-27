@@ -80,7 +80,6 @@
 .members-admin-menu-item:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
   background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface-2));
-  outline: none;
 }
 
 .members-admin-menu-item.active {

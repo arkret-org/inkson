@@ -115,21 +115,23 @@ fn fold_projection_event(
 fn fold_sync_status(event: SyncStatusEvent) -> (String, String, Option<String>) {
     match event {
         SyncStatusEvent::Offline => ("Offline".to_owned(), "offline".to_owned(), None),
-        SyncStatusEvent::Connecting => ("Connecting".to_owned(), "online".to_owned(), None),
+        SyncStatusEvent::Connecting => ("Connecting".to_owned(), "connecting".to_owned(), None),
         SyncStatusEvent::Online => ("Online".to_owned(), "online".to_owned(), None),
         SyncStatusEvent::Retryable { reason } => (
             "Retrying connection".to_owned(),
-            "online".to_owned(),
+            "reconnecting".to_owned(),
             Some(reason),
         ),
         SyncStatusEvent::NeedsSignIn { reason } => (
             "Sign in required".to_owned(),
-            "online".to_owned(),
+            "sign-in-required".to_owned(),
             Some(reason),
         ),
-        SyncStatusEvent::Terminal { reason } => {
-            ("Sync stopped".to_owned(), "online".to_owned(), Some(reason))
-        }
+        SyncStatusEvent::Terminal { reason } => (
+            "Sync stopped".to_owned(),
+            "stopped".to_owned(),
+            Some(reason),
+        ),
     }
 }
 
@@ -223,7 +225,7 @@ mod tests {
             }),
             (
                 "Sync stopped".to_owned(),
-                "online".to_owned(),
+                "stopped".to_owned(),
                 Some("invalid protocol frame".to_owned()),
             )
         );
@@ -237,7 +239,7 @@ mod tests {
             }),
             (
                 "Sign in required".to_owned(),
-                "online".to_owned(),
+                "sign-in-required".to_owned(),
                 Some("session grant is no longer active".to_owned()),
             )
         );

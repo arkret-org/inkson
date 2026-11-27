@@ -12,7 +12,6 @@ mod sidecar_tests;
 const MAX_REPLAY_BYTES: usize = 64 * 1024 * 1024;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_HINT_BATCH: usize = 64;
-const MAX_DISCOVERY_REPLAYS: usize = 8;
 const MAX_COVERED_HINTS: usize = 2048;
 
 type HintOriginals = BTreeMap<(CommitStreamRef, u64), [u8; 32]>;
@@ -169,7 +168,7 @@ impl HintBatch {
             self.revalidate = true;
         }
         self.discover |= matches!(view, CommittedEventView::Full(full) if matches!(full.event.kind,
-            arkret_sdk::EventKind::CircleCreate | arkret_sdk::EventKind::CircleMemberState | arkret_sdk::EventKind::MemberState | arkret_sdk::EventKind::InviteAccept | arkret_sdk::EventKind::RealmInviteLinkAccept | arkret_sdk::EventKind::SidecarCreate | arkret_sdk::EventKind::SidecarContextAttach));
+            arkret_sdk::EventKind::MemberState | arkret_sdk::EventKind::InviteAccept | arkret_sdk::EventKind::RealmInviteLinkAccept | arkret_sdk::EventKind::SidecarCreate | arkret_sdk::EventKind::SidecarContextAttach));
         if let Some(cursor) = &frame.cursor {
             self.cursor = Some(cursor.clone());
         }
@@ -396,112 +395,34 @@ async fn follow_once<F: Fn() -> bool>(
     current: &mut OwnStationReplica,
 ) -> garth::Result<bool> {
     client.check_session()?;
-    let mut streams = garth::discover_realm_streams(client, realm).await?;
     let list_fence = projector
         .state_store
         .read(|store| store.realm_list_read_fence(realm.as_str()));
     let snapshot = client.snapshot_head(realm).await?;
-    let heads = snapshot
+    let realm_stream = CommitStreamRef::Realm {
+        realm_id: realm.clone(),
+    };
+    let has_sidecars = snapshot
         .value()?
         .visible_stream_heads
         .iter()
-        .map(|head| (&head.stream_ref, head))
-        .collect::<BTreeMap<_, _>>();
-    // Prioritize the selected Realm's live tail; this is scheduling only,
-    // never an ordering or position comparison between independent streams.
-    // New/changed streams precede rechecking already admitted heads so an
-    // outside-page update need not wait behind a full unchanged prefix.
-    // Bound-cut and admitted-original requirements remain independent per stream.
-    let durable = projector
-        .state_store
-        .read(|store| {
-            streams
-                .iter()
-                .map(|row| {
-                    Ok((
-                        row.stream_ref.clone(),
-                        store.verified_commit_stream_cursor(&row.stream_ref)?,
-                    ))
-                })
-                .collect::<Result<BTreeMap<_, _>, String>>()
-        })
-        .map_err(protocol)?;
-    streams.sort_by_key(|row| {
-        (
-            !matches!(row.stream_ref, CommitStreamRef::Realm { .. }),
-            heads.get(&row.stream_ref).is_some_and(|head| {
-                durable.get(&row.stream_ref).and_then(Option::as_ref) == Some(*head)
-            }),
-            heads
-                .get(&row.stream_ref)
-                .is_some_and(|head| current.head(&row.stream_ref) == Some(*head)),
-        )
-    });
-    let private = streams
-        .iter()
-        .any(|s| matches!(s.stream_ref, CommitStreamRef::Sidecar { .. }));
-    let mut installed_generation = None;
-    let mut replayed = 0;
-    for row in streams {
-        if !is_active() {
-            return Ok(true);
-        }
-        if matches!(row.stream_ref, CommitStreamRef::Sidecar { .. }) {
-            continue;
-        }
-        if let Some(generation) = installed_generation
-            && let Some(expected) = heads.get(&row.stream_ref).copied()
-            && current.head(&row.stream_ref) == Some(expected)
-        {
-            // The complete current cut has already committed in this pass.
-            // Reuse only an original admitted in this live session AND its
-            // exact durable checkpoint. Bare coordinates after a restart,
-            // a changed head or a concurrent current transaction still drain.
-            let retained = projector
-                .state_store
-                .read(|store| -> Result<bool, String> {
-                    if store.active_authority().as_ref() != Some(snapshot.session().account_id()) {
-                        return Err(
-                            "live current account changed before retained-head reuse".into()
-                        );
-                    }
-                    Ok(store.current_generation() == generation
-                        && store
-                            .verified_commit_stream_cursor(&row.stream_ref)?
-                            .as_ref()
-                            == Some(expected))
-                })
-                .map_err(protocol)?;
-            if retained {
-                client.check_session()?;
-                snapshot.value()?;
-                continue;
-            }
-        }
-        // Re-enumerate a fresh cut between bounded batches. After a session
-        // change every retained head needs original admission again; draining
-        // that entire cold prefix must not hide a newly changed outside-page
-        // stream. Durable heads only affect scheduling, never authorization or
-        // the original-admission and checkpoint requirements above.
-        if replayed == MAX_DISCOVERY_REPLAYS {
-            return Ok(false);
-        }
-        let admitted = drain_from_snapshot(
-            client,
-            http,
-            realm,
-            &row.stream_ref,
-            &snapshot,
-            projector,
-            is_active,
-            current,
-            Some(&list_fence),
-        )
-        .await?;
-        replayed += 1;
-        installed_generation = admitted.generation;
+        .any(|head| matches!(head.stream_ref, CommitStreamRef::Sidecar { .. }));
+    if !is_active() {
+        return Ok(true);
     }
-    if private && is_active() {
+    drain_from_snapshot(
+        client,
+        http,
+        realm,
+        &realm_stream,
+        &snapshot,
+        projector,
+        is_active,
+        current,
+        Some(&list_fence),
+    )
+    .await?;
+    if has_sidecars && is_active() {
         refresh_sidecars_from_snapshot(
             client,
             http,
@@ -3455,9 +3376,8 @@ pub(super) mod tests {
             index
                 .read_mls_group_ready(
                     &arkret_sdk::ScopeRef::Realm {
-                        realm_id: snapshot.realm_id.clone()
+                        realm_id: snapshot.realm_id.clone(),
                     },
-                    &arkret_sdk::ActorId::account(account.authority.clone())
                 )
                 .await
                 .is_err()
@@ -3520,24 +3440,24 @@ pub(super) mod tests {
         let first = rows.first().unwrap().commit();
         let last = rows.last().unwrap().commit();
         let realm = snapshot.realm_id.clone();
-        let circle = CommitStreamRef::Circle {
+        let private = arkret_sdk::CommitStreamRef::Sidecar {
             realm_id: realm.clone(),
-            circle_id: arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
+            sidecar_id: arkret_sdk::SidecarId::from_event_id(&arkret_sdk::EventId::from_digest(
                 arkret_sdk::DigestSuite::Sha256,
                 [43; 32],
             )),
         };
-        let circle_head = arkret_sdk::CommitStreamHead {
-            stream_ref: circle.clone(),
+        let private_head = arkret_sdk::CommitStreamHead {
+            stream_ref: private.clone(),
             stream_position: 5,
             commit_id: arkret_sdk::RealmCommitId::from_digest([44; 32]),
         };
-        snapshot.visible_stream_heads.push(circle_head.clone());
+        snapshot.visible_stream_heads.push(private_head.clone());
         snapshot
             .retention_and_history_floor
             .stream_floors
             .push(arkret_sdk::StreamHistoryFloor {
-                stream_ref: circle.clone(),
+                stream_ref: private.clone(),
                 oldest_position: 3,
             });
         seal_current_snapshot(&mut snapshot);
@@ -3548,10 +3468,10 @@ pub(super) mod tests {
         );
         let realm_stream = first.stream_ref.clone();
         for preview in [true, false] {
-            let windows = vec![
+            let mut windows = vec![
                 RealmStreamWindow {
-                    stream_ref: circle.clone(),
-                    head_commit_ref: circle_head.commit_id.clone(),
+                    stream_ref: private.clone(),
+                    head_commit_ref: private_head.commit_id.clone(),
                     next_position: 6,
                     limited: true,
                     max_window_event_count: 1,
@@ -3572,6 +3492,9 @@ pub(super) mod tests {
                     e2ee_epoch: None,
                 },
             ];
+            windows.sort_by_cached_key(|window| {
+                arkret_sdk::canonical::canonical_json_bytes(&window.stream_ref).unwrap()
+            });
             let frame: arkret_sdk::sync::AccountSubscribeFrame =
                 serde_json::from_value(serde_json::json!({
                     "kind":"delta", "cursor":"ak:cursor:YQ", "realms":{realm.as_str():{
@@ -3584,7 +3507,7 @@ pub(super) mod tests {
             let mut bodies = vec![
                 serde_json::to_value(&snapshot).unwrap(),
                 serde_json::json!({"__scan_request": StreamScanRequestBody {
-                    realm_id:realm.clone(), stream_ref:circle.clone(),
+                    realm_id:realm.clone(), stream_ref:private.clone(),
                     direction:arkret_sdk::StreamScanDirection::After(None), limit:6,
                 }, "response":{
                     "committed_events":[],"readable_floor":{"oldest_position":3,
@@ -3592,8 +3515,7 @@ pub(super) mod tests {
                         "floor_reason":"membership_join"},"truncated":false,
                 }}),
             ];
-            if preview {
-                bodies.push(
+            bodies.insert(1,
                     serde_json::json!({"__scan_request": StreamScanRequestBody {
                         realm_id:realm.clone(), stream_ref:realm_stream.clone(),
                         direction:arkret_sdk::StreamScanDirection::After(None), limit:rows.len() as u16,
@@ -3601,16 +3523,15 @@ pub(super) mod tests {
                     "oldest_position":0,"floor_commit_id":first.commit_id,
                     "floor_reason":"stream_start"},"truncated":false}}),
                 );
-            }
             let observed = Arc::new(Mutex::new(Vec::new()));
             let (client, _, server) =
                 http_for_account_observed(bodies, account.clone(), None, Some(observed.clone()));
             let result = own_station::account_frame(client, &frame, &mut Default::default()).await;
             if preview {
                 let proof = result.unwrap();
-                assert!(proof.preview_streams().contains(&circle));
+                assert!(proof.preview_streams().contains(&private));
                 assert!(!proof.preview_streams().contains(&realm_stream));
-                assert!(!proof.resolved_preview_streams().contains(&circle));
+                assert!(!proof.resolved_preview_streams().contains(&private));
                 assert_eq!(proof.own_pages().len(), 1);
                 assert_eq!(proof.own_pages()[0].rows().unwrap(), rows.as_slice());
                 assert!(proof.current_snapshots().contains_key(realm.as_str()));
@@ -3626,7 +3547,7 @@ pub(super) mod tests {
                 );
             }
             server.join().unwrap();
-            assert_eq!(observed.lock().unwrap().len(), if preview { 3 } else { 2 });
+            assert_eq!(observed.lock().unwrap().len(), 3);
         }
     }
 

@@ -90,7 +90,7 @@ fn restore_for_commit(
 }
 
 /// Stage the native Sidecar's derived member withdrawal or access rotation.
-/// The caller supplies the exact verified authority cut, never Circle membership.
+/// The caller supplies the exact verified authority cut.
 #[cfg(test)]
 pub(crate) fn build_sidecar_access_commit(
     state_store: &crate::state::LocalStateStore,
@@ -158,7 +158,7 @@ pub(crate) fn build_sidecar_access_commit(
 
 fn scope_for(
     realm_id: &str,
-    circle_id: Option<&str>,
+
     sidecar_id: Option<&arkret_sdk::SidecarId>,
 ) -> Result<arkret_sdk::ScopeRef, MlsRuntimeError> {
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
@@ -169,14 +169,7 @@ fn scope_for(
             sidecar_id: sidecar_id.clone(),
         });
     }
-    match circle_id.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(circle_id) => Ok(arkret_sdk::ScopeRef::Circle {
-            realm_id: realm,
-            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
-                .map_err(|error| MlsRuntimeError::Commit(format!("invalid Circle id: {error}")))?,
-        }),
-        None => Ok(arkret_sdk::ScopeRef::Realm { realm_id: realm }),
-    }
+    Ok(arkret_sdk::ScopeRef::Realm { realm_id: realm })
 }
 
 /// Operator-forced MLS epoch rotation through a real `self_update_commit`.
@@ -194,7 +187,7 @@ pub fn force_epoch_rotation_commit(
         state_store,
         secure_store,
         realm_id,
-        None,
+
         authority,
         device_id,
     )
@@ -204,11 +197,11 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    circle_id: Option<&str>,
+
     authority: &AccountId,
     device_id: &DeviceId,
 ) -> Result<StagedMlsCommit, MlsRuntimeError> {
-    let effective_scope = scope_for(realm_id, circle_id, None)?;
+    let effective_scope = scope_for(realm_id,  None)?;
     let (mut group, secret) = restore_for_commit(
         state_store,
         secure_store,
@@ -291,7 +284,7 @@ pub(crate) fn build_mls_remove_actors_commit_for_scope(
     effective_scope: &arkret_sdk::ScopeRef,
     authority: &AccountId,
     device_id: &DeviceId,
-    frozen: &crate::circle_mls::MembershipRemovalSnapshot,
+    frozen: &crate::mls::membership_removal::MembershipRemovalSnapshot,
 ) -> Result<(arkret_sdk::MlsMemberRemovalArtifacts, StagedMlsCommit), MlsRuntimeError> {
     frozen
         .ensure_current(state_store)
@@ -485,7 +478,7 @@ pub fn build_idle_self_update_commit(
     ) {
         return Ok(None);
     }
-    let effective_scope = scope_for(realm_id, None, None)?;
+    let effective_scope = scope_for(realm_id,  None)?;
     let (mut group, secret) = restore_for_commit(
         state_store,
         secure_store,

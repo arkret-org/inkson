@@ -642,15 +642,15 @@ pub(super) fn settings_panel(
         let send_account = account.clone();
         sections.push(Box::new(view().class("discussion-detail-section").fill((
             subhead("Settings"),
-            settings_check("discussion-settings-mute", crate::i18n::tr_for_locale(model.locale,"chat.settings.mute_notifications"), muted, Rc::new(move |value| {if mute_context.session_matches(generation,&mute_account) {
+            settings_switch("discussion-settings-mute", crate::i18n::tr_for_locale(model.locale,"chat.settings.mute_notifications"), muted, Rc::new(move |value| {if mute_context.session_matches(generation,&mute_account) {
                     mute_context.state_store.write(|store|store.set_realm_muted(realm.clone(),value));
                     let revision=mute_context.state_store.revision();mute_context.state_revision.revise(|value|*value=revision);
                 }})),
-            settings_check("discussion-settings-read-receipts", crate::i18n::tr_for_locale(model.locale,"chat.settings.read_receipts"), sending, Rc::new(move |value| {if send_context.session_matches(generation,&send_account) {
+            settings_switch("discussion-settings-read-receipts", crate::i18n::tr_for_locale(model.locale,"chat.settings.read_receipts"), sending, Rc::new(move |value| {if send_context.session_matches(generation,&send_account) {
                     send_context.state_store.write(|store|store.set_read_receipt_strand_override(send_strand.clone(),Some(value)));
                     let revision=send_context.state_store.revision();send_context.state_revision.revise(|value|*value=revision);
                 }})),
-            settings_check("discussion-settings-read-receipts-display", "Show others' read receipts", displaying, Rc::new(move |value| {if display_context.session_matches(generation,&account) {
+            settings_switch("discussion-settings-read-receipts-display", "Show others' read receipts", displaying, Rc::new(move |value| {if display_context.session_matches(generation,&account) {
                     display_context.state_store.write(|store|store.set_read_receipt_strand_display_override(display_strand.clone(),Some(value)));
                     let revision=display_context.state_store.revision();display_context.state_revision.revise(|value|*value=revision);
                 }})),
@@ -685,25 +685,20 @@ pub(super) fn settings_panel(
     )
 }
 
-fn settings_check(
+fn settings_switch(
     key: &str,
     label: impl Into<Vary<String>>,
     checked: Bond<bool>,
     changed: Rc<dyn Fn(bool)>,
 ) -> View {
     Box::new(
-        sapid::field(key)
+        sapid::switch()
             .unstyled()
-            .class(format!("settings-row {key}"))
+            .class(format!("settings-switch {key}"))
+            .label_position(sapid::SwitchLabelPosition::Before)
             .label(label)
-            .control(move |field| {
-                let changed = changed.clone();
-                sapid::checkbox()
-                    .unstyled()
-                    .field(field)
-                    .checked(checked)
-                    .on_checked_change(move |value| changed(value))
-            }),
+            .checked(checked)
+            .on_checked_change(move |value| changed(value)),
     )
 }
 

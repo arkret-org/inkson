@@ -66,7 +66,7 @@ fn command_harness(scope: &Scope, control: Control) {
                 api_token: String::new(),
                 wait_for: None,
                 realm_id: "invalid-realm".into(),
-                circle_id: None,
+
                 strand_id: "invalid-strand".into(),
                 actor: "invalid-actor".into(),
                 local_id: "callback-fixture".into(),
@@ -395,7 +395,7 @@ async fn encrypted_public_update_policy_rejects_before_io_and_retains_the_origin
                 api_token: String::new(),
                 wait_for: None,
                 realm_id: realm.to_owned(),
-                circle_id: None,
+
                 strand_id: strand.to_owned(),
                 actor: authority.principal_id.to_string(),
                 authority: authority.clone(),
@@ -472,7 +472,6 @@ fn upload_command_harness(scope: &Scope, control: UploadControl) {
                 is_default: true,
                 is_private_sidecar: control.is_private_sidecar,
                 security_encrypted: None,
-                scope_circle: None,
             }]
         });
     }
@@ -570,7 +569,7 @@ async fn private_sidecar_file_drop_never_inherits_verified_plaintext_parent() {
     assert_eq!(index.read_complete_cut(realm).await.unwrap(), Some(1));
     assert!(
         index
-            .read_mls_group_ready(&scope, &arkret_sdk::ActorId::account(account.authority))
+            .read_mls_group_ready(&scope)
             .await
             .unwrap()
             .is_none()

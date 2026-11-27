@@ -204,10 +204,7 @@ impl CurrentIndex {
             };
             // Native Sidecar exchanges have their own private reducer. A public
             // Strand locator never makes their plaintext a shared search input.
-            if !matches!(
-                full.event.scope_ref,
-                arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
-            ) {
+            if !matches!(full.event.scope_ref, arkret_sdk::ScopeRef::Realm { .. }) {
                 continue;
             }
             // Disclosure is a current read outcome, not a terminal redaction.
@@ -650,75 +647,10 @@ impl CurrentIndex {
         else {
             reject_search_candidate!(8);
         };
-        let Some(parent_revision) = parent.parent_membership_revision(realm, actor) else {
+        if parent.active_realm_member_revision(realm, actor).is_none() {
             reject_search_candidate!(9);
         };
-        if let arkret_sdk::ScopeRef::Circle { circle_id, .. } = &full.event.scope_ref {
-            let Some(CurrentState::Value {
-                source_stream_ref,
-                value,
-                ..
-            }) = self
-                .ready_selector(
-                    realm.as_str(),
-                    &CurrentSelector::Circle {
-                        circle_id: circle_id.clone(),
-                    },
-                    generation,
-                )
-                .await?
-            else {
-                reject_search_candidate!(10);
-            };
-            let circle: arkret_models_collaboration::governance::circle::Circle =
-                serde_json::from_value(value)?;
-            // Archive preserves historical reads; tombstone makes the scope
-            // unavailable even while its canonical member row remains join.
-            if circle.id.as_ref() != Some(circle_id)
-                || circle.realm_id != *realm
-                || circle.schema != arkret_wire::SchemaId::CIRCLE_V1
-                || source_stream_ref
-                    != (arkret_sdk::CommitStreamRef::Realm {
-                        realm_id: realm.clone(),
-                    })
-                || circle.state
-                    == arkret_models_collaboration::governance::circle::CircleState::Tombstoned
-            {
-                reject_search_candidate!(11);
-            }
-            let Some(CurrentState::Value {
-                source_stream_ref,
-                value,
-                ..
-            }) = self
-                .ready_selector(
-                    realm.as_str(),
-                    &CurrentSelector::CircleMemberState {
-                        circle_id: circle_id.clone(),
-                        member_actor_id: actor.clone(),
-                    },
-                    generation,
-                )
-                .await?
-            else {
-                reject_search_candidate!(12);
-            };
-            let membership: arkret_wire::CircleMemberStateValue = serde_json::from_value(value)?;
-            let CurrentState::Value {
-                source_stream_ref: parent_stream,
-                ..
-            } = &parent;
-            if source_stream_ref != full.commit.stream_ref
-                || !membership.is_effective_under_parent(
-                    realm,
-                    parent_stream,
-                    &parent_revision,
-                    arkret_sdk::MembershipState::Join,
-                )
-            {
-                reject_search_candidate!(13);
-            }
-        }
+
         let create_id = match full.event.kind {
             EventKind::MessageCreate => full.event.event_id.clone(),
             _ => target(full)?
@@ -749,14 +681,8 @@ impl CurrentIndex {
         else {
             reject_search_candidate!(16);
         };
-        let strand_scope = match &strand.scope_circle_id {
-            Some(circle_id) => arkret_sdk::ScopeRef::Circle {
-                realm_id: realm.clone(),
-                circle_id: circle_id.clone(),
-            },
-            None => arkret_sdk::ScopeRef::Realm {
-                realm_id: realm.clone(),
-            },
+        let strand_scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm.clone(),
         };
         if strand_scope != full.event.scope_ref
             || strand.state != Some(arkret_wire::ObjectState::Active)
@@ -855,16 +781,16 @@ pub(crate) mod tests {
         FixtureStation, fixture_time, verified_realm_fixture_as,
     };
 
-    mod circle_fixture {
+    mod realm_fixture {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/support/search_circle.rs"
+            "/tests/support/search_realm.rs"
         ));
     }
 
-    async fn stage_circle_fixture(
+    async fn stage_realm_fixture(
         index: &CurrentIndex,
-        fixture: &circle_fixture::Fixture,
+        fixture: &realm_fixture::Fixture,
         originals: bool,
         generation: u64,
     ) -> CurrentStage {
@@ -891,14 +817,14 @@ pub(crate) mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("scope-list.sqlite");
         let index = super::super::tests::index(&path, 0).await;
-        let fixture = circle_fixture::Fixture::new();
-        stage_circle_fixture(&index, &fixture, true, 0)
+        let fixture = realm_fixture::Fixture::new();
+        stage_realm_fixture(&index, &fixture, true, 0)
             .await
             .finish();
-        let read = || index.read_search_page(&fixture.actor, None, circle_fixture::at(20));
+        let read = || index.read_search_page(&fixture.actor, None, realm_fixture::at(20));
         assert_eq!(read().await.unwrap().rows, vec![fixture.message.clone()]);
         let frame: AccountSubscribeFrame = serde_json::from_str(
-            &circle_fixture::account_scope_removal_frame(&fixture.snapshot.realm_id),
+            &realm_fixture::account_scope_removal_frame(&fixture.snapshot.realm_id),
         )
         .unwrap();
         let resets =
@@ -931,31 +857,31 @@ pub(crate) mod tests {
         let reopened = super::super::tests::index(&path, 2).await;
         assert!(
             reopened
-                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                 .await
                 .unwrap()
                 .rows
                 .is_empty()
         );
         let rejoin: AccountSubscribeFrame = serde_json::from_str(
-            &circle_fixture::account_scope_rejoin_frame(&fixture.snapshot.realm_id),
+            &realm_fixture::account_scope_rejoin_frame(&fixture.snapshot.realm_id),
         )
         .unwrap();
         reopened.stage_frame(2, &rejoin).await.unwrap().finish();
         assert!(
             reopened
-                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                 .await
                 .unwrap()
                 .rows
                 .is_empty()
         );
-        stage_circle_fixture(&reopened, &fixture, true, 3)
+        stage_realm_fixture(&reopened, &fixture, true, 3)
             .await
             .finish();
         assert_eq!(
             reopened
-                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                 .await
                 .unwrap()
                 .rows,
@@ -965,11 +891,11 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn search_retention_policy_and_validity_boundaries_use_the_same_durable_cut() {
-        for (scenario, fixture, checks) in circle_fixture::policy_cases() {
+        for (scenario, fixture, checks) in realm_fixture::policy_cases() {
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("retention-policy.sqlite");
             let index = super::super::tests::index(&path, 0).await;
-            stage_circle_fixture(&index, &fixture, true, 0)
+            stage_realm_fixture(&index, &fixture, true, 0)
                 .await
                 .finish();
             drop(index);
@@ -1001,10 +927,10 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn search_event_redaction_never_releases_cached_full_or_creates_a_message_tombstone() {
-        for (scenario, steps) in circle_fixture::event_redaction_cases() {
+        for (scenario, steps) in realm_fixture::event_redaction_cases() {
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("event-redaction.sqlite");
-            let fixture = circle_fixture::Fixture::new();
+            let fixture = realm_fixture::Fixture::new();
             for (generation, step) in steps.into_iter().enumerate() {
                 let index = super::super::tests::index(&path, generation as u64).await;
                 let frame = serde_json::from_str(&step.frame).unwrap();
@@ -1029,7 +955,7 @@ pub(crate) mod tests {
                     drop(stage);
                     assert_eq!(
                         index
-                            .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                            .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                             .await
                             .unwrap()
                             .rows
@@ -1047,7 +973,7 @@ pub(crate) mod tests {
                 stage.finish();
                 assert_eq!(
                     index
-                        .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                        .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                         .await
                         .unwrap()
                         .rows,
@@ -1070,7 +996,7 @@ pub(crate) mod tests {
                 let reopened = super::super::tests::index(&path, generation as u64 + 1).await;
                 assert_eq!(
                     reopened
-                        .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                        .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                         .await
                         .unwrap()
                         .rows,
@@ -1083,10 +1009,10 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn search_disclosure_backfill_recovers_exact_original_without_reopening_other_gates() {
-        for (scenario, steps) in circle_fixture::disclosure_cases() {
+        for (scenario, steps) in realm_fixture::disclosure_cases() {
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("disclosure.sqlite");
-            let actor = circle_fixture::Fixture::new().actor;
+            let actor = realm_fixture::Fixture::new().actor;
             for (generation, step) in steps.into_iter().enumerate() {
                 let index = super::super::tests::index(&path, generation as u64).await;
                 let frame = serde_json::from_str(&step.frame).unwrap();
@@ -1109,7 +1035,7 @@ pub(crate) mod tests {
                     .finish();
                 assert_eq!(
                     index
-                        .read_search_page(&actor, None, circle_fixture::at(20))
+                        .read_search_page(&actor, None, realm_fixture::at(20))
                         .await
                         .unwrap()
                         .rows,
@@ -1120,7 +1046,7 @@ pub(crate) mod tests {
                 let reopened = super::super::tests::index(&path, generation as u64 + 1).await;
                 assert_eq!(
                     reopened
-                        .read_search_page(&actor, None, circle_fixture::at(20))
+                        .read_search_page(&actor, None, realm_fixture::at(20))
                         .await
                         .unwrap()
                         .rows,
@@ -1136,30 +1062,30 @@ pub(crate) mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("revision.sqlite");
         let index = super::super::tests::index(&path, 0).await;
-        let mut fixture = circle_fixture::Fixture::new();
-        stage_circle_fixture(&index, &fixture, true, 0)
+        let mut fixture = realm_fixture::Fixture::new();
+        stage_realm_fixture(&index, &fixture, true, 0)
             .await
             .finish();
-        let read = || index.read_search_page(&fixture.actor, None, circle_fixture::at(20));
+        let read = || index.read_search_page(&fixture.actor, None, realm_fixture::at(20));
         assert_eq!(read().await.unwrap().rows, vec![fixture.message.clone()]);
         fixture.revise_message();
-        let staged = stage_circle_fixture(&index, &fixture, false, 1).await;
+        let staged = stage_realm_fixture(&index, &fixture, false, 1).await;
         drop(staged);
         assert_eq!(
             index
-                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                 .await
                 .unwrap()
                 .rows,
             vec![fixture.message.clone()],
             "abandoned current must not affect the published body"
         );
-        stage_circle_fixture(&index, &fixture, false, 1)
+        stage_realm_fixture(&index, &fixture, false, 1)
             .await
             .finish();
         assert!(
             index
-                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                 .await
                 .unwrap()
                 .rows
@@ -1167,27 +1093,27 @@ pub(crate) mod tests {
         );
         // Replaying the old create cannot fill a newer revision's missing body.
         let revision = fixture.originals.pop().unwrap();
-        stage_circle_fixture(&index, &fixture, true, 2)
+        stage_realm_fixture(&index, &fixture, true, 2)
             .await
             .finish();
         drop(index);
         let reopened = super::super::tests::index(&path, 3).await;
         assert!(
             reopened
-                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                 .await
                 .unwrap()
                 .rows
                 .is_empty()
         );
         fixture.originals.push(revision.clone());
-        stage_circle_fixture(&reopened, &fixture, true, 3)
+        stage_realm_fixture(&reopened, &fixture, true, 3)
             .await
             .finish();
         let expected = vec![fixture.message.clone(), revision];
         assert_eq!(
             reopened
-                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                 .await
                 .unwrap()
                 .rows,
@@ -1197,7 +1123,7 @@ pub(crate) mod tests {
         let recovered = super::super::tests::index(&path, 4).await;
         assert_eq!(
             recovered
-                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                 .await
                 .unwrap()
                 .rows,
@@ -1223,7 +1149,7 @@ pub(crate) mod tests {
                 let directory = tempfile::tempdir().unwrap();
                 let index =
                     super::super::tests::index(&directory.path().join("revision.sqlite"), 0).await;
-                let mut fixture = circle_fixture::Fixture::new();
+                let mut fixture = realm_fixture::Fixture::new();
                 if revised {
                     fixture.revise_message();
                 }
@@ -1250,7 +1176,7 @@ pub(crate) mod tests {
                 }
                 assert!(
                     index
-                        .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                        .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                         .await
                         .unwrap()
                         .rows
@@ -1272,12 +1198,12 @@ pub(crate) mod tests {
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("current-redaction.sqlite");
             let index = super::super::tests::index(&path, 0).await;
-            let mut fixture = circle_fixture::Fixture::new();
+            let mut fixture = realm_fixture::Fixture::new();
             if scenario == "revised" {
                 fixture.revise_message();
             }
             let message = MessageId::from_event_id(&fixture.message.event.event_id);
-            stage_circle_fixture(&index, &fixture, scenario != "redaction_first", 0)
+            stage_realm_fixture(&index, &fixture, scenario != "redaction_first", 0)
                 .await
                 .finish();
             let target = if scenario == "other_message" {
@@ -1290,10 +1216,10 @@ pub(crate) mod tests {
             };
             fixture.redact_message_current(target.as_str());
             // An abandoned stage must not redact the still committed cut.
-            drop(stage_circle_fixture(&index, &fixture, false, 1).await);
+            drop(stage_realm_fixture(&index, &fixture, false, 1).await);
             assert_eq!(
                 index
-                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                    .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                     .await
                     .unwrap()
                     .rows
@@ -1304,11 +1230,11 @@ pub(crate) mod tests {
                     usize::from(scenario != "redaction_first")
                 }
             );
-            stage_circle_fixture(&index, &fixture, false, 1)
+            stage_realm_fixture(&index, &fixture, false, 1)
                 .await
                 .finish();
             // A late/replayed original cannot undo a current-only terminal fact.
-            stage_circle_fixture(&index, &fixture, true, 2)
+            stage_realm_fixture(&index, &fixture, true, 2)
                 .await
                 .finish();
             let expected = if scenario == "other_message" {
@@ -1318,7 +1244,7 @@ pub(crate) mod tests {
             };
             assert_eq!(
                 index
-                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                    .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                     .await
                     .unwrap()
                     .rows,
@@ -1340,16 +1266,16 @@ pub(crate) mod tests {
                 .snapshot
                 .current_state_entries
                 .retain(|row| !matches!(selector_of(row), CurrentSelector::ObjectRedaction { .. }));
-            fixture.snapshot.created_at = circle_fixture::at(13);
-            circle_fixture::seal(&mut fixture.snapshot);
-            stage_circle_fixture(&index, &fixture, true, 3)
+            fixture.snapshot.created_at = realm_fixture::at(13);
+            realm_fixture::seal(&mut fixture.snapshot);
+            stage_realm_fixture(&index, &fixture, true, 3)
                 .await
                 .finish();
             drop(index);
             let reopened = super::super::tests::index(&path, 4).await;
             assert_eq!(
                 reopened
-                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                    .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                     .await
                     .unwrap()
                     .rows,
@@ -1364,15 +1290,15 @@ pub(crate) mod tests {
         let directory = tempfile::tempdir().unwrap();
         let index =
             super::super::tests::index(&directory.path().join("legacy-redaction.sqlite"), 0).await;
-        let mut fixture = circle_fixture::Fixture::new();
-        stage_circle_fixture(&index, &fixture, true, 0)
+        let mut fixture = realm_fixture::Fixture::new();
+        stage_realm_fixture(&index, &fixture, true, 0)
             .await
             .finish();
         let message = MessageId::from_event_id(&fixture.message.event.event_id);
         let prefix = format!("{}search/{message}/", index.prefix);
         let legacy: SearchRecord = index.latest(&prefix, 1).await.unwrap().unwrap();
         fixture.redact_message_current(message.as_str());
-        stage_circle_fixture(&index, &fixture, false, 1)
+        stage_realm_fixture(&index, &fixture, false, 1)
             .await
             .finish();
         // The previous production version installed the current row but left
@@ -1390,7 +1316,7 @@ pub(crate) mod tests {
             .unwrap();
         assert!(
             index
-                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                 .await
                 .unwrap()
                 .rows
@@ -1405,8 +1331,8 @@ pub(crate) mod tests {
             let index =
                 super::super::tests::index(&directory.path().join("invalid-redaction.sqlite"), 0)
                     .await;
-            let mut fixture = circle_fixture::Fixture::new();
-            stage_circle_fixture(&index, &fixture, true, 0)
+            let mut fixture = realm_fixture::Fixture::new();
+            stage_realm_fixture(&index, &fixture, true, 0)
                 .await
                 .finish();
             let target = MessageId::from_event_id(&fixture.message.event.event_id);
@@ -1428,14 +1354,18 @@ pub(crate) mod tests {
                 }
                 _ => {
                     let head = &fixture.snapshot.visible_stream_heads[0];
-                    *source_stream_ref = head.stream_ref.clone();
+                    *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
+                        realm_id: arkret_wire::RealmId::from_event_id(
+                            &fixture.message.event.event_id,
+                        ),
+                    };
                     *revision = CurrentRevision {
                         commit_id: head.commit_id.clone(),
                         stream_position: head.stream_position,
                     };
                 }
             }
-            circle_fixture::seal(&mut fixture.snapshot);
+            realm_fixture::seal(&mut fixture.snapshot);
             let frame = serde_json::from_str(&fixture.frame(false)).unwrap();
             assert!(
                 index
@@ -1460,7 +1390,7 @@ pub(crate) mod tests {
             assert_eq!(index.generation.load(Ordering::Acquire), 1);
             assert_eq!(
                 index
-                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                    .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                     .await
                     .unwrap()
                     .rows,
@@ -1471,14 +1401,14 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn search_circle_current_scope_survives_archive_but_not_terminal_or_missing_evidence() {
-        for scenario in circle_fixture::SCENARIOS {
+    async fn search_requires_active_strand_and_current_realm_evidence() {
+        for scenario in realm_fixture::SCENARIOS {
             let directory = tempfile::tempdir().unwrap();
-            let path = directory.path().join("circle-search.sqlite");
+            let path = directory.path().join("realm-search.sqlite");
             let index = super::super::tests::index(&path, 0).await;
-            let mut fixture = circle_fixture::Fixture::new();
+            let mut fixture = realm_fixture::Fixture::new();
             // Source changes on an existing row are rejected at installation.
-            // A first cut must also refuse to read a misbound Circle source.
+            // A first cut must also refuse to read a misbound Strand source.
             if scenario == "wrong_source" {
                 fixture.change(scenario);
             }
@@ -1500,33 +1430,32 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
             staged.finish();
-            let initial = if scenario == "wrong_source" {
-                vec![]
-            } else {
-                vec![fixture.message.clone()]
-            };
-            assert_eq!(
-                index
-                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
-                    .await
-                    .unwrap()
-                    .rows,
-                initial,
-                "initial {scenario}"
-            );
+            let initial = index
+                .read_search_page(&fixture.actor, None, realm_fixture::at(20))
+                .await
+                .map(|page| page.rows)
+                .map_err(|error| error.to_string());
             if scenario == "wrong_source" {
+                let denied =
+                    Err("Strand current source stream differs from its security scope".to_owned());
+                assert_eq!(initial, denied);
                 drop(index);
                 let reopened = super::super::tests::index(&path, 1).await;
-                assert!(
+                assert_eq!(
                     reopened
-                        .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                        .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                         .await
-                        .unwrap()
-                        .rows
-                        .is_empty()
+                        .map(|page| page.rows)
+                        .map_err(|error| error.to_string()),
+                    denied
                 );
                 continue;
             }
+            assert_eq!(
+                initial,
+                Ok(vec![fixture.message.clone()]),
+                "initial {scenario}"
+            );
             fixture.change(scenario);
             let frame = serde_json::from_str(&fixture.frame(false)).unwrap();
             index
@@ -1544,17 +1473,16 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
                 .finish();
-            let expected = if scenario == "archived" {
-                vec![fixture.message.clone()]
-            } else {
-                vec![]
-            };
+            let expected = realm_fixture::expected_search_result(
+                scenario,
+                Vec::<arkret_wire::CommittedEventFullView>::new(),
+            );
             assert_eq!(
                 index
-                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                    .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                     .await
-                    .unwrap()
-                    .rows,
+                    .map(|page| page.rows)
+                    .map_err(|error| error.to_string()),
                 expected,
                 "live {scenario}"
             );
@@ -1562,10 +1490,10 @@ pub(crate) mod tests {
             let reopened = super::super::tests::index(&path, 2).await;
             assert_eq!(
                 reopened
-                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                    .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                     .await
-                    .unwrap()
-                    .rows,
+                    .map(|page| page.rows)
+                    .map_err(|error| error.to_string()),
                 expected,
                 "reopened {scenario}"
             );
@@ -1574,7 +1502,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn search_authorization_context_uses_one_complete_cut_on_cold_reopen() {
-        for case in circle_fixture::authorization_cases() {
+        for case in realm_fixture::authorization_cases() {
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("authorization-search.sqlite");
             let index = super::super::tests::index(&path, 0).await;
@@ -1590,7 +1518,7 @@ pub(crate) mod tests {
             assert!(record.create.is_some() || record.revision.is_some());
             assert!(
                 index
-                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                    .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                     .await
                     .unwrap()
                     .rows
@@ -1623,7 +1551,7 @@ pub(crate) mod tests {
             };
             case.assert_search_result(
                 index
-                    .read_search_page(&case.requester, None, circle_fixture::at(20))
+                    .read_search_page(&case.requester, None, realm_fixture::at(20))
                     .await
                     .map(|page| page.rows)
                     .map_err(|error| error.to_string()),
@@ -1633,7 +1561,7 @@ pub(crate) mod tests {
             if !case.malformed_current {
                 assert_eq!(
                     index
-                        .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                        .read_search_page(&fixture.actor, None, realm_fixture::at(20))
                         .await
                         .unwrap()
                         .rows,
@@ -1651,7 +1579,7 @@ pub(crate) mod tests {
                 .unwrap();
             assert!(record.create.is_some() || record.revision.is_some());
             case.assert_search_result(
-                cold.read_search_page(&case.requester, None, circle_fixture::at(20))
+                cold.read_search_page(&case.requester, None, realm_fixture::at(20))
                     .await
                     .map(|page| page.rows)
                     .map_err(|error| error.to_string()),
@@ -2302,9 +2230,8 @@ pub(crate) mod tests {
                 }
                 "wrong_scope" => {
                     let CurrentState::Value { value, .. } = &mut snapshot.current_state_entries[1];
-                    value["scope_circle_id"] = json!(arkret_sdk::CircleId::from_event_id(
-                        &originals[0].event.event_id
-                    ));
+                    value["realm_id"] =
+                        json!("ak:realm:AQJmSg1s9QyzppFeJL40dN92YVHZeLdBBt3UWHa9XNOD");
                 }
                 "missing_strand" => {
                     snapshot.current_state_entries.remove(1);

@@ -2,6 +2,7 @@ import { byClass } from "./strandsHarness";
 import { chromium, expect, test, type Locator, type Page } from "@playwright/test";
 import {
   registerStrandsBeforeEach,
+  assertRealmTreeSeeded,
   CURRENT_PRINCIPAL_CORE_ID,
   CURRENT_PRINCIPAL_DID,
   CURRENT_ACCOUNT_ID,
@@ -52,13 +53,12 @@ async function expectIdentityTooltip(page: Page, action: string, expected: strin
 }
 
 async function expectRealmSecurity(page: Page, row: Locator, encrypted: boolean) {
+  const description = encrypted ? "Encrypted Realm" : "Unencrypted Realm";
+  await expect(row).toHaveAccessibleDescription(description);
   await row.locator(".sidebar-nav-icon").hover();
-  await expect(row).toHaveAttribute("aria-describedby", /^\S+$/);
-  const id = await row.getAttribute("aria-describedby");
-  const hint = page.locator(`[id=${JSON.stringify(id)}]`);
-  await expect(hint).toHaveRole("tooltip");
-  await expect(hint).toBeVisible();
-  await expect(hint).toHaveText(encrypted ? "Encrypted Realm" : "Unencrypted Realm");
+  await expect(page.getByRole("tooltip", { name: description })).toHaveCount(0);
+  await row.focus();
+  await expect(page.getByRole("tooltip", { name: description })).toHaveCount(0);
 }
 
 async function selectRealmAtDurableCut(page: Page, button: Locator) {
@@ -94,9 +94,7 @@ test("bootstrap login and sync shows the connected realm", async ({ page }) => {
   await expect(byClass(page, "sync-cursor")).toContainText(
     "ak:cursor:e2e-2",
   );
-  await expect(byClass(page, "realm-tree-list")).toContainText(
-    "Arkret Demo Realm",
-  );
+  await assertRealmTreeSeeded(page);
   await expect(byClass(page, "realm-tree-list")).toContainText(
     "Launch Realm",
   );
@@ -140,12 +138,16 @@ test("bootstrap login and sync shows the connected realm", async ({ page }) => {
       .locator(".pill.muted.xs"),
   ).toHaveText("Realm");
 
+  await assertRealmTreeSeeded(page);
   await byClass(page, "realm-tree-item").first().click();
   await expect(byClass(page, "kanban-panel")).toBeVisible();
-  await expect(byClass(page, "topbar-current-surface")).toContainText(
-    "Board",
-  );
-  await expect(page.locator(".realm-nav-menu-host .sapid-popover-trigger")).toBeVisible();
+  await expect(byClass(page, "topbar-current-surface")).toHaveText("Boards");
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await expect(byClass(page, "realm-nav-inline").getByRole("link", { name: "Boards", exact: true })).toBeVisible();
+  await expect(byClass(page, "board-select-label")).toHaveText("Board");
+  await page.setViewportSize({ width: 900, height: 720 });
+  await page.getByRole("button", { name: "Switch view: Boards", exact: true }).click();
+  await expect(byClass(page, "realm-nav-menu-items").getByRole("link", { name: "Boards", exact: true })).toBeVisible();
 });
 
 test("a second browser tab is blocked until the active Inkson tab closes", async ({

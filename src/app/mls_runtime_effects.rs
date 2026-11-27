@@ -165,7 +165,7 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
                 let records = submitter.creator_bootstrap_records().await?;
                 let mut pending = false;
                 for record in records {
-                    if !matches!(record.intent().effective_scope(), arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. })
+                    if !matches!(record.intent().effective_scope(), arkret_sdk::ScopeRef::Realm { .. })
                         || record.intent().creator_device_id() != &account.device_id
                         || record.ready_receipt().is_some() || record.rejection().is_some()
                         || record.superseded_winner().is_some() || record.quarantine_diagnostic().is_some() {
@@ -173,9 +173,6 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
                     }
                     let state = state_store.handle();
                     let resumed = match record.intent().effective_scope() {
-                        arkret_sdk::ScopeRef::Circle { .. } => crate::mls::creator_bootstrap::ensure_creator_circle_mls_genesis(
-                            &api, &state, record.intent().effective_scope(), &account.authority, &account.device_id, false,
-                        ).await,
                         arkret_sdk::ScopeRef::Realm { realm_id } => crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
                             &api, &state, realm_id.as_str(), &account.authority, &account.device_id,
                         ).await,
@@ -593,14 +590,15 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
                         let mut admitted_total = 0_usize;
                         let mut deferred_total = 0_usize;
                         let mut failures = Vec::<String>::new();
+                        let state_handle = admit_state_store.handle();
                         for (realm_id, _) in candidate_realms {
-                            match crate::mls::admission_reconcile::reconcile_mls_admissions_for_realm(
+                            match crate::runtime_helpers::boxed_future(|| crate::mls::admission_reconcile::reconcile_mls_admissions_for_realm(
                                 &api,
-                                &admit_state_store.handle(),
+                                &state_handle,
                                 realm_id.clone(),
                                 actor.clone(),
                                 device.to_string(),
-                            )
+                            ))
                             .await
                             {
                                 Ok(reconcile) => {
@@ -958,27 +956,16 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
                 // wasm correctly panics because its single thread cannot
                 // park. Keep the read guard in this synchronous scope only.
                 let pending_coverage_repairs = state_store_for_probe.read(|state| {
-                    crate::mls::coverage_liveness::pending_mls_coverage_repairs(
+                    crate::mls::coverage_liveness::realm_coverage_repair_pending(
                         state,
                         &creator_bootstrap_realm_id,
                     )
                 });
-                for circle_id in pending_coverage_repairs {
-                    let repair_key = format!(
-                        "{}|{}",
-                        creator_bootstrap_realm_id,
-                        circle_id.as_deref().unwrap_or("-")
-                    );
-                    if coverage_repair_in_flight_for_probe
-                        .get_untracked()
-                        .contains(&repair_key)
-                    {
-                        continue;
-                    }
+                let repair_key = creator_bootstrap_realm_id.clone();
+                if pending_coverage_repairs && !coverage_repair_in_flight_for_probe.get_untracked().contains(&repair_key) {
                     coverage_repair_in_flight_for_probe.revise(|keys| keys.insert(repair_key.clone()));
                     tracing::warn!(
                         realm = %creator_bootstrap_realm_id,
-                        circle = circle_id.as_deref().unwrap_or("-"),
                         "MLS coverage repair is scheduled; checking accepted current before repair",
                     );
                     let coverage_result = match crate::transport::auth::authed_api_ready(
@@ -992,7 +979,7 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
                                 &api,
                                 &state_store_task,
                                 &creator_bootstrap_realm_id,
-                                circle_id.as_deref(),
+
                                 &detect_authority,
                                 &detect_device,
                             )
@@ -1006,7 +993,6 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
                     if let Err(error) = coverage_result {
                         tracing::warn!(
                             realm = %creator_bootstrap_realm_id,
-                            circle = circle_id.as_deref().unwrap_or("-"),
                             %error,
                             "MLS coverage repair failed; the scope stays paused until the next attempt",
                         );

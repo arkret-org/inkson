@@ -19,6 +19,8 @@ pub enum Route {
         realm_id: String,
         message: String,
     },
+    PrivateChats,
+    NewPrivateChat,
     DirectConversation {
         realm_id: String,
         strand_id: String,
@@ -52,13 +54,6 @@ pub enum Route {
     },
     RealmMembers {
         realm_id: String,
-    },
-    Circles {
-        realm_id: String,
-    },
-    CircleDetail {
-        realm_id: String,
-        circle_id: String,
     },
     RealmAdmin {
         realm_id: String,
@@ -194,6 +189,8 @@ impl std::fmt::Display for Route {
                 format!("/chat/{realm_id}", realm_id = encode_segment(realm_id)),
                 vec![("message", message.as_str())],
             ),
+            Self::PrivateChats => ("/direct".to_owned(), vec![]),
+            Self::NewPrivateChat => ("/direct/new".to_owned(), vec![]),
             Self::DirectConversation {
                 realm_id,
                 strand_id,
@@ -229,24 +226,6 @@ impl std::fmt::Display for Route {
                 format!(
                     "/realms/{realm_id}/members",
                     realm_id = encode_segment(realm_id)
-                ),
-                vec![],
-            ),
-            Self::Circles { realm_id } => (
-                format!(
-                    "/realms/{realm_id}/circles",
-                    realm_id = encode_segment(realm_id)
-                ),
-                vec![],
-            ),
-            Self::CircleDetail {
-                realm_id,
-                circle_id,
-            } => (
-                format!(
-                    "/realms/{realm_id}/circles/{circle_id}",
-                    realm_id = encode_segment(realm_id),
-                    circle_id = encode_segment(circle_id)
                 ),
                 vec![],
             ),
@@ -365,10 +344,6 @@ impl std::str::FromStr for Route {
                 task_id: decode_segment(task_id)?,
                 tab: query.get("tab").cloned().unwrap_or_default(),
             }),
-            ["realms", realm_id, "circles", circle_id] => Ok(Self::CircleDetail {
-                realm_id: decode_segment(realm_id)?,
-                circle_id: decode_segment(circle_id)?,
-            }),
             ["realms", realm_id, "settings", section] => Ok(Self::RealmAdminSection {
                 realm_id: decode_segment(realm_id)?,
                 section: decode_segment(section)?,
@@ -386,12 +361,11 @@ impl std::str::FromStr for Route {
             ["realms", realm_id, "members"] => Ok(Self::RealmMembers {
                 realm_id: decode_segment(realm_id)?,
             }),
-            ["realms", realm_id, "circles"] => Ok(Self::Circles {
-                realm_id: decode_segment(realm_id)?,
-            }),
             ["realms", realm_id, "settings"] => Ok(Self::RealmAdmin {
                 realm_id: decode_segment(realm_id)?,
             }),
+            ["direct"] => Ok(Self::PrivateChats),
+            ["direct", "new"] => Ok(Self::NewPrivateChat),
             ["direct", realm_id, strand_id] => Ok(Self::DirectConversation {
                 realm_id: decode_segment(realm_id)?,
                 strand_id: decode_segment(strand_id)?,
@@ -459,7 +433,10 @@ impl Route {
             // user's RealmSurface preference and renders the board
             // (design/route-view-ia.md §3.1, plan A). It shares the Kanban view.
             Route::Realm { .. } => AppView::Kanban,
-            Route::Chat { .. } | Route::DirectConversation { .. } => AppView::Chat,
+            Route::PrivateChats
+            | Route::NewPrivateChat
+            | Route::Chat { .. }
+            | Route::DirectConversation { .. } => AppView::Chat,
             Route::Contacts | Route::ContactsManage => AppView::Contacts,
             Route::Directory => AppView::Directory,
             Route::Setup | Route::SetupSection { .. } => AppView::Setup,
@@ -473,7 +450,6 @@ impl Route {
             | Route::Recovery
             | Route::Audit
             | Route::Developer => AppView::Settings,
-            Route::Circles { .. } | Route::CircleDetail { .. } => AppView::Circles,
             Route::RealmMembers { .. }
             | Route::RealmAdmin { .. }
             | Route::RealmAdminSection { .. } => AppView::RealmAdmin,
@@ -501,11 +477,7 @@ impl Route {
             | Route::KanbanBoard { realm_id, .. }
             | Route::KanbanBoardTask { realm_id, .. }
             | Route::KanbanTask { realm_id, .. }
-            | Route::RealmMembers { realm_id }
-            | Route::Circles { realm_id }
-            | Route::CircleDetail { realm_id, .. }
-            | Route::RealmAdmin { realm_id }
-            | Route::RealmAdminSection { realm_id, .. } => Some(realm_id.as_str()),
+            | Route::RealmMembers { realm_id } | Route::RealmAdmin { realm_id } | Route::RealmAdminSection { realm_id, .. } => Some(realm_id.as_str()),
             _ => None,
         }
     }
@@ -558,9 +530,6 @@ impl From<AppView> for Route {
             AppView::SettingsDevices => Route::SettingsDevices,
             AppView::SettingsRecovery => Route::SettingsRecovery,
             AppView::RealmAdmin => Route::RealmAdmin {
-                realm_id: String::new(),
-            },
-            AppView::Circles => Route::Circles {
                 realm_id: String::new(),
             },
             AppView::Kanban => Route::Kanban,
@@ -641,6 +610,8 @@ mod tests {
             Route::Realm {
                 realm_id: "ak:realm:Ah-TN8ceKyXkuwRp9fuEVw7pwATVHa-ISAbDJQgUm9hA".to_owned(),
             },
+            Route::PrivateChats,
+            Route::NewPrivateChat,
             Route::Directory,
             Route::Setup,
             Route::SetupSection {

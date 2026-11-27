@@ -243,17 +243,17 @@ impl LocalStateStore {
         realm_id: impl Into<String>,
         envelope: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     ) -> Result<(), String> {
-        self.save_mls_checkpoint_for_effective_scope(realm_id, None, envelope)
+        self.save_mls_checkpoint_for_effective_scope(realm_id,  envelope)
     }
 
     pub fn save_mls_checkpoint_for_effective_scope(
         &mut self,
         realm_id: impl Into<String>,
-        circle_id: Option<&str>,
+
         envelope: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     ) -> Result<(), String> {
         let realm_id = realm_id.into();
-        let scope = mls_realm_or_circle_scope(&realm_id, circle_id)?;
+        let scope = mls_realm_scope(&realm_id)?;
         self.save_mls_checkpoint_for_scope(&scope, envelope)
     }
 
@@ -375,15 +375,15 @@ impl LocalStateStore {
         &self,
         realm_id: &str,
     ) -> Option<garth::mls::checkpoint::MlsLocalCheckpointEnvelope> {
-        self.mls_checkpoint_for_effective_scope(realm_id, None)
+        self.mls_checkpoint_for_effective_scope(realm_id)
     }
 
     pub fn mls_checkpoint_for_effective_scope(
         &self,
         realm_id: &str,
-        circle_id: Option<&str>,
+
     ) -> Option<garth::mls::checkpoint::MlsLocalCheckpointEnvelope> {
-        let scope = mls_realm_or_circle_scope(realm_id, circle_id).ok()?;
+        let scope = mls_realm_scope(realm_id).ok()?;
         self.mls_checkpoint_for_scope(&scope)
     }
 
@@ -571,7 +571,7 @@ impl LocalStateStore {
     #[cfg(test)]
     pub(crate) fn drop_mls_checkpoint_for_test(&mut self, realm_id: &str) {
         self.absorb_mls_receive_overlay();
-        let Ok(scope) = mls_realm_or_circle_scope(realm_id, None) else {
+        let Ok(scope) = mls_realm_scope(realm_id) else {
             return;
         };
         let Ok(key) = mls_scope_checkpoint_key(&scope) else {
@@ -760,7 +760,7 @@ impl LocalStateStore {
     ) {
         self.advance_mls_receive_chain_for_effective_scope(
             realm_id,
-            None,
+
             envelope,
             payload_digest,
             plaintext,
@@ -771,12 +771,12 @@ impl LocalStateStore {
     pub fn advance_mls_receive_chain_for_effective_scope(
         &self,
         realm_id: &str,
-        circle_id: Option<&str>,
+
         envelope: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
         payload_digest: &str,
         plaintext: &[u8],
     ) {
-        let Ok(scope) = mls_realm_or_circle_scope(realm_id, circle_id) else {
+        let Ok(scope) = mls_realm_scope(realm_id) else {
             return;
         };
         self.advance_mls_receive_chain_for_scope(&scope, envelope, payload_digest, plaintext);
@@ -837,15 +837,15 @@ impl LocalStateStore {
 
     /// True once a `ak.mls.genesis` event has been submitted for this Realm.
     pub fn mls_genesis_emitted_for(&self, realm_id: &str) -> bool {
-        self.mls_genesis_emitted_for_effective_scope(realm_id, None)
+        self.mls_genesis_emitted_for_effective_scope(realm_id)
     }
 
     pub fn mls_genesis_emitted_for_effective_scope(
         &self,
         realm_id: &str,
-        circle_id: Option<&str>,
+
     ) -> bool {
-        let Ok(scope) = mls_realm_or_circle_scope(realm_id, circle_id) else {
+        let Ok(scope) = mls_realm_scope(realm_id) else {
             return false;
         };
         self.mls_genesis_emitted_for_scope(&scope)
@@ -870,17 +870,17 @@ impl LocalStateStore {
     /// Record that a `ak.mls.genesis` event has been submitted for this
     /// Realm so it is never re-emitted (idempotent).
     pub fn mark_mls_genesis_emitted(&mut self, realm_id: impl Into<String>) -> Result<(), String> {
-        self.mark_mls_genesis_emitted_for_effective_scope(realm_id, None)
+        self.mark_mls_genesis_emitted_for_effective_scope(realm_id)
     }
 
     pub fn mark_mls_genesis_emitted_for_effective_scope(
         &mut self,
         realm_id: impl Into<String>,
-        circle_id: Option<&str>,
+
     ) -> Result<(), String> {
         self.ensure_cached_loaded();
         let realm_id = realm_id.into();
-        let key = mls_effective_scope_checkpoint_key(&realm_id, circle_id)?;
+        let key = mls_effective_scope_checkpoint_key(&realm_id)?;
         if self.cached.mls_genesis_emitted.insert(key).is_none() {
             let _ = self.flush();
         }
@@ -890,11 +890,11 @@ impl LocalStateStore {
     pub(crate) fn mark_mls_genesis_emitted_for_effective_scope_with_event(
         &mut self,
         realm_id: impl Into<String>,
-        circle_id: Option<&str>,
+
         genesis_event_id: &arkret_sdk::EventId,
     ) -> Result<LocalStatePersistBarrier, String> {
         let realm_id = realm_id.into();
-        let scope = mls_realm_or_circle_scope(&realm_id, circle_id)?;
+        let scope = mls_realm_scope(&realm_id)?;
         self.mark_mls_genesis_emitted_for_scope_with_event(&scope, genesis_event_id)
     }
 
@@ -984,7 +984,7 @@ impl LocalStateStore {
         realm_id: &str,
     ) -> Result<(), String> {
         self.ensure_cached_loaded();
-        let scope = mls_realm_or_circle_scope(realm_id, None)?;
+        let scope = mls_realm_scope(realm_id)?;
         let key = mls_scope_checkpoint_key(&scope)?;
         let snapshot = self
             .cached
@@ -1020,11 +1020,11 @@ impl LocalStateStore {
     pub fn mls_group_state_ref_for_effective_scope(
         &self,
         realm_id: &str,
-        circle_id: Option<&str>,
+
         group_id: &str,
         epoch: u64,
     ) -> Result<arkret_sdk::EventId, String> {
-        let scope = mls_realm_or_circle_scope(realm_id, circle_id)?;
+        let scope = mls_realm_scope(realm_id)?;
         self.mls_group_state_ref_for_scope(&scope, group_id, epoch)
     }
 
@@ -1149,31 +1149,9 @@ impl LocalStateStore {
         let mut scopes = vec![arkret_sdk::ScopeRef::Realm {
             realm_id: realm.clone(),
         }];
-        let mut circles = std::collections::BTreeSet::new();
-        for entry in self.realm_current_state_entries(realm.as_str()) {
-            if let arkret_wire::CurrentState::Value {
-                selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref },
-                ..
-            } = &entry
-                && let arkret_sdk::ScopeRef::Circle {
-                    realm_id: scope_realm,
-                    circle_id,
-                } = scope_ref
-                && scope_realm == &realm
-            {
-                circles.insert(circle_id.clone());
-            }
-        }
-        // A Circle scope keys its local checkpoint by the bare Circle id
-        // (`canonical_effective_scope_key_bytes`), so a Circle group installed
-        // on this device is visible even before its current entry arrives.
         let mut sidecars = std::collections::BTreeSet::new();
         for (key, checkpoint) in &self.load().mls_local_checkpoints {
             if checkpoint.realm_id != realm.as_str() {
-                continue;
-            }
-            if let Ok(circle_id) = arkret_sdk::CircleId::new(key.clone()) {
-                circles.insert(circle_id);
                 continue;
             }
             let mut parts = key.split('\u{1f}');
@@ -1200,14 +1178,6 @@ impl LocalStateStore {
             }
         }
         scopes.extend(
-            circles
-                .into_iter()
-                .map(|circle_id| arkret_sdk::ScopeRef::Circle {
-                    realm_id: realm.clone(),
-                    circle_id,
-                }),
-        );
-        scopes.extend(
             sidecars
                 .into_iter()
                 .map(|sidecar_id| arkret_sdk::ScopeRef::Sidecar {
@@ -1224,13 +1194,13 @@ impl LocalStateStore {
     pub fn record_mls_group_state_ref_for_effective_scope(
         &mut self,
         realm_id: impl Into<String>,
-        circle_id: Option<&str>,
+
         group_id: &str,
         epoch: u64,
         event_id: arkret_sdk::EventId,
     ) -> Result<(), String> {
         let realm_id = realm_id.into();
-        let scope = mls_realm_or_circle_scope(&realm_id, circle_id)?;
+        let scope = mls_realm_scope(&realm_id)?;
         self.record_mls_group_state_ref_for_scope(&scope, group_id, epoch, event_id)
     }
 
@@ -1431,26 +1401,14 @@ impl LocalStateStore {
     pub fn mls_coverage_stale_reason(
         &self,
         realm_id: &str,
-        circle_id: Option<&str>,
+
     ) -> Option<String> {
-        let key = mls_effective_scope_checkpoint_key(realm_id, circle_id).ok()?;
+        let key = mls_effective_scope_checkpoint_key(realm_id).ok()?;
         self.load()
             .mls_coverage_stale
             .get(&key)
+            .filter(|stale| stale.realm_id == realm_id && stale.legacy_child.is_none())
             .map(|stale| stale.reason.clone())
-    }
-
-    /// Every effective scope of `realm_id` a receiver has paused, as the
-    /// `circle_id` argument the repair pass takes (`None` = Realm-default
-    /// group). Circle groups are independent MLS groups with their own
-    /// accumulator, so each one needs its own commit.
-    pub fn stale_mls_coverage_scopes(&self, realm_id: &str) -> Vec<Option<String>> {
-        self.load()
-            .mls_coverage_stale
-            .values()
-            .filter(|stale| stale.realm_id == realm_id)
-            .map(|stale| stale.circle_id.clone())
-            .collect()
     }
 
     /// Record a receiver's coverage refusal. Last-writer-wins so the stored
@@ -1458,20 +1416,18 @@ impl LocalStateStore {
     pub fn record_mls_coverage_stale(
         &mut self,
         realm_id: impl Into<String>,
-        circle_id: Option<&str>,
+
         reason: &str,
     ) -> Result<(), String> {
         self.ensure_cached_loaded();
         let realm_id = realm_id.into();
-        let circle_id = circle_id
-            .map(str::trim)
-            .filter(|circle_id| !circle_id.is_empty());
-        let key = mls_effective_scope_checkpoint_key(&realm_id, circle_id)?;
+
+        let key = mls_effective_scope_checkpoint_key(&realm_id)?;
         self.cached.mls_coverage_stale.insert(
             key,
             crate::state::types::MlsCoverageStale {
                 realm_id,
-                circle_id: circle_id.map(str::to_owned),
+                legacy_child: None,
                 reason: reason.to_owned(),
             },
         );
@@ -1491,10 +1447,10 @@ impl LocalStateStore {
     pub fn clear_mls_coverage_stale(
         &mut self,
         realm_id: &str,
-        circle_id: Option<&str>,
+
     ) -> Result<(), String> {
         self.ensure_cached_loaded();
-        let key = mls_effective_scope_checkpoint_key(realm_id, circle_id)?;
+        let key = mls_effective_scope_checkpoint_key(realm_id)?;
         if self.cached.mls_coverage_stale.remove(&key).is_some() {
             let _ = self.flush();
         }
@@ -1502,12 +1458,8 @@ impl LocalStateStore {
     }
 }
 
-pub(crate) fn mls_effective_scope_checkpoint_key(
-    realm_id: &str,
-    circle_id: Option<&str>,
-) -> Result<String, String> {
-    mls_realm_or_circle_scope(realm_id, circle_id)
-        .and_then(|scope| mls_scope_checkpoint_key(&scope))
+pub(crate) fn mls_effective_scope_checkpoint_key(realm_id: &str) -> Result<String, String> {
+    mls_realm_scope(realm_id).and_then(|scope| mls_scope_checkpoint_key(&scope))
 }
 
 pub(crate) use garth::mls::checkpoint_port::{
@@ -1515,20 +1467,13 @@ pub(crate) use garth::mls::checkpoint_port::{
     scope_checkpoint_key_for_group as mls_scope_checkpoint_key_for_group,
 };
 
-fn mls_realm_or_circle_scope(
+fn mls_realm_scope(
     realm_id: &str,
-    circle_id: Option<&str>,
+
 ) -> Result<arkret_sdk::ScopeRef, String> {
     let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|error| format!("invalid MLS Realm id: {error}"))?;
-    match circle_id.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(circle_id) => Ok(arkret_sdk::ScopeRef::Circle {
-            realm_id,
-            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
-                .map_err(|error| format!("invalid MLS Circle id: {error}"))?,
-        }),
-        None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
-    }
+    Ok(arkret_sdk::ScopeRef::Realm { realm_id })
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

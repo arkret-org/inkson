@@ -426,9 +426,9 @@ pub(super) async fn emit_signal(
     {
         return Err("call signal identity does not match the active account".to_owned());
     }
-    // Call signalling is Realm-scoped, so the effective scope has no Circle.
+    // Call signalling uses the key material of the addressed Realm.
     let material = state_store
-        .read(|store| crate::signal::key_material_for_scope(store, realm_id, None))
+        .read(|store| crate::signal::key_material_for_scope(store, realm_id))
         .map_err(|error| error.to_string())?;
     let scope_ref = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm_id.trim().to_owned())

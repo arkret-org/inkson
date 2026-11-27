@@ -117,43 +117,7 @@ fn operation_builder_generates_valid_envelope() {
     event.verify_identity().unwrap();
 }
 
-#[test]
-fn circle_create_builders_preserve_the_object_clock_through_event_authoring() {
-    let realm = "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f";
-    let actor = "did:web:alice";
-    let admin = ak_ops::circle_create(
-        realm,
-        actor,
-        ak_ops::CircleCreateOptions {
-            title: "Admin Circle",
-            summary: None,
-            display: ak_ops::circle_display_from_title("Admin Circle"),
-            directory_visibility: arkret_sdk::CircleDirectoryVisibility::Members,
-            join_rule: arkret_sdk::CircleJoinRule::Public,
-            history_access: arkret_sdk::HistoryAccess::SinceJoin,
-        },
-    )
-    .unwrap();
-    let discussion = ak_ops::discussion_circle_create(realm, actor, "Discussion").unwrap();
-    for builder in [admin, discussion] {
-        let operation = builder.build_sdk_event("test").unwrap();
-        assert_registered_payload_valid(&operation);
-        // Use the real frozen clock, without the test helper's time override.
-        let event = operation
-            .intent()
-            .clone()
-            .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
-            .unwrap();
-        let object: arkret_sdk::CircleCreatePayload = serde_json::from_value(
-            serde_json::Value::Object(event.payload.clone().into_iter().collect()),
-        )
-        .unwrap();
-        assert_eq!(object.object.created_at, event.created_at);
-        assert_eq!(object.object.created_by, event.actor_id);
-        assert_eq!(object.object.realm_id, event.realm_id);
-        assert!(object.object.id.is_none());
-    }
-}
+
 
 #[test]
 fn operation_builder_delegates_event_time_normalization_to_the_sdk() {
@@ -431,7 +395,6 @@ fn discussion_strand_create_emits_discussion_track() {
         "Ops",
         "general",
         None,
-        None,
         false,
     )
     .unwrap()
@@ -477,29 +440,7 @@ fn discussion_strand_create_emits_discussion_track() {
     assert!(op.payload()["object"].get("kind").is_none());
 }
 
-#[test]
-fn discussion_strand_create_signs_the_selected_circle_scope() {
-    let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
-    let circle_id = "ak:circle:ARXbvtRVuDBYaF4WF9z-UaI6zlszC0W60gTZIVJDcvFR";
-    let op = ak_ops::discussion_strand_create(
-        realm_id,
-        "did:web:alice.example",
-        "Private discussion",
-        "general",
-        None,
-        Some(circle_id),
-        false,
-    )
-    .unwrap()
-    .build("node");
-    let signed_event = serde_json::to_value(authored(&op).event()).unwrap();
-    assert_eq!(op.payload()["object"]["scope_circle_id"], circle_id);
-    assert_eq!(
-        signed_event["scope_ref"],
-        json!({ "kind": "circle", "realm_id": realm_id, "circle_id": circle_id })
-    );
-    assert_registered_payload_valid(&op);
-}
+
 
 #[test]
 fn strand_tracks_update_primary_uses_is_primary_patch_key() {

@@ -40,7 +40,7 @@ pub(crate) fn warn_mls_decrypt_once(
 /// Test-only entry point: production decryption always carries a verified
 /// sender domain and enters via
 /// [`decrypt_application_payload_for_scope_from_verified_sender`]; these
-/// realm/circle-string adapters exist for the receive-chain test matrix.
+/// realm-string adapters exist for the receive-chain test matrix.
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn decrypt_application_payload_for_effective_scope_internal(
@@ -50,17 +50,11 @@ pub(crate) fn decrypt_application_payload_for_effective_scope_internal(
     authority: &AccountId,
     device_id: &DeviceId,
     payload: &arkret_sdk::EncryptedPayload,
-    circle_id: Option<&str>,
+
     verified_sender_domain: Option<&[u8]>,
 ) -> Option<Vec<u8>> {
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?;
-    let effective_scope = match circle_id.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(circle_id) => arkret_sdk::ScopeRef::Circle {
-            realm_id: realm,
-            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).ok()?,
-        },
-        None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
-    };
+    let effective_scope = arkret_sdk::ScopeRef::Realm { realm_id: realm };
     decrypt_application_payload_for_scope_internal(
         state_store,
         secure_store,
@@ -382,10 +376,7 @@ fn authenticate_received_identity_link(
     let accepted_ref = state_store
         .mls_group_state_ref_for_effective_scope(
             identity_link.realm_id.as_str(),
-            match effective_scope {
-                arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str()),
-                _ => None,
-            },
+
             &payload.group_id,
             payload.epoch,
         )
@@ -455,7 +446,6 @@ fn decrypt_application_payload_for_scope_internal(
         || !matches!(
             effective_scope,
             arkret_sdk::ScopeRef::Realm { .. }
-                | arkret_sdk::ScopeRef::Circle { .. }
                 | arkret_sdk::ScopeRef::Sidecar { .. }
         )
     {
@@ -736,11 +726,10 @@ pub(crate) fn mls_group_member_actor_ids_for_effective_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    circle_id: Option<&str>,
     authority: &AccountId,
     device_id: &DeviceId,
 ) -> Option<Vec<arkret_sdk::ActorId>> {
-    let snapshot = state_store.mls_checkpoint_for_effective_scope(realm_id, circle_id)?;
+    let snapshot = state_store.mls_checkpoint_for_effective_scope(realm_id)?;
     let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
         .inspect_err(|_error| {
             tracing::warn!("MLS reconciliation checkpoint key is unavailable");
@@ -765,11 +754,10 @@ pub(crate) fn mls_group_member_endpoints_for_effective_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    circle_id: Option<&str>,
     authority: &AccountId,
     device_id: &DeviceId,
 ) -> Option<Vec<arkret_sdk::MlsEndpointIdentity>> {
-    let snapshot = state_store.mls_checkpoint_for_effective_scope(realm_id, circle_id)?;
+    let snapshot = state_store.mls_checkpoint_for_effective_scope(realm_id)?;
     let secret = load_device_checkpoint_secret(secure_store, authority, device_id).ok()?;
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
     Some(
@@ -793,7 +781,7 @@ pub(crate) fn encrypt_values_with_device_snapshot(
     plaintext_values: &[Vec<u8>],
 ) -> Result<(Vec<arkret_sdk::DidCoreId>, Vec<serde_json::Value>), MlsRuntimeError> {
     super::reject_retired_minimal_metadata_realm(state_store, realm_id)?;
-    let effective_scope = runtime_effective_scope(realm_id, None, None)?;
+    let effective_scope = runtime_effective_scope(realm_id, None)?;
     let snapshot = state_store
         .mls_checkpoint_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
@@ -825,7 +813,6 @@ pub(crate) fn encrypt_values_with_device_snapshot(
         event_kind_str::STRAND_UPDATE,
         group_state_ref,
         None,
-        None,
         &materials,
     )
 }
@@ -841,7 +828,6 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     plaintext_values: &[Vec<u8>],
     event_kind: &str,
     group_state_ref: arkret_sdk::EventId,
-    circle_id: Option<&str>,
     sidecar_id: Option<&arkret_sdk::SidecarId>,
     materials: &[arkret_models_crypto::EventContentMaterial],
 ) -> Result<(Vec<arkret_sdk::DidCoreId>, Vec<serde_json::Value>), MlsRuntimeError> {
@@ -849,10 +835,8 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     if plaintext_values.is_empty() || plaintext_values.len() != materials.len() {
         return Err(MlsRuntimeError::EmptyPlaintext);
     }
-    let circle = circle_id
-        .map(str::trim)
-        .filter(|circle_id| !circle_id.is_empty());
-    let effective_scope = runtime_effective_scope(realm_id, circle, sidecar_id)?;
+
+    let effective_scope = runtime_effective_scope(realm_id, sidecar_id)?;
     let snapshot = state_store
         .mls_checkpoint_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
@@ -865,7 +849,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
     if sidecar_id.is_none() {
-        ensure_realm_membership_is_covered_for_send(state_store, realm_id, circle, &group)?;
+        ensure_realm_membership_is_covered_for_send(state_store, realm_id, &group)?;
     }
     // A due epoch advance pauses the send: the commit has to be authored,
     // accepted and installed before content may ride a new epoch.
@@ -998,7 +982,6 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     metadata_content_type: Option<&str>,
     metadata_plaintext: Option<&[u8]>,
     expected_sender_domain: Option<&str>,
-    circle_id: Option<&str>,
     sidecar_id: Option<&arkret_sdk::SidecarId>,
     content_material: arkret_models_crypto::EventContentMaterial,
     metadata_material: Option<arkret_models_crypto::EventContentMaterial>,
@@ -1011,15 +994,12 @@ pub(crate) fn encrypt_message_with_device_snapshot(
             "metadata content type and plaintext must be supplied together".to_owned(),
         ));
     }
-    let circle = circle_id
-        .map(str::trim)
-        .filter(|circle_id| !circle_id.is_empty());
-    let effective_scope = runtime_effective_scope(realm_id, circle, sidecar_id)?;
+
+    let effective_scope = runtime_effective_scope(realm_id, sidecar_id)?;
     let snapshot = state_store
         .mls_checkpoint_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    if circle.is_none()
-        && sidecar_id.is_none()
+    if sidecar_id.is_none()
         && state_store.realm_collaboration_role(realm_id)
             == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
     {
@@ -1050,7 +1030,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         }
     }
     if sidecar_id.is_none() {
-        ensure_realm_membership_is_covered_for_send(state_store, realm_id, circle, &group)?;
+        ensure_realm_membership_is_covered_for_send(state_store, realm_id, &group)?;
     }
     if should_force_epoch_advance(
         snapshot.epoch_started_at,
@@ -1126,14 +1106,8 @@ pub(crate) fn encrypt_message_with_device_snapshot(
 fn ensure_realm_membership_is_covered_for_send(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
-    circle_id: Option<&str>,
     group: &arkret_sdk::ArkretMlsGroup,
 ) -> Result<(), MlsRuntimeError> {
-    // Circle membership has its own projection/frontier and must not be
-    // compared to the Realm-default roster.
-    if circle_id.is_some() {
-        return Ok(());
-    }
     let Some(joined) = state_store
         .complete_joined_member_hint_for_realm(realm_id)
         .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?
@@ -1172,7 +1146,7 @@ pub(crate) fn realm_mls_roster_matches_complete_membership_hint(
         Ok(joined) => joined?,
         Err(_) => return Some(false),
     };
-    let snapshot = state_store.mls_checkpoint_for_effective_scope(realm_id, None)?;
+    let snapshot = state_store.mls_checkpoint_for_effective_scope(realm_id)?;
     let secret = load_device_checkpoint_secret(secure_store, authority, device_id).ok()?;
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
     let members = group
@@ -1249,7 +1223,6 @@ fn realm_membership_matches_sending_group(
 
 fn runtime_effective_scope(
     realm_id: &str,
-    circle_id: Option<&str>,
     sidecar_id: Option<&arkret_sdk::SidecarId>,
 ) -> Result<arkret_sdk::ScopeRef, MlsRuntimeError> {
     let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
@@ -1260,15 +1233,7 @@ fn runtime_effective_scope(
             sidecar_id: sidecar_id.clone(),
         });
     }
-    match circle_id.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(circle_id) => Ok(arkret_sdk::ScopeRef::Circle {
-            realm_id,
-            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).map_err(|error| {
-                MlsRuntimeError::Serialize(format!("invalid MLS Circle id: {error}"))
-            })?,
-        }),
-        None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
-    }
+    Ok(arkret_sdk::ScopeRef::Realm { realm_id })
 }
 
 #[cfg(test)]

@@ -441,12 +441,8 @@ fn recording_current_winner_and_revision_are_fenced_between_real_snapshot_reads(
 }
 
 #[test]
-fn circle_recording_uses_circle_winner_without_falling_back_to_realm_mls() {
-    let circle = arkret_sdk::CircleId::from_event_id(&event_id(91));
-    let stream = arkret_sdk::CommitStreamRef::Circle {
-        realm_id: realm(),
-        circle_id: circle,
-    };
+fn recording_rejects_mls_current_from_another_realm() {
+    let stream = arkret_sdk::CommitStreamRef::Realm { realm_id: RealmId::from_event_id(&event_id(91)) };
     let mut rows = current();
     let realm_mls = rows[3].clone();
     for index in [0, 1, 3] {
@@ -466,18 +462,7 @@ fn circle_recording_uses_circle_winner_without_falling_back_to_realm_mls() {
     let CurrentState::Value { value, .. } = &mut rows[3];
     value["effective_scope"] = serde_json::to_value(stream.scope_ref()).unwrap();
     rows.push(realm_mls);
-    let selected =
-        call_capture_source(&realm(), &call(), &rows, RecordingCaptureKind::Recording).unwrap();
-    assert_eq!(selected.scope, stream.scope_ref());
-    assert_eq!(
-        selected
-            .key_ref
-            .unwrap()
-            .group_state_ref
-            .event_id()
-            .unwrap(),
-        event_id(12)
-    );
+    assert!(call_capture_source(&realm(), &call(), &rows, RecordingCaptureKind::Recording).is_err());
 }
 
 #[test]

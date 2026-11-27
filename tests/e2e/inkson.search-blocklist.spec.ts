@@ -2,7 +2,7 @@ import { inputByClass } from "./uiControl";
 import { assertSearchSource, searchReference } from "./searchSource";
 import { byClass } from "./strandsHarness";
 import { expect, test, type Page } from "@playwright/test";
-import { CURRENT_ACCOUNT_ACTOR_ID, dismissBlockingRecoveryModal, openKanban, openSettings, registerStrandsBeforeEach } from "./strandsHarness";
+import { CURRENT_ACCOUNT_ID, dismissBlockingRecoveryModal, openKanban, openSettings, registerStrandsBeforeEach } from "./strandsHarness";
 
 registerStrandsBeforeEach({ demoNotification: true });
 
@@ -34,12 +34,16 @@ test("global search applies personal message blocks and restores retained histor
   await byClass(page, "settings-nav-item-blocklist").click();
   const settings = byClass(page, "settings-content-column");
   await expect(settings.getByText("Personal blocklist", { exact: true })).toBeVisible();
-  await inputByClass(settings, "block-target-input").fill(JSON.stringify(CURRENT_ACCOUNT_ACTOR_ID));
+  await expect(settings).not.toContainText('"kind":"account"');
+  await inputByClass(settings, "block-target-input").fill(CURRENT_ACCOUNT_ID.principal_id);
+  await expect(byClass(settings, "block-user-button")).toBeDisabled();
+  await inputByClass(settings, "block-target-location").fill(CURRENT_ACCOUNT_ID.station_id);
   for (const surface of ["mentions", "dm", "calls", "contacts", "applets", "presence", "notifications", "directory"]) {
     await byClass(settings, `block-surface-${surface}`).getByRole("checkbox").click();
   }
   await byClass(settings, "block-user-button").click();
-  await expect(byClass(settings, "blocked-user-row")).toHaveCount(1);
+  await expect(byClass(settings, "blocked-user-row")).toContainText(CURRENT_ACCOUNT_ID.station_id);
+  await expect(settings).not.toContainText('"principal_id"');
   panel = await search();
   await expect(byClass(panel, "global-search-results-no-results")).toBeVisible();
   await expect(byClass(panel, "global-search-result-item")).toHaveCount(0);

@@ -516,7 +516,7 @@ mod tests {
                 .unwrap(),
             product_authority: None,
             authority_commit_id: envelope.authority_commit_id.clone(),
-            parent_realm_authority_commit_id: envelope.parent_realm_authority_commit_id.clone(),
+
             domain: arkret_sdk::SignalSequenceDomain::from_verified_envelope(envelope, None)?,
             payload: garth::open_signal_plaintext(&bytes)?,
             expires_at: envelope.expires_at,

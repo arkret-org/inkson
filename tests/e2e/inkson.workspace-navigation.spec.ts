@@ -12,6 +12,26 @@ async function expectInstantList(list: Locator) {
     .map(element => element.className))).toEqual([]);
 }
 
+test("Home logo reflects the server connection across network changes", async ({ page, context }) => {
+  await gotoAndDismissRecovery(page, "/realms/manage");
+  const brand = byClass(page, "rail-brand");
+  const badge = byClass(brand, "rail-connection");
+  await expect(badge).toHaveClass(/is-online/);
+  await brand.hover();
+  await expect(byClass(brand, "rail-brand-tooltip")).toContainText("Connected to server");
+  await context.setOffline(true);
+  try {
+    await expect(badge).toHaveClass(/is-offline/);
+    await expect(brand).toHaveAccessibleName(/Offline/);
+  } finally {
+    await context.setOffline(false);
+  }
+  await expect(badge).toHaveClass(/is-online/, { timeout: 90000 });
+  await expect(brand).toHaveAccessibleName(/Connected to server/);
+  await brand.click();
+  await expect(byClass(page, "dashboard-panel")).toBeVisible();
+});
+
 for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }, { width: 320, height: 568 }, { width: 844, height: 390 }]) {
   test(`icon rail and list/detail navigation at ${viewport.width}px`, async ({ page }) => {
     const frameErrors: string[] = [];
@@ -24,18 +44,16 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
     await gotoAndDismissRecovery(page, "/settings/theme");
     const rail = byClass(page, "navigation-rail");
     await expect(rail).toBeVisible();
-    await expect(rail.locator("a.rail-link")).toHaveCount(6);
+    await expect(rail.locator("a.rail-link")).toHaveCount(7);
     await expect(byClass(page, "server-switch-button")).toHaveCount(0);
     await expect(byClass(page, "sidebar-collapse-toggle")).toHaveCount(0);
     await expect(page.locator(".topbar .rail-account")).toHaveCount(0);
     const logo = byClass(page, "rail-logo");
+    await expect(logo).toBeVisible();
+    await expect.poll(() => logo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
     if (mobile) {
-      await expect(rail.locator("a.rail-link:visible")).toHaveCount(4);
-      await expect(logo).toBeHidden();
+      await expect(rail.locator("a.rail-link:visible")).toHaveCount(6);
       await expect(byClass(page, "rail-settings")).toBeHidden();
-    } else {
-      await expect(logo).toBeVisible();
-      await expect.poll(() => logo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
     }
     await page.screenshot({ animations: "disabled", path: test.info().outputPath(`settings-${viewport.width}.png`) });
     const settings = byClass(page, "rail-settings");
@@ -51,7 +69,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       expect(workspaceBox.width).toBe(viewport.width);
       expect(workspaceBox.y + workspaceBox.height).toBeLessThanOrEqual(railBox.y);
       let previousRight = 0;
-      for (const target of [byClass(page, "rail-realms"), byClass(page, "rail-contacts"), byClass(page, "rail-agents"), avatar]) {
+      for (const target of [byClass(page, "rail-brand"), byClass(page, "rail-realms"), byClass(page, "rail-private-chats"), byClass(page, "rail-contacts"), byClass(page, "rail-agents"), avatar]) {
         const box = (await target.boundingBox())!;
         expect(box.x).toBeGreaterThanOrEqual(previousRight);
         expect(box.y).toBe(avatarBox.y);
@@ -184,7 +202,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
       await expect(logo).toBeVisible();
       await expect(settings).toBeVisible();
       await page.setViewportSize(viewport);
-      await expect(logo).toBeHidden();
+      await expect(logo).toBeVisible();
       await expect(settings).toBeHidden();
       await gotoAndDismissRecovery(page, "/settings");
       await expectInstantList(activeList);

@@ -82,13 +82,11 @@ pub(crate) fn read_receipt_policy_from_current(
     anyhow::ensure!(
         matches!(
             scope,
-            arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+            arkret_sdk::ScopeRef::Realm { .. }
         ),
         "unsupported receipt scope"
     );
-    let selector = CurrentSelector::ScopeReadReceiptPolicy {
-        scope_ref: scope.clone(),
-    };
+    let selector = CurrentSelector::ScopeReadReceiptPolicy;
     let mut matching = entries
         .iter()
         .filter(|entry| selector_of(entry) == &selector);
@@ -109,6 +107,7 @@ pub(crate) fn read_receipt_policy_from_current(
             revision: revision.clone(),
             value: serde_json::from_value(value.clone())?,
         };
+        anyhow::ensure!(&current.source_stream_ref.scope_ref() == scope, "receipt policy belongs to a different Realm");
         current.validate()?;
         current.value.resolved()
     } else {
@@ -403,62 +402,8 @@ impl RealmCurrentView {
         if self.realm_id != scope.realm_id().as_str() || !self.complete_cut {
             return Ok(None);
         }
-        let Some(parent) = self.complete_joined_members()? else {
-            return Ok(None);
-        };
-        let arkret_sdk::ScopeRef::Circle { circle_id, .. } = scope else {
-            return Ok(Some(parent));
-        };
-        let mut members = std::collections::BTreeSet::new();
-        for entry in &self.entries {
-            if let CurrentState::Value {
-                selector:
-                    CurrentSelector::CircleMemberState {
-                        circle_id: found,
-                        member_actor_id: actor_id,
-                    },
-                source_stream_ref,
-                value,
-                ..
-            } = entry
-            {
-                anyhow::ensure!(
-                    source_stream_ref.scope_ref() == *scope || found != circle_id,
-                    "Circle membership source differs from scope"
-                );
-                if found != circle_id {
-                    continue;
-                }
-                let state: arkret_wire::CircleMemberStateValue =
-                    serde_json::from_value(value.clone())?;
-                if !parent.contains(actor_id) {
-                    continue;
-                }
-                let selector = CurrentSelector::MemberState {
-                    actor_id: actor_id.clone(),
-                };
-                let Some(parent_row) = entry_for(&self.entries, &selector) else {
-                    continue;
-                };
-                let Some(revision) =
-                    parent_row.parent_membership_revision(scope.realm_id(), actor_id)
-                else {
-                    continue;
-                };
-                let CurrentState::Value {
-                    source_stream_ref, ..
-                } = parent_row;
-                if state.is_effective_under_parent(
-                    scope.realm_id(),
-                    source_stream_ref,
-                    &revision,
-                    arkret_sdk::MembershipState::Join,
-                ) {
-                    members.insert(actor_id.clone());
-                }
-            }
-        }
-        Ok(Some(members))
+        if !matches!(scope, arkret_sdk::ScopeRef::Realm { .. }) { return Ok(None); }
+        self.complete_joined_members()
     }
 }
 

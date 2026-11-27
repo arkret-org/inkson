@@ -53,38 +53,7 @@ fn unselected_frame(scope: &Scope, app: Rc<InksonContext>) -> View {
             )],
         )
     });
-    let create_app = app.clone();
-    let create_panel =
-        crate::presentation::widgets::reactive_distinct(popover, move |scope, open| {
-            if open != BoardToolbarPopover::CreateBoard {
-                return empty();
-            }
-            let unavailable = create_app.clone();
-            stack(
-                "board-popover-panel board-create-popover",
-                vec![
-                    input(
-                        scope,
-                        create_app.clone(),
-                        "new-board-title-input",
-                        "kanban.ui.board_title",
-                        title,
-                        true,
-                    ),
-                    action(
-                        scope,
-                        create_app.clone(),
-                        "create-board-space-button",
-                        "kanban.ui.create_board",
-                        "primary",
-                        false,
-                        move || {
-                            status.revise(|value| *value = unavailable.tr("kanban.ui.select_board"))
-                        },
-                    ),
-                ],
-            )
-        });
+    let create_panel = super::surface::create_dialog(app.clone(), popover, title, false, || {});
     let header = stack(
         "event board-header board-toolbar",
         vec![line(
@@ -97,38 +66,16 @@ fn unselected_frame(scope: &Scope, app: Rc<InksonContext>) -> View {
                             "board-select-label",
                             app.translated(scope, "kanban.board_header"),
                         ),
-                        super::surface::toolbar_popover(
+                        super::surface::board_selector(
                             scope,
                             popover,
-                            BoardToolbarPopover::SelectBoard,
                             app.translated(scope, "kanban.ui.switch_board").into(),
                             switch,
                             options,
                         ),
                     ],
                 ),
-                line(
-                    "actions board-toolbar-actions",
-                    vec![
-                        action(
-                            scope,
-                            app.clone(),
-                            "archive-board-button",
-                            "kanban.archive_board_action",
-                            "secondary btn board-archive-board",
-                            false,
-                            move || status.revise(|value| value.clear()),
-                        ),
-                        super::surface::toolbar_popover(
-                            scope,
-                            popover,
-                            BoardToolbarPopover::CreateBoard,
-                            app.translated(scope, "kanban.ui.new_board").into(),
-                            plain(app.translated(scope, "kanban.ui.new_board")),
-                            create_panel,
-                        ),
-                    ],
-                ),
+                super::surface::board_options(scope, &app, popover, false, || {}),
             ],
         )],
     );
@@ -150,7 +97,12 @@ fn unselected_frame(scope: &Scope, app: Rc<InksonContext>) -> View {
     );
     stack(
         "timeline kanban-panel kanban-unselected-realm",
-        vec![header, paragraph("muted board-status", status), grid],
+        vec![
+            header,
+            create_panel,
+            paragraph("muted board-status", status),
+            grid,
+        ],
     )
 }
 
@@ -190,7 +142,7 @@ mod tests {
                 .view()
                 .classes
                 .iter()
-                .any(|class| class == "sapid-popover-trigger")
+                .any(|class| class == "sapid-popover-trigger" || class == "sapid-menu-trigger")
             {
                 return id;
             }
@@ -258,12 +210,18 @@ mod tests {
         assert!(classes(&app, "board-column").is_empty());
         assert!(classes(&app, "kanban-card").is_empty());
         assert!(context.selected_realm_id.get_untracked().is_empty());
+        app.dispatch(
+            toolbar_trigger(&app, "board-toolbar-options"),
+            Event::Activate,
+        )
+        .unwrap();
+        app.flush().unwrap();
         let archive = classes(&app, "archive-board-button")[0];
         assert!(
             matches!(app.tree().node(archive).unwrap().descriptor.view().props, Props::Button(value) if !value.enabled)
         );
         app.dispatch(archive, Event::Activate).unwrap();
-        app.dispatch(toolbar_trigger(&app, "board-popover-host"), Event::Activate)
+        app.dispatch(classes(&app, "board-new-item")[0], Event::Activate)
             .unwrap();
         app.flush().unwrap();
         let field = classes(&app, "new-board-title-input")[0];
@@ -306,7 +264,7 @@ mod tests {
                 .read(|store| store.load().raw_operations.is_empty())
         );
         assert!(context.selected_realm_id.get_untracked().is_empty());
-        app.dispatch(toolbar_trigger(&app, "board-popover-host"), Event::Activate)
+        app.dispatch(classes(&app, "sapid-layer-close")[0], Event::Activate)
             .unwrap();
         app.dispatch(
             toolbar_trigger(&app, "board-select-menu-host"),

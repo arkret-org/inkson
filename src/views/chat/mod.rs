@@ -5,7 +5,6 @@ use arkret_wire::event_kind_str;
 use glory::prelude::*;
 use serde_json::{Value, json};
 
-use crate::circle::{CircleScope, CircleSummary};
 use crate::models::EventSubmissionProgress;
 use crate::operation::{ak_ops, trim_realm_id, uuid_v7};
 use crate::payload::sdk_payload_value;
@@ -17,7 +16,6 @@ use crate::transport::auth::{authed_api_with_sync, with_authed_api_with_sync};
 use crate::views::helpers::{MentionNode, parse_mention_nodes, short_protocol_id};
 
 pub(crate) mod agent_modes;
-mod circle_welcome;
 mod composer;
 mod controller;
 mod direct_authority;
@@ -302,7 +300,7 @@ fn project_visible_messages(
             // ordinary fold. Only explicitly ordinary-scoped optimistic rows
             // may join them while private history verification is unavailable.
             let ordinary_local_scope = message.local_scope.as_ref().is_some_and(|scope| {
-                matches!(scope, arkret_sdk::ScopeRef::Realm { realm_id } | arkret_sdk::ScopeRef::Circle { realm_id, .. } if realm_id.as_str() == selected_realm_id)
+                matches!(scope, arkret_sdk::ScopeRef::Realm { realm_id } if realm_id.as_str() == selected_realm_id)
             });
             let durable_source_row =
                 message.id.starts_with("ak:event:") && !message.pending && !message.failed;
@@ -358,7 +356,7 @@ fn verified_scope_timeline_seed(rows: &[ChatMessage]) -> Vec<ChatMessage> {
                 && row.local_scope.as_ref().is_some_and(|scope| {
                     matches!(
                         scope,
-                        arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+                        arkret_sdk::ScopeRef::Realm { .. }
                     ) && scope.realm_id().as_str() == row.realm_id
                 })
         })
@@ -1316,7 +1314,7 @@ async fn submit_source_routed_sidecar_message(
         None,
         &content_bytes,
         Some(&metadata_bytes),
-        None,
+
         Some(sidecar_mls_scope(view)),
     )
     .await
@@ -1352,7 +1350,7 @@ async fn submit_source_routed_sidecar_message(
         &state_store.handle(),
         build,
         view.sidecar.realm_id.as_str(),
-        None,
+
     )
     .await;
     let (event_id, status) = match outcome {
@@ -1674,7 +1672,7 @@ async fn drive_sidecar_completion_closes(
             &state_store.handle(),
             build,
             &realm,
-            None,
+
         )
         .await
         {
@@ -1778,15 +1776,6 @@ fn chat_visible_read_receipt_should_display(
         (!strand_id.is_empty()).then_some(strand_id),
         (!realm_id.is_empty()).then_some(realm_id),
     )
-}
-
-fn should_start_circle_scope_request(
-    credential: &str,
-    request_key_seen: &str,
-    request_in_flight: bool,
-    request_key: &str,
-) -> bool {
-    !credential.trim().is_empty() && !request_in_flight && request_key_seen != request_key
 }
 
 #[cfg(test)]

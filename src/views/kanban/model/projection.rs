@@ -17,6 +17,7 @@ pub(crate) fn truthy_env_value(value: Option<&str>) -> bool {
 pub(crate) fn initial_board_space_options(seed_fallback_allowed: bool) -> Vec<BoardSpaceOption> {
     if seed_fallback_allowed {
         vec![BoardSpaceOption {
+            rank: None,
             id: arkret_sdk::SpaceId::new(DEMO_BOARD_SPACE_ID)
                 .expect("demo board seed carries a canonical Space id"),
             title: "Local demo board".to_owned(),
@@ -27,10 +28,61 @@ pub(crate) fn initial_board_space_options(seed_fallback_allowed: bool) -> Vec<Bo
     }
 }
 
+impl BoardSpaceOption {
+    pub(crate) fn ordering_rank(&self) -> Cow<'_, str> {
+        self.rank.as_deref().map(Cow::Borrowed).unwrap_or_else(|| {
+            let suffix = self.id.as_str().trim_start_matches("ak:space:");
+            Cow::Owned(hex::encode_upper(suffix))
+        })
+    }
+}
+
+pub(crate) fn board_append_rank(
+    options: &[BoardSpaceOption],
+    pending: &[PendingBoardCreate],
+) -> anyhow::Result<String> {
+    let tail = options
+        .iter()
+        .map(BoardSpaceOption::ordering_rank)
+        .chain(
+            pending
+                .iter()
+                .filter_map(|row| row.rank.as_deref().map(Cow::Borrowed)),
+        )
+        .max();
+    Ok(rank_for_drop(tail.as_deref(), None)?)
+}
+
+// The target row midpoint selects the interval above or below it. Exclude
+// the moved Board before choosing neighbours, including on downward moves.
+pub(crate) fn board_drop_rank(
+    options: &[BoardSpaceOption],
+    moved: &arkret_sdk::SpaceId,
+    target: &arkret_sdk::SpaceId,
+    after: bool,
+) -> anyhow::Result<Option<String>> {
+    let Some(from) = options.iter().position(|option| option.id == *moved) else {
+        return Ok(None);
+    };
+    let Some(to) = options.iter().position(|option| option.id == *target) else {
+        return Ok(None);
+    };
+    let slot = to + usize::from(after);
+    if slot == from
+        || slot == from + 1
+        || options[from].state != SpaceContainerLifecycleState::Active
+    {
+        return Ok(None);
+    }
+    let prev = slot.checked_sub(1).map(|i| options[i].ordering_rank());
+    let next = options.get(slot).map(BoardSpaceOption::ordering_rank);
+    Ok(Some(rank_for_drop(prev.as_deref(), next.as_deref())?))
+}
+
 pub(crate) fn sort_board_space_options(options: &mut Vec<BoardSpaceOption>) {
     options.sort_by(|left, right| left.id.cmp(&right.id).then(left.title.cmp(&right.title)));
     options.dedup_by(|left, right| left.id == right.id);
-    options.sort_by(|left, right| left.title.cmp(&right.title).then(left.id.cmp(&right.id)));
+    options.sort_by_cached_key(|option| (option.ordering_rank().into_owned(), option.id.clone()));
 }
 
 pub(crate) fn generated_board_fallback_title(board_id: &str) -> String {
@@ -59,6 +111,7 @@ pub(crate) fn board_space_options_from_projection(
         .filter_map(|view| {
             let id = arkret_sdk::SpaceId::new(view.space_id.clone()).ok()?;
             Some(BoardSpaceOption {
+                rank: view.rank.clone(),
                 id,
                 title: if view.title.trim().is_empty() {
                     view.space_id.clone()
@@ -156,6 +209,7 @@ pub(crate) fn overlay_local_board_space_options(
             continue;
         }
         options.push(BoardSpaceOption {
+            rank: local_create.rank,
             id: local_id,
             title: local_create.title,
             state: SpaceContainerLifecycleState::Active,
@@ -222,7 +276,6 @@ pub(crate) fn space_container_views_from_current(
             let space: arkret_sdk::Space = serde_json::from_value(joined).ok()?;
             if space.id.as_ref() != Some(space_id)
                 || space.realm_id.as_str() != realm_id
-                || space.scope_circle_id.is_some()
             {
                 return None;
             }
