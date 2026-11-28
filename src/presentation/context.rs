@@ -84,7 +84,8 @@ pub struct InksonContext {
     pub is_server_admin: Cage<bool>,
     pub needs_device_authorization: Cage<bool>,
     pub device_authorization_check_complete: Cage<bool>,
-    pub secure_store_bootstrap_ready: Cage<bool>,
+    pub(crate) secure_store_bootstrap: Cage<crate::app::SecureStoreBootstrap>,
+    pub secure_store_bootstrap_ready: Bond<bool>,
     pub account_recovery_configured: Cage<Option<bool>>,
     pub needs_mls_backup: Cage<bool>,
     pub needs_mls_unlock: Cage<bool>,
@@ -185,6 +186,11 @@ impl InksonContext {
                 crate::i18n::chinese_translations(),
             ),
         ]));
+        let secure_store_bootstrap = scope.cage(if cfg!(target_arch = "wasm32") {
+            crate::app::SecureStoreBootstrap::Opening
+        } else {
+            crate::app::SecureStoreBootstrap::Ready
+        });
         let context = Rc::new(Self {
             active_account: scope.cage(active_account),
             principal_id: scope.cage(principal),
@@ -245,7 +251,10 @@ impl InksonContext {
             is_server_admin: scope.cage(false),
             needs_device_authorization: scope.cage(false),
             device_authorization_check_complete: scope.cage(false),
-            secure_store_bootstrap_ready: scope.cage(!cfg!(target_arch = "wasm32")),
+            secure_store_bootstrap,
+            secure_store_bootstrap_ready: scope.bond(move || {
+                secure_store_bootstrap.get() == crate::app::SecureStoreBootstrap::Ready
+            }),
             account_recovery_configured: scope.cage(None),
             needs_mls_backup: scope.cage(false),
             needs_mls_unlock: scope.cage(false),

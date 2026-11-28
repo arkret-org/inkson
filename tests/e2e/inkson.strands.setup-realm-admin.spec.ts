@@ -326,6 +326,57 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   );
 });
 
+test("realm overview separates navigation groups and aligns card actions", async ({ page }, info) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.setViewportSize({ width: 1836, height: 760 });
+  await gotoAndDismissRecovery(page, `/realms/${DEMO_REALM}/settings`);
+  await expect(page.locator(".realm-header .topbar-context-title")).toContainText("Arkret Demo Realm");
+  const sidebar = page.locator(".realm-settings .settings-sidebar-column");
+  await expect(sidebar.locator(".settings-nav-divider")).toHaveCount(2);
+  await expect(sidebar.getByText(/^(Realm|Policy|Operations)$/)).toHaveCount(0);
+  await expect(sidebar.getByRole("button")).toHaveText([
+    "Overview", "Profile", "Access", "Security & MLS", "Federation", "Moderation", "Repair & Danger",
+  ]);
+
+  const overview = page.locator(".realm-admin-overview");
+  const cards = overview.locator(".metric");
+  await expect(cards).toHaveCount(4);
+  for (const [width, columns] of [[1836, 4], [1160, 2], [390, 1]]) {
+    await page.setViewportSize({ width, height: 760 });
+    await overview.scrollIntoViewIfNeeded();
+    await expect.poll(() => overview.locator(".metric-grid").evaluate(grid =>
+      getComputedStyle(grid).gridTemplateColumns.split(" ").length
+    )).toBe(columns);
+    const boxes = await cards.evaluateAll(elements => elements.map(card => {
+      const [title, description, action] = Array.from(
+        card.children, element => element.getBoundingClientRect(),
+      );
+      const bounds = card.getBoundingClientRect();
+      return {
+        top: bounds.top,
+        right: bounds.right,
+        titleBottom: title.bottom,
+        descriptionTop: description.top,
+        descriptionBottom: description.bottom,
+        actionTop: action.top,
+        actionRight: action.right,
+      };
+    }));
+    for (const [index, box] of boxes.entries()) {
+      expect(box.descriptionTop).toBeGreaterThan(box.titleBottom);
+      expect(box.actionTop).toBeGreaterThan(box.descriptionBottom);
+      expect(box.actionRight).toBeLessThanOrEqual(box.right);
+      expect(box.right).toBeLessThanOrEqual(width + 1);
+      const firstInRow = boxes[index - index % columns];
+      expect(Math.abs(box.top - firstInRow.top)).toBeLessThanOrEqual(1);
+      expect(Math.abs(box.actionTop - firstInRow.actionTop)).toBeLessThanOrEqual(1);
+    }
+    await page.screenshot({ path: info.outputPath(`realm-overview-${width}.png`) });
+  }
+  await overview.getByRole("link", { name: "Open Profile" }).click();
+  await expect(page.getByRole("heading", { name: "Realm Profile", exact: true })).toBeVisible();
+});
+
 test("realm profile fills the current canonical metadata values", async ({
   page,
 }) => {

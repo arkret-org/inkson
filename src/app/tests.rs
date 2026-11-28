@@ -1,3 +1,5 @@
+use SecureStoreBootstrap::{Opening, Ready};
+
 use super::*;
 
 const VERIFIED_DEVICE_EVENT: &str = "ak:event:Ad0EZUHcfLJv92Of4w-RJec6fkNlWP11fsQAQ4dqUOHS";
@@ -979,15 +981,20 @@ fn rehydrated_session_credential_only_matches_active_config() {
 #[test]
 fn auth_surface_hides_login_while_session_is_restoring() {
     assert_eq!(
-        auth_surface_for_route(&Route::Dashboard, false, SessionBootState::Restoring, false),
+        auth_surface_for_route(
+            &Route::Dashboard,
+            false,
+            SessionBootState::Restoring,
+            Opening
+        ),
         AuthSurface::Restoring
     );
     assert_eq!(
-        auth_surface_for_route(&Route::Login, false, SessionBootState::Restoring, false),
+        auth_surface_for_route(&Route::Login, false, SessionBootState::Restoring, Opening),
         AuthSurface::Restoring
     );
     assert_eq!(
-        auth_surface_for_route(&Route::Dashboard, false, SessionBootState::Restoring, true),
+        auth_surface_for_route(&Route::Dashboard, false, SessionBootState::Restoring, Ready),
         AuthSurface::Restoring
     );
     assert_eq!(
@@ -995,7 +1002,7 @@ fn auth_surface_hides_login_while_session_is_restoring() {
             &Route::Login,
             false,
             SessionBootState::Unauthenticated,
-            true,
+            Ready,
         ),
         AuthSurface::Login
     );
@@ -1008,13 +1015,18 @@ fn onboarding_mounts_after_secure_store_even_when_connection_bootstrap_is_paused
             &Route::Onboarding,
             false,
             SessionBootState::Restoring,
-            false,
+            Opening,
         ),
         AuthSurface::Restoring,
         "onboarding must still wait for secure storage itself"
     );
     assert_eq!(
-        auth_surface_for_route(&Route::Onboarding, false, SessionBootState::Restoring, true,),
+        auth_surface_for_route(
+            &Route::Onboarding,
+            false,
+            SessionBootState::Restoring,
+            Ready,
+        ),
         AuthSurface::Onboarding,
         "onboarding owns its pre-session flow without mounting the authenticated shell"
     );
@@ -1027,7 +1039,7 @@ fn oidc_callback_waits_for_secure_store_before_mounting() {
             &Route::AuthCallback,
             false,
             SessionBootState::Restoring,
-            false,
+            Opening,
         ),
         AuthSurface::Restoring
     );
@@ -1036,7 +1048,7 @@ fn oidc_callback_waits_for_secure_store_before_mounting() {
             &Route::AuthCallback,
             false,
             SessionBootState::Unauthenticated,
-            true,
+            Ready,
         ),
         AuthSurface::Callback
     );
@@ -1062,7 +1074,7 @@ fn session_boot_state_leaves_restoring_when_secure_store_is_ready_without_materi
             &Route::Dashboard,
             false,
             SessionBootState::Unauthenticated,
-            true,
+            Ready,
         ),
         AuthSurface::Login
     );
@@ -1071,7 +1083,7 @@ fn session_boot_state_leaves_restoring_when_secure_store_is_ready_without_materi
 #[test]
 fn auth_surface_shows_shell_while_live_session_is_checking() {
     assert_eq!(
-        auth_surface_for_route(&Route::Dashboard, true, SessionBootState::Checking, true),
+        auth_surface_for_route(&Route::Dashboard, true, SessionBootState::Checking, Ready),
         AuthSurface::AppShell
     );
 }
@@ -1079,7 +1091,7 @@ fn auth_surface_shows_shell_while_live_session_is_checking() {
 #[test]
 fn auth_surface_waits_for_secure_store_even_when_memory_has_a_token() {
     assert_eq!(
-        auth_surface_for_route(&Route::Dashboard, true, SessionBootState::Checking, false),
+        auth_surface_for_route(&Route::Dashboard, true, SessionBootState::Checking, Opening),
         AuthSurface::Restoring
     );
 }
@@ -1101,11 +1113,20 @@ fn explicit_authentication_owns_the_route_regardless_of_cached_session() {
                 SessionBootState::Unauthenticated,
             ] {
                 assert_eq!(
-                    auth_surface_for_route(&route, has_session, boot, false),
+                    auth_surface_for_route(&route, has_session, boot, Opening),
                     AuthSurface::Restoring
                 );
                 assert_eq!(
-                    auth_surface_for_route(&route, has_session, boot, true),
+                    auth_surface_for_route(
+                        &route,
+                        has_session,
+                        boot,
+                        SecureStoreBootstrap::AccountRestoreFailed
+                    ),
+                    AuthSurface::AccountRestoreFailed
+                );
+                assert_eq!(
+                    auth_surface_for_route(&route, has_session, boot, Ready),
                     surface
                 );
             }

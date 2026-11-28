@@ -10,8 +10,7 @@ use super::*;
 /// UI outcomes remain owned by the page that started authentication.
 #[derive(Clone)]
 pub(super) struct LoginController {
-    pub(super) is_busy: glory::Cage<bool>,
-    pub(super) auth_status: glory::Cage<String>,
+    pub(super) state: LoginState,
     pub(super) owner: glory::ui::WeakScope,
 }
 
@@ -28,15 +27,26 @@ impl LoginController {
         persisted_account: Option<crate::config::ActiveAccountContext>,
         reset_state_store: crate::presentation::SharedStateStore,
     ) {
-        let Self {
-            is_busy,
-            auth_status,
-            ..
-        } = self;
+        let state = self.state;
+        let is_busy = state.busy;
+        let auth_status = state.status;
         let Some(owner) = self.owner.upgrade() else {
             return;
         };
         if let Err(error) = owner.spawn(async move {
+            let description = match crate::station_connection::discover(&principal).await {
+                Ok(description) => description,
+                Err(error) => {
+                    if let Some(change) = error.downcast_ref::<crate::station_connection::ConnectionTrustChange>() {
+                        auth_status.revise(String::clear);
+                        state.connection_change.revise(|value| *value = Some(change.clone()));
+                    } else {
+                        auth_status.revise(|value| *value = format_sign_in_discovery_error(&principal, &error));
+                    }
+                    is_busy.revise(|value| *value = false);
+                    return;
+                }
+            };
             #[cfg(target_arch = "wasm32")]
             if let Err(error) =
                 crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson").await
@@ -269,6 +279,7 @@ impl LoginController {
             }
             let prepared_authorization = match prepare_oidc_authorization(
                 &principal,
+                &description,
                 device.trim(),
                 OidcEntryPoint::SignIn,
                 expected_principal.as_ref(),
@@ -328,11 +339,8 @@ impl LoginController {
         token: glory::Cage<String>,
         on_login: std::rc::Rc<dyn Fn()>,
     ) {
-        let Self {
-            is_busy,
-            auth_status,
-            ..
-        } = self;
+        let is_busy = self.state.busy;
+        let auth_status = self.state.status;
         let Some(owner) = self.owner.upgrade() else {
             return;
         };

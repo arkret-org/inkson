@@ -56,6 +56,16 @@ fn begin(
             spawn(&scope, async move {
                 let result = async {
                     let device = arkret_sdk::DeviceId::new(device)?;
+                    let description =
+                        crate::station_connection::discover(&server)
+                            .await
+                            .map_err(|error| {
+                                anyhow::Error::msg(
+                                    crate::views::login::format_sign_in_discovery_error(
+                                        &server, &error,
+                                    ),
+                                )
+                            })?;
                     #[cfg(target_arch = "wasm32")]
                     let secure_store = {
                         tracing::info!(
@@ -89,6 +99,7 @@ fn begin(
                     );
                     let prepared_authorization = crate::views::login::prepare_oidc_authorization(
                         &server,
+                        &description,
                         device.as_str(),
                         crate::identity::account_auth::OidcEntryPoint::CreateIdentity,
                         None,

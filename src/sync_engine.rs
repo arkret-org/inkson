@@ -229,38 +229,16 @@ impl AccountTransportProvider {
     /// `after` is owned by [`AccountSubscription`], which loads it from the
     /// durable cursor store and advances it only after the projector committed.
     fn account_request(&self) -> AccountSubscribeParameters {
-        let filter = Some(selected_account_filter(&self.ctx));
-        let (previous, selected_detail_invalidated, selected_current_pending) =
-            self.ctx.state_store.read(|store| {
-                let invalidated = filter
-                    .as_ref()
-                    .and_then(|filter| filter.realm_ids.as_ref())
-                    .is_some_and(|realms| {
-                        realms
-                            .iter()
-                            .any(|realm| store.realm_detail_requires_replacement(realm.as_str()))
-                    });
-                let current_pending = filter
-                    .as_ref()
-                    .and_then(|filter| filter.realm_ids.as_ref())
-                    .is_some_and(|realms| {
-                        realms
-                            .iter()
-                            .any(|realm| !store.current_product_view_ready(realm.as_str()))
-                    });
-                (store.sync_demand_filter(), invalidated, current_pending)
-            });
-        // An invalidation makes the detail baseline stale even when navigation
-        // (and therefore the filter value) did not change. Explicit replacement
-        // asks the server to resend that bounded baseline instead of entering
-        // another idle long-poll with the same demand.
-        let replace_filter = (previous.is_some()
-            && (previous != filter || selected_detail_invalidated || selected_current_pending))
-            .then_some(true);
+        let filter = selected_account_filter(&self.ctx);
+        let replace_filter = self.ctx.state_store.read(|store| {
+            store
+                .should_replace_sync_demand_filter(&filter)
+                .then_some(true)
+        });
         AccountSubscribeParameters {
             after: None,
             catchup: Some(true),
-            filter,
+            filter: Some(filter),
             realm_list_parameters: self
                 .ctx
                 .state_store

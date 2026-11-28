@@ -457,8 +457,8 @@ mod tests {
             .token
             .revise(|value| *value = "fixture-session".into());
         context
-            .secure_store_bootstrap_ready
-            .revise(|value| *value = true);
+            .secure_store_bootstrap
+            .revise(|state| *state = crate::app::SecureStoreBootstrap::Ready);
         context.active_account.revise(|value| {
             *value = Some(crate::test_support::AccountFixture::new("did:web:alice.example").build())
         });
@@ -500,8 +500,8 @@ mod tests {
             .token
             .revise(|token| *token = "fixture-session".into());
         context
-            .secure_store_bootstrap_ready
-            .revise(|ready| *ready = true);
+            .secure_store_bootstrap
+            .revise(|state| *state = crate::app::SecureStoreBootstrap::Ready);
         let draft = super::super::super::SetupDraft::for_context(app.scope(), &context);
         app.mount(super::super::page(app.scope(), context, draft))
             .unwrap();

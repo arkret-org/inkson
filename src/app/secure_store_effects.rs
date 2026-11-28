@@ -25,7 +25,7 @@ pub(super) fn install(
         config_store,
         principal_id,
         device_id,
-        secure_store_bootstrap_ready,
+        secure_store_bootstrap,
         token,
         state_store,
         base_url,
@@ -34,7 +34,7 @@ pub(super) fn install(
         context.config_store,
         context.principal_id,
         context.device_id,
-        context.secure_store_bootstrap_ready,
+        context.secure_store_bootstrap,
         context.token,
         context.state_store.clone(),
         context.base_url,
@@ -50,7 +50,6 @@ pub(super) fn install(
         let mut state_store_for_secure_upgrade = state_store;
         #[cfg(not(feature = "wasm-localstorage-secrets-test"))]
         let state_store_for_secure_upgrade = state_store;
-        let secure_store_ready_for_upgrade = secure_store_bootstrap_ready;
         let token_for_secure_upgrade = token;
         let theme = context.theme;
         if let Err(error) = scope.spawn(async move {
@@ -65,6 +64,7 @@ pub(super) fn install(
                     {
                         state_store_for_secure_upgrade.read(|store| store.account_records_boot_failed(&error));
                         tracing::error!(%error,"account records could not be restored; readiness withheld");
+                        secure_store_bootstrap.revise(|state| *state = SecureStoreBootstrap::AccountRestoreFailed);
                         return;
                     }
 
@@ -449,7 +449,7 @@ pub(super) fn install(
                 }
             }
             trace_secure_store_bootstrap_stage("publishing ready signal");
-            secure_store_ready_for_upgrade.revise(|current| *current = true);
+            secure_store_bootstrap.revise(|state| *state = SecureStoreBootstrap::Ready);
         }) { scope.report_error(error); }
     }
 }

@@ -106,8 +106,8 @@ impl AccountSessionRoot {
         self.context.clear_account_projections();
         #[cfg(target_arch = "wasm32")]
         self.context
-            .secure_store_bootstrap_ready
-            .revise(|value| *value = false);
+            .secure_store_bootstrap
+            .revise(|state| *state = super::SecureStoreBootstrap::Opening);
         crate::identity::device_directory::reset_session_cache();
         crate::identity::contact_profile::reset_session_cache();
         self.services.projection_sink.install(std::rc::Rc::new(

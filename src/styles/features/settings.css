@@ -109,13 +109,6 @@
     background: var(--accent);
   }
 }
-.settings-nav-group-label {
-  margin: 0 8px 2px;
-  color: var(--text-3);
-  font-size: var(--text-caption);
-  font-weight: var(--weight-semibold);
-  line-height: var(--leading-tight);
-}
 .settings-content-title {
   margin: 0;
   color: var(--text);

@@ -1149,8 +1149,8 @@ pub(super) fn page(
     });
     let subject_label = scope.bond(move || overview.get().2.to_owned());
     let mut groups = Vec::new();
-    for (index, (label, sections)) in REALM_ADMIN_NAV_GROUPS.iter().copied().enumerate() {
-        let mut items = vec![paragraph("settings-nav-group-label", label.to_string())];
+    for (index, sections) in REALM_ADMIN_NAV_GROUPS.iter().enumerate() {
+        let mut items = Vec::with_capacity(sections.len());
         for next in sections.iter().copied() {
             let nav = context.clone();
             let realm = realm.clone();

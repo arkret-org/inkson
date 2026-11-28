@@ -319,6 +319,9 @@ async fn complete_callback(context: Rc<InksonContext>, state: LoginState) {
 }
 
 fn launch_sign_in(context: Rc<InksonContext>, state: LoginState, owner: glory::ui::WeakScope) {
+    if state.busy.get_untracked() || state.connection_change.get_untracked().is_some() {
+        return;
+    }
     let selected = context
         .config_store
         .revise(|store| store.save_neutral_station_choice(&state.station.get_untracked()));
@@ -347,21 +350,61 @@ fn launch_sign_in(context: Rc<InksonContext>, state: LoginState, owner: glory::u
         }
     };
     state.busy.revise(|value| *value = true);
+    context.last_error.revise(|error| *error = None);
     state
         .status
         .revise(|value| *value = "Opening server sign-in...".into());
-    LoginController {
-        is_busy: state.busy,
-        auth_status: state.status,
-        owner,
-    }
-    .launch_sign_in(
+    LoginController { state, owner }.launch_sign_in(
         principal,
         context.locale.get_untracked().code().to_owned(),
         returning,
         config.active_account,
         context.state_store.clone(),
     );
+}
+
+fn confirm_connection_and_sign_in(
+    context: Rc<InksonContext>,
+    state: LoginState,
+    owner: glory::ui::WeakScope,
+    change: &crate::station_connection::ConnectionTrustChange,
+) {
+    let Some(scope) = owner.upgrade() else { return };
+    if state.busy.get_untracked()
+        || state.connection_change.get_untracked().as_ref() != Some(change)
+        || !same_server_url(&state.station.get_untracked(), &change.candidate.base_url)
+    {
+        return;
+    }
+    let change = change.clone();
+    state.busy.revise(|value| *value = true);
+    if let Err(error) = scope.spawn(async move {
+        let accepted = async {
+            context.state_store.write(|store| {
+                crate::station_connection::clear_pending_authentication(
+                    store,
+                    &change.previous.base_url,
+                )
+            })?;
+            crate::station_connection::confirm_change(&change).await
+        }
+        .await;
+        state.connection_change.revise(|value| *value = None);
+        state.busy.revise(|value| *value = false);
+        match accepted {
+            Ok(()) => {
+                context
+                    .services
+                    .session
+                    .invalidate("Station connection changed");
+                state.callback_retry_url.revise(|value| *value = None);
+                launch_sign_in(context, state, owner);
+            }
+            Err(error) => state.status.revise(|value| *value = error.to_string()),
+        }
+    }) {
+        scope.report_error(error);
+    }
 }
 
 pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
@@ -526,10 +569,8 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
             )],
         )
     };
-    let review_phase =
-        scope.bond(move || (state.status.get(), state.connection_change.get().is_some()));
-    let status = reactive(review_phase, move |_, (value, reviewing)| {
-        if value.is_empty() || reviewing {
+    let status = reactive(state.status, move |_, value| {
+        if value.is_empty() {
             empty()
         } else {
             Box::new(
@@ -540,33 +581,6 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
             )
         }
     });
-    let review_context = context.clone();
-    let review_owner = scope.downgrade();
-    let review = reactive(review_phase, move |scope, (status, reviewing)| {
-        if callback || reviewing || !status.contains("Station identity or authentication changed") {
-            return empty();
-        }
-        let context = review_context.clone();
-        let owner = review_owner.clone();
-        Box::new(sapid::button().unstyled().class("btn btn-ghost")
-            .label(context.translated(scope, "login.connection.review")).enabled(ready)
-            .on_press(move || {
-                let Some(scope) = owner.upgrade() else { return };
-                let selected = context.base_url.get_untracked();
-                state.busy.revise(|value| *value = true);
-                if let Err(error) = scope.spawn(async move {
-                    match crate::station_connection::discover(&selected).await {
-                        Err(error) => {
-                            if let Some(change) = error.downcast_ref::<crate::station_connection::ConnectionTrustChange>() {
-                                state.connection_change.revise(|value| *value = Some(change.clone()));
-                            } else { state.status.revise(|value| *value = error.to_string()); }
-                        }
-                        Ok(_) => state.status.revise(|value| *value = "The server connection still matches the saved identity.".into()),
-                    }
-                    state.busy.revise(|value| *value = false);
-                }) { scope.report_error(error); }
-            }))
-    });
     let trust_context = context.clone();
     let trust_owner = scope.downgrade();
     let trust = reactive(state.connection_change, move |scope, change| {
@@ -576,38 +590,46 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
         let context = trust_context.clone();
         let owner = trust_owner.clone();
         let may_trust = scope.bond({
-            let context = context.clone();
             let url = change.candidate.base_url.clone();
-            move || !state.busy.get() && same_server_url(&context.base_url.get(), &url)
+            move || !state.busy.get() && same_server_url(&state.station.get(), &url)
         });
         let details = connection_review_details(scope, context.clone(), &change);
-        stack("auth-status auth-connection-review station-connection-review", vec![details, line("auth-connection-actions", vec![
-            Box::new(sapid::button().unstyled().class("btn btn-ghost").enabled(ready).label(context.translated(scope, "login.connection.keep"))
-                .on_press(move || state.connection_change.revise(|value| *value = None))),
-            Box::new(sapid::button().unstyled().class("btn btn-primary").enabled(may_trust).label(context.translated(scope, "login.connection.trust"))
-                .on_press(move || {
-                    let Some(scope) = owner.upgrade() else { return };
-                    let change = change.clone(); let context = context.clone();
-                    state.busy.revise(|value| *value = true);
-                    if let Err(error) = scope.spawn(async move {
-                        let cleared = context.state_store.write(|store| crate::station_connection::clear_pending_authentication(store, &change.previous.base_url));
-                        if let Err(error) = cleared {
-                            state.status.revise(|value| *value = error.to_string());
-                            state.busy.revise(|value| *value = false); return;
-                        }
-                        match crate::station_connection::confirm_change(&change).await {
-                            Ok(()) => {
-                                context.services.session.invalidate("Station connection changed; sign in again");
-                                state.callback_retry_url.revise(|value| *value = None);
-                                state.connection_change.revise(|value| *value = None);
-                                state.status.revise(|value| *value = "New connection accepted. Start a new sign-in.".into());
-                            }
-                            Err(error) => state.status.revise(|value| *value = error.to_string()),
-                        }
-                        state.busy.revise(|value| *value = false);
-                    }) { scope.report_error(error); }
-                })),
-        ])])
+        stack(
+            "auth-status auth-connection-review station-connection-review",
+            vec![
+                details,
+                line(
+                    "auth-connection-actions",
+                    vec![
+                        Box::new(
+                            sapid::button()
+                                .unstyled()
+                                .class("btn btn-ghost")
+                                .enabled(ready)
+                                .label(context.translated(scope, "login.connection.keep"))
+                                .on_press(move || {
+                                    state.connection_change.revise(|value| *value = None)
+                                }),
+                        ),
+                        Box::new(
+                            sapid::button()
+                                .unstyled()
+                                .class("btn btn-primary")
+                                .enabled(may_trust)
+                                .label(context.translated(scope, "login.connection.trust"))
+                                .on_press(move || {
+                                    confirm_connection_and_sign_in(
+                                        context.clone(),
+                                        state,
+                                        owner.clone(),
+                                        &change,
+                                    );
+                                }),
+                        ),
+                    ],
+                ),
+            ],
+        )
     });
     let retry_context = context.clone();
     let retry = reactive(state.callback_retry_url, move |scope, url| match url {
@@ -687,8 +709,7 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
                                 .revise(|value| *value = "Refreshing session...".into());
                             let completed_context = refresh_context.clone();
                             LoginController {
-                                is_busy: state.busy,
-                                auth_status: state.status,
+                                state,
                                 owner: owner.clone(),
                             }
                             .refresh_session(
@@ -715,42 +736,55 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
         ) as View,
         None => empty(),
     });
-    Box::new(view().class("auth-panel").fill((
-        error,
-        view().class("auth-brand").fill((
-            crate::presentation::widgets::arkret_logo("auth-mark"),
-            view().fill((
-                heading(
-                    1,
-                    "",
-                    context.translated(
-                        scope,
-                        if callback {
-                            "login.completing"
-                        } else {
-                            "login.title"
-                        },
+    Box::new(
+        view().class("auth-panel").fill((
+            error,
+            view().class("auth-brand").fill((
+                crate::presentation::widgets::arkret_logo("auth-mark"),
+                view().fill((
+                    heading(
+                        1,
+                        "",
+                        context.translated(
+                            scope,
+                            if callback {
+                                "login.completing"
+                            } else {
+                                "login.title"
+                            },
+                        ),
                     ),
-                ),
-                paragraph("", "Arkret"),
+                    paragraph("", "Arkret"),
+                )),
+            )),
+            view().class("auth-form").fill((
+                view()
+                    .class("auth-form")
+                    .semantics(scope.bond(move || {
+                        let reviewing = state.connection_change.get().is_some();
+                        Some(Box::new(glory::render::Semantics {
+                            hidden: reviewing,
+                            inert: reviewing,
+                            ..Default::default()
+                        }))
+                    }))
+                    .fill((
+                        station,
+                        paragraph(
+                            "muted auth-server-help",
+                            context.translated(scope, "login.station_help"),
+                        ),
+                        sign_in,
+                        return_previous,
+                        footer,
+                    )),
+                status,
+                trust,
+                retry,
+                diagnostics,
             )),
         )),
-        view().class("auth-form").fill((
-            station,
-            paragraph(
-                "muted auth-server-help",
-                context.translated(scope, "login.station_help"),
-            ),
-            sign_in,
-            return_previous,
-            footer,
-            status,
-            review,
-            trust,
-            retry,
-            diagnostics,
-        )),
-    )))
+    )
 }
 
 fn retain_station(context: &InksonContext, state: LoginState, url: &str) {
@@ -840,7 +874,7 @@ fn connection_review_details(
         sapid::collapsible("station-connection-details")
             .unstyled()
             .class("auth-connection-details")
-            .default_open(false)
+            .default_open(true)
             .label(details_label)
             .trigger_content(move || glory::ui::text().content(details_label))
             .content_policy(sapid::ContentPolicy::KeepMounted)

@@ -57,20 +57,16 @@ for (const viewport of [
       });
     });
     await page.locator(".auth-primary").click();
-    await expect(page.locator(".auth-status:not(.auth-connection-review)")).toContainText("Station identity or authentication changed");
-    await page.getByRole("button", { name: "Review changed server" }).click();
     const review = byClass(page, "station-connection-review");
     await expect(review).toBeVisible();
     await expect(review).toContainText("Server identity changed");
     await expect(review).toContainText("Trust domain changed");
     await expect(review).toContainText("Sign-in provider changed");
     await expect(page.locator(".auth-status:not(.auth-connection-review)")).toBeHidden();
-    await expect(page.getByRole("button", { name: "Review changed server" })).toBeHidden();
+    await expect(page.locator(".auth-primary")).toBeHidden();
     const details = review.locator(".auth-connection-details");
-    await expect(details.getByRole("button", { name: "View changed details", exact: true })).toHaveAttribute("aria-expanded", "false");
-    await expect(review.locator(".auth-connection-value").first()).toBeHidden();
-    await page.screenshot({ path: test.info().outputPath(`connection-review-compact-${viewport.width}x${viewport.height}.png`) });
-    await details.getByText("View changed details").click();
+    await expect(details.getByRole("button", { name: "Connection details", exact: true })).toHaveAttribute("aria-expanded", "true");
+    await expect(review.locator(".auth-connection-value").first()).toBeVisible();
     await expect(review).toContainText("previous-station.example");
     // Shared method type, grant exchange and permissions are omitted even when
     // the issuer and client change.
@@ -94,7 +90,7 @@ for (const viewport of [
       expect(metric.right).toBeLessThanOrEqual(metric.cardRight);
       expect(metric.scrollWidth).toBeLessThanOrEqual(metric.clientWidth + 1);
     }
-    const accept = review.getByRole("button", { name: "Trust new connection" });
+    const accept = review.getByRole("button", { name: "Trust and continue" });
     await accept.scrollIntoViewIfNeeded();
     await expect(accept).toBeInViewport();
     await page.screenshot({ path: test.info().outputPath(`connection-review-${viewport.width}x${viewport.height}.png`) });
@@ -107,7 +103,11 @@ for (const changedField of ["identity", "trust domain", "client"] as const) {
   test(`review only shows the changed ${changedField}`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 600 });
     await mockArkretApi(page);
-    await page.goto("/login", { waitUntil: "domcontentloaded" });
+    const authorizations: string[] = [];
+    page.on("request", request => {
+      if (new URL(request.url()).pathname === "/authorize") authorizations.push(request.url());
+    });
+    await page.goto(changedField === "client" ? "/" : "/login", { waitUntil: "domcontentloaded" });
     await expect(page.locator(".auth-primary")).toBeVisible();
     const description = await page.evaluate(async () => {
       const value = await (await fetch("https://server.local/_arkret/describe")).json();
@@ -118,10 +118,8 @@ for (const changedField of ["identity", "trust domain", "client"] as const) {
     await page.getByRole("textbox", { name: "Account server URL" }).fill("https://server.local/");
     const previous = await page.evaluate(async ({ description, changedField }) => {
       const binding = {
-        // The browser trust CAS stores the Rust serializer's exact JSON. Match
-        // its field order when seeding a previously accepted connection.
-        service_id: description.service_id,
         base_url: "https://server.local/",
+        service_id: description.service_id,
         trust_domain: description.trust_domain,
         authentication_metadata: structuredClone(description.authentication_metadata),
       };
@@ -144,18 +142,14 @@ for (const changedField of ["identity", "trust domain", "client"] as const) {
       return encoded;
     }, { description, changedField });
     await page.locator(".auth-primary").click();
-    await expect(page.locator(".auth-status:not(.auth-connection-review)")).toHaveText("Station identity or authentication changed. Review the new connection before signing in.");
-    await page.getByRole("button", { name: "Review changed server" }).click();
     const review = byClass(page, "station-connection-review");
     const summary = changedField === "identity" ? "Server identity changed" : changedField === "trust domain" ? "Trust domain changed" : "Sign-in provider changed";
     await expect(review.locator(".auth-connection-summary-item")).toHaveText([summary]);
-    const compactHeight = await review.evaluate(element => element.getBoundingClientRect().height);
-    expect(compactHeight).toBeLessThan(300);
     if (changedField === "identity") {
       await review.scrollIntoViewIfNeeded();
       await page.screenshot({ path: test.info().outputPath("connection-review-identity-only.png") });
     }
-    await review.getByText("View changed details").click();
+    await expect(review.locator(".auth-connection-value").first()).toBeVisible();
     await expect(review.locator(".auth-connection-field")).toHaveCount(1);
     await expect(review.locator(".auth-connection-field .auth-connection-label")).toHaveText(changedField === "identity" ? "Server identity" : changedField === "trust domain" ? "Trust domain" : "Sign-in method · Client");
     await expect(review.locator(".auth-connection-value")).toHaveCount(2);
@@ -171,15 +165,30 @@ for (const changedField of ["identity", "trust domain", "client"] as const) {
       };
     }));
     expect(await readBinding()).toBe(previous);
+    expect(authorizations).toEqual([]);
     if (changedField === "client") {
-      await review.getByRole("button", { name: "Trust new connection" }).click();
-      await expect(review).toBeHidden();
-      await expect(page.locator(".auth-status:not(.auth-connection-review)")).toHaveText("New connection accepted. Start a new sign-in.");
+      await review.getByRole("button", { name: "Trust and continue" }).click();
+      await expect(page.getByTestId("coauth-login")).toBeVisible();
+      expect(authorizations).toHaveLength(1);
+      expect(new URL(authorizations[0]).searchParams.get("client_id")).toBe(description.authentication_metadata.methods[0].client_id);
+      await page.goto("/login", { waitUntil: "domcontentloaded" });
       expect(JSON.parse(await readBinding()).authentication_metadata.methods[0].client_id).toBe(description.authentication_metadata.methods[0].client_id);
+    } else if (changedField === "trust domain") {
+      // The Station advertises another change before we resume this login.
+      const newClient = "client-changed-again";
+      description.authentication_metadata.methods[0].client_id = newClient;
+      await review.getByRole("button", { name: "Trust and continue" }).click();
+      await expect(review.locator(".auth-connection-summary-item")).toHaveText(["Sign-in provider changed"]);
+      await expect(review.locator(".auth-connection-value").last()).toHaveText(newClient);
+      await expect(page.locator(".auth-error")).toBeHidden();
+      expect(authorizations).toEqual([]);
+      expect(JSON.parse(await readBinding()).authentication_metadata.methods[0].client_id).not.toBe(newClient);
     } else {
       await review.getByRole("button", { name: "Keep previous connection" }).click();
       await expect(review).toBeHidden();
       expect(await readBinding()).toBe(previous);
+      expect(authorizations).toEqual([]);
+      await expect(page.locator(".auth-primary")).toBeEnabled();
     }
   });
 }

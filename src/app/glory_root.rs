@@ -306,7 +306,7 @@ fn account_owner(scope: &Scope, context: Rc<InksonContext>) -> View {
                 &context.route.get(),
                 !context.token.get().trim().is_empty(),
                 context.session_boot_state.get(),
-                context.secure_store_bootstrap_ready.get(),
+                context.secure_store_bootstrap.get(),
             )
         }
     });
@@ -344,10 +344,31 @@ fn account_owner(scope: &Scope, context: Rc<InksonContext>) -> View {
             context.translated(scope, "app.boot.opening_secure_storage"),
             context.translated(scope, "app.boot.loading_keys"),
         ),
+        super::AuthSurface::AccountRestoreFailed => Box::new(
+            view()
+                .class("arkret-startup")
+                .role(glory::render::Role::Alert)
+                .fill((
+                    crate::presentation::widgets::heading(
+                        1,
+                        "",
+                        context.translated(scope, "app.boot.account_restore_failed"),
+                    ),
+                    paragraph(
+                        "startup-message",
+                        context.translated(scope, "app.boot.account_restore_retry"),
+                    ),
+                )),
+        ),
         _ => {
             let routed = scope.bond({
                 let context = context.clone();
-                move || context.route.get()
+                // A signed-out product route and /login share the same form.
+                // Session invalidation can navigate to /login during a trust confirmation.
+                move || match context.route.get() {
+                    route @ (Route::Register | Route::Onboarding | Route::AuthCallback) => route,
+                    _ => Route::Login,
+                }
             });
             let context = context.clone();
             auth_card(

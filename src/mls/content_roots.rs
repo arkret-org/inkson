@@ -78,14 +78,19 @@ pub(crate) async fn prepare_material(
     let entry = export_epoch_root(&group, &context)?;
     let root = entry.root_base64url.clone();
     let root_ref = entry.root_ref.clone();
-    let backups = crate::mls::account_recovery::ensure_content_root_backup(
-        api,
-        secure.as_ref(),
-        &active.authority,
-        &active.device_id,
-        &entry,
-    )
-    .await?;
+    let ensure_backup = async |root: &arkret_models_crypto::ContentRootBackupEntry| {
+        crate::runtime::boxed_future_from(|| {
+            crate::mls::account_recovery::ensure_content_root_backup(
+                api,
+                secure.as_ref(),
+                &active.authority,
+                &active.device_id,
+                root,
+            )
+        })
+        .await
+    };
+    let backups = ensure_backup(&entry).await?;
     fence.check()?;
     let unchanged = state.read(|state| {
         state
@@ -143,14 +148,7 @@ pub(crate) async fn prepare_material(
                 )
                 .map_err(anyhow::Error::msg)?;
             validate_attachment_root(&root, &descriptor)?;
-            let references = crate::mls::account_recovery::ensure_content_root_backup(
-                api,
-                secure.as_ref(),
-                &active.authority,
-                &active.device_id,
-                &root,
-            )
-            .await?;
+            let references = ensure_backup(&root).await?;
             protection.root_refs.push(root.root_ref);
             protection.backup_refs.extend(references);
             fence.check()?;

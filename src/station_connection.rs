@@ -5,7 +5,7 @@ use arkret_sdk::{ServiceDescribe, StationConnectionBinding};
 mod review;
 pub(crate) use review::connection_changes;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ConnectionTrustChange {
     pub previous: StationConnectionBinding,
     pub candidate: StationConnectionBinding,
@@ -43,15 +43,9 @@ pub(crate) async fn load_accepted(base_url: &str) -> anyhow::Result<StationConne
         base.as_str(),
     )?;
     #[cfg(target_arch = "wasm32")]
-    let binding = {
-        let value = station_connection_get(base.as_str())
-            .await
-            .map_err(|error| anyhow::anyhow!("Station trust storage: {error:?}"))?;
-        let value = value
-            .as_string()
-            .ok_or_else(|| anyhow::anyhow!("Station connection has not been accepted"))?;
-        serde_json::from_str::<StationConnectionBinding>(&value)?
-    };
+    let binding = serde_json::from_str::<StationConnectionBinding>(
+        &read_browser_binding(base.as_str()).await?,
+    )?;
     anyhow::ensure!(
         binding.base_url == base.as_str(),
         "Stored Station connection origin mismatch"
@@ -202,12 +196,30 @@ fn store_native(
 }
 
 #[cfg(target_arch = "wasm32")]
+async fn read_browser_binding(base: &str) -> anyhow::Result<String> {
+    station_connection_get(base)
+        .await
+        .map_err(|error| anyhow::anyhow!("Station trust storage: {error:?}"))?
+        .as_string()
+        .ok_or_else(|| anyhow::anyhow!("Station connection has not been accepted"))
+}
+
+#[cfg(target_arch = "wasm32")]
 async fn compare_and_store(
     candidate: &StationConnectionBinding,
     expected: Option<&StationConnectionBinding>,
 ) -> anyhow::Result<()> {
     let value = serde_json::to_string(candidate)?;
-    let expected_json = expected.map(serde_json::to_string).transpose()?;
+    // Compare the reviewed values, then bind the transaction to the exact
+    // bytes read. Equivalent JSON can have a different object key order.
+    let expected_json = if expected.is_some() {
+        let raw = read_browser_binding(&candidate.base_url).await?;
+        let current = serde_json::from_str(&raw)?;
+        validate_transition(Some(&current), candidate, expected)?;
+        Some(raw)
+    } else {
+        None
+    };
     let current = station_connection_cas(&candidate.base_url, &value, expected_json.as_deref())
         .await
         .map_err(|error| anyhow::anyhow!("Station trust storage: {error:?}"))?;

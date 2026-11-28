@@ -215,14 +215,11 @@ impl EventSubmitter {
                 self.http.clone(),
                 crate::transport::RequestContext::new(""),
             );
-            let material = crate::mls::content_roots::prepare_material(
-                &api,
-                store,
-                &intent,
-                path,
-                "application/json",
-                &bytes,
-            )
+            let material = crate::runtime::boxed_future_from(|| {
+                crate::mls::content_roots::prepare_material(
+                    &api, store, &intent, path, "application/json", &bytes,
+                )
+            })
             .await?;
             let secure = crate::secure_key_store::default_secure_key_store("inkson");
             let scope = intent.scope_ref();

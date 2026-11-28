@@ -2184,21 +2184,20 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("search.kind.message", "消息");
 
     dict.set("login.create_identity", "第一次使用？创建账号");
-    dict.set("login.connection.review", "检查服务器变更");
     dict.set("login.connection.changed", "服务器连接已变更");
     dict.set("login.connection.identity_changed", "服务器身份已变更");
     dict.set("login.connection.domain_changed", "信任域已变更");
     dict.set("login.connection.provider_changed", "登录提供方已变更");
     dict.set(
         "login.connection.warning",
-        "请仅在确认这是预期变更后信任新连接。你需要重新登录。",
+        "请核对以下变更，确认后继续登录。",
     );
-    dict.set("login.connection.details", "查看变更详情");
+    dict.set("login.connection.details", "连接详情");
     dict.set("login.connection.server", "服务器：{url}");
     dict.set("login.connection.previous", "原值");
     dict.set("login.connection.new", "新值");
     dict.set("login.connection.keep", "保留原连接");
-    dict.set("login.connection.trust", "信任新连接");
+    dict.set("login.connection.trust", "信任并继续登录");
     dict.set("login.retry_verification", "重试验证");
     dict.set("login.connection.field.identity", "服务器身份");
     dict.set("login.connection.field.trust_domain", "信任域");
@@ -3843,6 +3842,11 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("theme.switcher_aria_label", "主题");
     dict.set("common.delete", "删除");
     dict.set("app.boot.opening_secure_storage", "正在打开安全存储");
+    dict.set("app.boot.account_restore_failed", "无法恢复本地账户数据");
+    dict.set(
+        "app.boot.account_restore_retry",
+        "已保留本地数据。请刷新页面重试。",
+    );
     dict.set("app.boot.loading_keys", "正在加载账户与设备的加密密钥…");
     dict.set("app.recovery.incomplete_title", "恢复设置尚未完成");
     dict.set("app.recovery.incomplete_body", "在依赖这个账户之前，先生成你的恢复密钥（24 个词）。备份在服务器上只以密文保存；Arkret 无法替你找回这 24 个词。");

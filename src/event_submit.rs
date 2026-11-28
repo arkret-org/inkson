@@ -1687,7 +1687,11 @@ impl EventSubmitter {
         &self,
         operation: &LocalOperation,
     ) -> anyhow::Result<EventSubmissionProgress> {
-        let result = self.submit_sdk_event_inner(operation, None).await;
+        // The UI task and first-use key-backup publication both enter here.
+        // Keep the full writer state out of their browser call frames.
+        let result =
+            crate::runtime::boxed_future_from(|| self.submit_sdk_event_inner(operation, None))
+                .await;
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         if let Err(error) = &result {
             tracing::warn!(kind = %operation.intent().kind().as_str(), error = %error,
@@ -1704,7 +1708,7 @@ impl EventSubmitter {
         let intent = operation.intent().clone();
         self.ensure_recovery_material_ready(&intent).await?;
         self.await_application_current(&intent).await?;
-        let intent = self.prepare_metadata(intent).await?;
+        let intent = crate::runtime::boxed_future_from(|| self.prepare_metadata(intent)).await?;
         self.ensure_application_send_gate(&intent).await?;
         self.refresh_direct_message_authority(&intent, None).await?;
         let local_operation_id = operation.local_operation_id().to_string();

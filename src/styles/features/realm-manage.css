@@ -253,12 +253,51 @@
   height: 16px;
 }
 
-/* Semantic host layout and control integration. */
-/* Preserve the original overview metric strong-label presentation. */
-.realm-admin-overview .metric > .realm-overview-label {
-  display: block;
-  font-size: 12px;
-  font-weight: 700;
+.realm-admin-overview {
+  container: realm-overview / inline-size;
+  gap: 12px;
+}
+
+.realm-admin-overview .metric-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@container realm-overview (min-width: 26rem) {
+  .realm-admin-overview .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container realm-overview (min-width: 52rem) {
+  .realm-admin-overview .metric-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.realm-admin-overview .metric {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  align-items: start;
+  justify-items: start;
+  gap: 6px;
   color: var(--text-2);
-  margin-bottom: 4px;
+}
+
+.realm-overview-label {
+  color: var(--text);
+  font-size: var(--text-title);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.realm-admin-overview .metric > a {
+  max-inline-size: 100%;
+  margin-block-start: 6px;
+  white-space: normal;
+}
+
+.realm-overview-identity {
+  color: var(--text-3);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
 }

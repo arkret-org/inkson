@@ -180,7 +180,7 @@ fn baseline_channel(
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct DemandSyncState {
-    filter: Option<AccountFilter>,
+    filter: Option<SavedAccountFilter>,
     list_after: Option<Cursor>,
     requested_list_after: Option<Cursor>,
     list_snapshot: Option<String>,
@@ -204,6 +204,15 @@ pub(crate) struct DemandSyncState {
     #[serde(default)]
     agent_draft_pending_baseline: Option<AgentDraftPendingBaselineState>,
     details: imbl::OrdMap<String, DetailState>,
+}
+
+// This is the last demand accepted for the saved cursor. An older filter
+// object still denotes prior demand, but only a current filter can be reused.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+enum SavedAccountFilter {
+    Current(AccountFilter),
+    Unrecognized(serde_json::Map<String, Value>),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -546,8 +555,18 @@ impl LocalStateStore {
                 .collect(),
         }
     }
-    pub(crate) fn sync_demand_filter(&self) -> Option<AccountFilter> {
-        self.cached.demand_sync.filter.clone()
+    pub(crate) fn should_replace_sync_demand_filter(&self, requested: &AccountFilter) -> bool {
+        match &self.cached.demand_sync.filter {
+            None => false,
+            Some(SavedAccountFilter::Unrecognized(_)) => true,
+            Some(SavedAccountFilter::Current(previous)) => {
+                previous != requested
+                    || requested.realm_ids.iter().flatten().any(|realm| {
+                        self.realm_detail_requires_replacement(realm.as_str())
+                            || !self.current_product_view_ready(realm.as_str())
+                    })
+            }
+        }
     }
     pub(crate) fn save_sync_demand_filter(
         &mut self,
@@ -557,7 +576,7 @@ impl LocalStateStore {
             filter.validate()?;
         }
         self.ensure_cached_loaded();
-        self.cached.demand_sync.filter = filter;
+        self.cached.demand_sync.filter = filter.map(SavedAccountFilter::Current);
         self.flush()
     }
     pub(crate) fn request_next_sync_realm_list_page(&mut self) {
@@ -589,13 +608,15 @@ impl LocalStateStore {
         }
         match self.cached.demand_sync.details.get(realm_id) {
             Some(state) => state.invalidated || !state.complete,
-            None => self
-                .cached
-                .demand_sync
-                .filter
-                .as_ref()
-                .and_then(|filter| filter.realm_ids.as_ref())
-                .is_some_and(|realms| realms.iter().any(|realm| realm.as_str() == realm_id)),
+            None => match &self.cached.demand_sync.filter {
+                None => false,
+                Some(SavedAccountFilter::Unrecognized(_)) => true,
+                Some(SavedAccountFilter::Current(filter)) => filter
+                    .realm_ids
+                    .iter()
+                    .flatten()
+                    .any(|realm| realm.as_str() == realm_id),
+            },
         }
     }
 
@@ -1388,6 +1409,45 @@ mod tests {
                     .as_nanos()
             )))
     }
+    #[test]
+    fn unrecognized_saved_filter_is_replaced_at_the_existing_cursor() {
+        for saved_filter in [
+            json!({"realm_ids": [REALM], "window_limit": 20}),
+            json!({"unknown_filter_option": {"selection": ["example"]}}),
+        ] {
+            let mut original = store();
+            let mut saved = serde_json::to_value(ClientLocalState::default()).unwrap();
+            saved["demand_sync"]["filter"] = saved_filter.clone();
+            saved["sync_cursor"] = json!("ak:cursor:YQ");
+            saved["plain_local_data"] = json!({"keep": "account value"});
+            assert!(serde_json::from_value::<AccountFilter>(saved_filter).is_err());
+            original.save(serde_json::from_value(saved).unwrap());
+
+            let mut reopened = LocalStateStore::with_path(&original.path);
+            reopened.ensure_cached_loaded();
+            let requested = AccountFilter {
+                max_window_event_count: Some(20),
+                ..Default::default()
+            };
+            assert_eq!(reopened.sync_cursor().as_deref(), Some("ak:cursor:YQ"));
+            assert!(reopened.realm_detail_invalidated(REALM));
+            assert!(reopened.should_replace_sync_demand_filter(&requested));
+            reopened
+                .save_sync_demand_filter(Some(requested.clone()))
+                .unwrap();
+
+            let mut next = LocalStateStore::with_path(&original.path);
+            next.ensure_cached_loaded();
+            assert_eq!(next.sync_cursor().as_deref(), Some("ak:cursor:YQ"));
+            assert_eq!(next.cached.plain_local_data["keep"], "account value");
+            assert!(!next.should_replace_sync_demand_filter(&requested));
+            assert_eq!(
+                serde_json::to_value(&next.cached.demand_sync).unwrap()["filter"],
+                json!({"max_window_event_count": 20})
+            );
+        }
+    }
+
     fn inbox_fixture() -> (arkret_sdk::AccountId, String, String) {
         use base64::Engine as _;
         let authority = crate::test_support::authority(&format!(
@@ -2044,10 +2104,12 @@ mod tests {
         );
         assert!(!store.realm_detail_invalidated(REALM));
         assert!(!store.realm_detail_invalidated(unrelated_realm.as_str()));
-        store.cached.demand_sync.filter = Some(AccountFilter {
-            realm_ids: Some(vec![arkret_sdk::RealmId::new(REALM).unwrap()]),
-            ..Default::default()
-        });
+        store
+            .save_sync_demand_filter(Some(AccountFilter {
+                realm_ids: Some(vec![arkret_sdk::RealmId::new(REALM).unwrap()]),
+                ..Default::default()
+            }))
+            .unwrap();
         assert!(store.realm_detail_invalidated(REALM));
         assert!(!store.realm_detail_invalidated(unrelated_realm.as_str()));
         assert!(store.realm_detail_requires_replacement(REALM));
@@ -2093,7 +2155,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(store.current_generation(), 4);
         assert!(store.sync_cursor().is_none());
-        assert!(store.sync_demand_filter().is_none());
+        assert!(store.cached.demand_sync.filter.is_none());
         assert!(store.realm_detail_invalidated(REALM));
         assert!(store.current_product_view().is_none());
         assert!(!store.cached.demand_sync.details[REALM].complete);

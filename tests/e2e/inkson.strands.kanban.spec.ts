@@ -443,6 +443,13 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
 
   acceptBoardCreate?.();
   await expect(byClass(page, "add-column-button")).toBeEnabled();
+  await expect(page).toHaveURL(/\/board\/ak:space:[^/]+$/);
+  await expect(byClass(page, "board-space-selector")).toContainText("Design board");
+  const addList = page.getByRole("button", { name: "Add List", exact: true });
+  if (await addList.getAttribute("aria-expanded") !== "true") await addList.click();
+  await inputByClass(page, "new-column-input").fill("Planning");
+  await expect(inputByClass(page, "new-column-input")).toHaveValue("Planning");
+  expect((await page.pageErrors()).map(error => error.message)).toEqual([]);
 });
 
 test("kanban submits canonical card-create events", async ({ page }) => {

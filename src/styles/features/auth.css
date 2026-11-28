@@ -25,6 +25,7 @@
 .auth-brand h1 { margin: 0; font-size: var(--text-heading); line-height: var(--leading-tight); font-weight: var(--weight-semibold); }
 .auth-brand p, .auth-status, .auth-card .subtitle { margin: 0; font-size: var(--text-label); color: var(--text-2); overflow-wrap: anywhere; }
 .auth-form { display: grid; gap: 10px; min-width: 0; }
+.auth-form[hidden] { display: none; }
 .auth-form label { color: var(--text-2); font-size: var(--text-label); font-weight: var(--weight-medium); }
 .auth-form :is(input, textarea, select) {
   width: 100%;

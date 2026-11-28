@@ -165,6 +165,13 @@ pub(super) fn rehydrated_session_credential_for_active_config(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SecureStoreBootstrap {
+    Opening,
+    Ready,
+    AccountRestoreFailed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AuthSurface {
     AppShell,
     Onboarding,
@@ -172,22 +179,26 @@ pub(super) enum AuthSurface {
     Register,
     Callback,
     Restoring,
+    AccountRestoreFailed,
 }
 
 pub(super) fn auth_surface_for_route(
     route: &Route,
     has_session: bool,
     boot_state: SessionBootState,
-    secure_store_ready: bool,
+    secure_store: SecureStoreBootstrap,
 ) -> AuthSurface {
     // Browser secure storage is a one-shot startup barrier, not a recurring
     // session status. Every auth flow depends on the account-scoped grant and
     // signing keys hydrated behind this barrier, including OIDC callback
     // completion. Mounting the callback before it settles lets a late hydrate
     // overwrite or discard the newly accepted session.
-    if !secure_store_ready {
-        AuthSurface::Restoring
-    } else if matches!(route, Route::Onboarding) {
+    match secure_store {
+        SecureStoreBootstrap::Opening => return AuthSurface::Restoring,
+        SecureStoreBootstrap::AccountRestoreFailed => return AuthSurface::AccountRestoreFailed,
+        SecureStoreBootstrap::Ready => {}
+    }
+    if matches!(route, Route::Onboarding) {
         AuthSurface::Onboarding
     } else if matches!(route, Route::AuthCallback) {
         AuthSurface::Callback

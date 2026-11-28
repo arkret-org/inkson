@@ -2428,7 +2428,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("search.kind.message", "Message");
 
     dict.set("login.create_identity", "New here? Create an account");
-    dict.set("login.connection.review", "Review changed server");
     dict.set("login.connection.changed", "Server connection changed");
     dict.set(
         "login.connection.identity_changed",
@@ -2441,14 +2440,14 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "login.connection.warning",
-        "Only trust this change if you expected it. A new sign-in is required.",
+        "Check the changes below before continuing to sign in.",
     );
-    dict.set("login.connection.details", "View changed details");
+    dict.set("login.connection.details", "Connection details");
     dict.set("login.connection.server", "Server: {url}");
     dict.set("login.connection.previous", "Previous");
     dict.set("login.connection.new", "New");
     dict.set("login.connection.keep", "Keep previous connection");
-    dict.set("login.connection.trust", "Trust new connection");
+    dict.set("login.connection.trust", "Trust and continue");
     dict.set("login.retry_verification", "Retry verification");
     dict.set("login.connection.field.identity", "Server identity");
     dict.set("login.connection.field.trust_domain", "Trust domain");
@@ -4485,6 +4484,14 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("theme.switcher_aria_label", "Theme");
     dict.set("common.delete", "Delete");
     dict.set("app.boot.opening_secure_storage", "Opening secure storage");
+    dict.set(
+        "app.boot.account_restore_failed",
+        "Couldn’t restore local account data",
+    );
+    dict.set(
+        "app.boot.account_restore_retry",
+        "Your saved data has been retained. Reload the page to try again.",
+    );
     dict.set(
         "app.boot.loading_keys",
         "Loading encrypted account and device keys…",

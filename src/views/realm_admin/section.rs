@@ -59,17 +59,13 @@ impl RealmAdminSection {
     }
 }
 
-pub(crate) const REALM_ADMIN_REALM_GROUP: &[RealmAdminSection] =
-    &[RealmAdminSection::Overview, RealmAdminSection::Profile];
-pub(crate) const REALM_ADMIN_POLICY_GROUP: &[RealmAdminSection] = &[
-    RealmAdminSection::Access,
-    RealmAdminSection::Security,
-    RealmAdminSection::Federation,
-    RealmAdminSection::Moderation,
-];
-pub(crate) const REALM_ADMIN_OPERATIONS_GROUP: &[RealmAdminSection] = &[RealmAdminSection::Repair];
-pub(crate) const REALM_ADMIN_NAV_GROUPS: &[(&str, &[RealmAdminSection])] = &[
-    ("Realm", REALM_ADMIN_REALM_GROUP),
-    ("Policy", REALM_ADMIN_POLICY_GROUP),
-    ("Operations", REALM_ADMIN_OPERATIONS_GROUP),
+pub(super) const REALM_ADMIN_NAV_GROUPS: &[&[RealmAdminSection]] = &[
+    &[RealmAdminSection::Overview, RealmAdminSection::Profile],
+    &[
+        RealmAdminSection::Access,
+        RealmAdminSection::Security,
+        RealmAdminSection::Federation,
+        RealmAdminSection::Moderation,
+    ],
+    &[RealmAdminSection::Repair],
 ];

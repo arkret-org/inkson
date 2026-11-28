@@ -517,23 +517,19 @@ impl PreparedOidcAuthorization {
     }
 }
 
+/// Use the Station description accepted by discovery for this sign-in attempt.
 pub(crate) async fn prepare_oidc_authorization(
     station_url: &str,
+    description: &arkret_sdk::ServiceDescribe,
     device_id: &str,
     entry_point: OidcEntryPoint,
     expected_principal_did: Option<&arkret_sdk::Did>,
     expected_device_id: Option<&arkret_sdk::DeviceId>,
     ui_locale: &str,
 ) -> Result<PreparedOidcAuthorization, String> {
-    // T1.Y1 — discover the Account Authority + auth methods from the Station's root
-    // `/_arkret/describe` (service-surface §2.5.1).
-    let principal = TransportClient::unauthenticated(station_url)
+    let base = crate::config::validate_server_url(station_url)
         .map_err(|error| format!("Invalid Station URL: {error}"))?;
-    let description = principal
-        .describe()
-        .await
-        .map_err(|error| format_sign_in_discovery_error(station_url, &error))?;
-    let resolver = AuthorityResolver::from_description(station_url, &description)
+    let resolver = AuthorityResolver::from_description(station_url, description)
         .map_err(|error| format!("Account Authority discovery failed: {error}"))?;
     let method = resolver
         .oidc_method()
@@ -556,12 +552,9 @@ pub(crate) async fn prepare_oidc_authorization(
     )
     .map_err(|error| format!("Sign-in URL preparation failed: {error}"))?;
 
-    let station_binding = arkret_sdk::StationConnectionBinding::from_description(
-        principal.base_url(),
-        &description,
-        true,
-    )
-    .map_err(|error| error.to_string())?;
+    let station_binding =
+        arkret_sdk::StationConnectionBinding::from_description(&base, description, true)
+            .map_err(|error| error.to_string())?;
     let scaffold = build_persisted_oidc_scaffold(
         &station_binding,
         &bundle,
@@ -604,7 +597,7 @@ pub(super) fn oidc_discovery_url(method: &arkret_sdk::AuthenticationMethod) -> O
         })
 }
 
-pub(super) fn format_sign_in_discovery_error(station_url: &str, error: &anyhow::Error) -> String {
+pub(crate) fn format_sign_in_discovery_error(station_url: &str, error: &anyhow::Error) -> String {
     if let Some(change) = error.downcast_ref::<crate::station_connection::ConnectionTrustChange>() {
         return change.to_string();
     }
