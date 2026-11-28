@@ -76,8 +76,11 @@ fn board_and_lists_render_from_current_without_create_history() {
     );
     assert_eq!(entries, canonical);
     assert_eq!(
-        kanban_space_current_selectors(Some(&options[0].id), &columns).len(),
-        6
+        kanban_space_current_selectors(Some(&options[0].id), &columns),
+        canonical
+            .iter()
+            .map(|arkret_wire::CurrentState::Value { selector, .. }| selector.clone())
+            .collect::<Vec<_>>()
     );
 }
 
@@ -134,7 +137,7 @@ fn current_space_requires_exact_realm_and_complete_resolved_siblings() {
         space_container_views_from_current(&entries, PENDING_TEST_REALM).len(),
         1
     );
-    for omitted in 0..3 {
+    for omitted in 0..entries.len() {
         let mut partial = entries.clone();
         partial.remove(omitted);
         assert!(space_container_views_from_current(&partial, PENDING_TEST_REALM).is_empty());
