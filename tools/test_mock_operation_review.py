@@ -46,8 +46,8 @@ class ReviewGateTests(unittest.TestCase):
              patch.object(gate, "validate_native") as producer:
             result = gate.validate(self.document)
         producer.assert_called_once_with({}, {}, "fixture-digest")
-        self.assertEqual(result, {"operations": 132, "mock_behavior": 28,
-                                  "native_fixture_replay": 14, "uncovered": 90})
+        self.assertEqual(result, {"operations": 135, "mock_behavior": 28,
+                                  "native_fixture_replay": 14, "uncovered": 93})
 
     def test_render_counts_remaining_native_obligations(self):
         rows = [row for row in self.document["operations"]
