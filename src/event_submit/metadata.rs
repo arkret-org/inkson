@@ -372,18 +372,7 @@ async fn seal_metadata(
         }
         arkret_sdk::EventKind::SpaceUpdate => {
             let mut payload = intent.typed_payload::<event_spec::SpaceUpdate>()?;
-            if let Some(patch) = payload.patch.take() {
-                payload.patch = Some(
-                    seal_patch(
-                        patch,
-                        payload.space_id.as_str(),
-                        false,
-                        &mut open,
-                        &mut seal,
-                    )
-                    .await?,
-                );
-            }
+            payload.patch = seal_patch(payload.patch, payload.space_id.as_str(), false, &mut open, &mut seal).await?;
             replace_payload::<event_spec::SpaceUpdate>(intent, payload)
         }
         arkret_sdk::EventKind::StrandUpdate => {

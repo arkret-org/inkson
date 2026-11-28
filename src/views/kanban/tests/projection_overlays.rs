@@ -28,10 +28,6 @@ fn current_space_siblings(
             },
             json!({"parent_space_id": parent}),
         ),
-        (
-            CurrentSelector::SpaceChildScopePolicy { space_id },
-            Value::Null,
-        ),
     ]
     .into_iter()
     .map(|(selector, value)| CurrentState::Value {

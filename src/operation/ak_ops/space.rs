@@ -82,8 +82,7 @@ pub fn space_update_patch(
     let patch = patch_from_value(space_id, patch)?;
     let payload = arkret_sdk::SpacePatchPayload {
         space_id: space_id_value(space_id)?,
-        patch: Some(patch),
-        child_scope_policy: None,
+        patch,
         expected_state_digest: None,
     };
     Ok(

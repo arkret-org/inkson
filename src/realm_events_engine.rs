@@ -1388,12 +1388,6 @@ mod tests {
                 },
                 json!({"parent_space_id": null}),
             ),
-            row(
-                CurrentSelector::SpaceChildScopePolicy {
-                    space_id: space_id.clone(),
-                },
-                json!(null),
-            ),
         ]);
         let validate = |rows: &[CurrentState]| {
             validate_signed_floor_rows(
@@ -1410,7 +1404,9 @@ mod tests {
         incomplete.pop();
         assert!(validate(&incomplete).is_err());
         let mut cyclic = rows.clone();
-        let parent_index = cyclic.len() - 2;
+        let parent_index = cyclic.iter().position(|row| matches!(
+            row, CurrentState::Value { selector: CurrentSelector::SpaceParent { space_id: id }, .. } if id == &space_id
+        )).unwrap();
         set_row_value(
             &mut cyclic[parent_index],
             json!({"parent_space_id": space_id}),
@@ -1426,7 +1422,9 @@ mod tests {
         duplicate.push(rows.last().unwrap().clone());
         assert!(validate(&duplicate).is_err());
         let mut foreign = rows.clone();
-        let metadata_index = foreign.len() - 3;
+        let metadata_index = foreign.iter().position(|row| matches!(
+            row, CurrentState::Value { selector: CurrentSelector::Space { space_id: id }, .. } if id == &space_id
+        )).unwrap();
         let mut foreign_space = space;
         foreign_space.realm_id = arkret_sdk::RealmId::from_event_id(&items[0].event.event_id);
         assert_ne!(foreign_space.realm_id, realm_id);

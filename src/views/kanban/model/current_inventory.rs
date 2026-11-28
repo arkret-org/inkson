@@ -258,12 +258,6 @@ mod tests {
                 },
                 json!({"parent_space_id": parent}),
             ),
-            row(
-                CurrentSelector::SpaceChildScopePolicy {
-                    space_id: id.clone(),
-                },
-                Value::Null,
-            ),
         ]
     }
     fn view(

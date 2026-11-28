@@ -256,7 +256,6 @@ pub(crate) fn space_container_views_from_current(
             };
             if source.as_str() != realm_id
                 || value.get("parent_space_id").is_some()
-                || value.get("child_scope_policy").is_some()
             {
                 return None;
             }
@@ -267,12 +266,8 @@ pub(crate) fn space_container_views_from_current(
             if parent.len() != 1 {
                 return None;
             }
-            let policy = value_for(&CurrentSelector::SpaceChildScopePolicy {
-                space_id: space_id.clone(),
-            })?;
             let mut joined = value.clone();
             joined["parent_space_id"] = parent.get("parent_space_id")?.clone();
-            joined["child_scope_policy"] = policy.clone();
             let space: arkret_sdk::Space = serde_json::from_value(joined).ok()?;
             if space.id.as_ref() != Some(space_id)
                 || space.realm_id.as_str() != realm_id
@@ -321,7 +316,7 @@ pub(crate) fn kanban_space_current_selectors(
     columns: &[KanbanColumn],
 ) -> Vec<arkret_wire::CurrentSelector> {
     use arkret_wire::CurrentSelector;
-    // Three siblings per Space, within the product demand's 256-selector cap.
+    // Two selectors per Space, within the product demand's 256-selector cap.
     // Remaining columns continue to display the complete derived read page.
     board
         .into_iter()
@@ -331,7 +326,7 @@ pub(crate) fn kanban_space_current_selectors(
                 .iter()
                 .filter_map(|column| arkret_sdk::SpaceId::new(column.id.clone()).ok()),
         )
-        .take(85)
+        .take(128)
         .flat_map(|space_id| {
             [
                 CurrentSelector::Space {
@@ -340,7 +335,6 @@ pub(crate) fn kanban_space_current_selectors(
                 CurrentSelector::SpaceParent {
                     space_id: space_id.clone(),
                 },
-                CurrentSelector::SpaceChildScopePolicy { space_id },
             ]
         })
         .collect()
