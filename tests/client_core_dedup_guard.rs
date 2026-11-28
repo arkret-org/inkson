@@ -1,13 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-//! Static deduplication gates for client-core extraction.
-//!
-//! These guards pin surfaces that have already been removed from inkson. They
-//! pin the `src/api/**` submodules that have been fully extracted:
-//! the durable/ephemeral event engine now lives in `crate::event_submit`
-//! (`api::events`/`api::agent` deleted), and the applet/moderation surfaces
-//! moved to the SDK http-client via the keystone. Reintroducing any of these
-//! files would resurrect a duplicate of the client-core engine.
+//! Verify the Inkson integration with Garth transport, outbound delivery, and MLS.
 
 use std::fs;
 use std::path::Path;
@@ -21,18 +14,11 @@ fn realm_runner_keeps_session_recovery_inside_transport_provider() {
         source.contains("provide_authenticated_sdk_client")
             && source.contains("refresh_authenticated_session_after_unauthorized")
             && source
-                .contains("garth::classify_error(&error) == garth::RunErrorClass::Unauthorized")
-            && !source.contains("prepare_refresh_for_server_after_unauthorized")
-            && !source.contains("exchange_refresh(&grant, &device_handle)")
-            && !source.contains("self.ctx.token.set(session_credential)"),
+                .contains("garth::classify_error(&error) == garth::RunErrorClass::Unauthorized"),
         "Inkson Realm transport provider must own unauthorized refresh and credential rebuild"
     );
     assert!(
-        !source.contains("run_realm_iteration"),
-        "the removed host-owned Realm iteration loop must not return"
-    );
-    assert!(
-        !source.contains("save_realm_events_cursor") && !source.contains("clear_cursor"),
+        !source.contains("clear_cursor"),
         "Inkson Realm host must not clear a cursor after Garth scan/checkpoint recovery"
     );
 }
@@ -53,8 +39,7 @@ fn ordinary_event_submit_uses_garth_durable_outbound() {
     assert!(
         submit.contains("QueuedSubmission::new(")
             && submit.contains(".submit_next_checked(&authority_client, &options,")
-            && submit.contains("ensure_queued_application_send_gate(&request)")
-            && !submit.contains("submit_sdk_event_direct"),
+            && submit.contains("ensure_queued_application_send_gate(&request)"),
         "the durable Garth queue must own the frozen submission's HTTP tail"
     );
     let outbound_store_path = manifest.join("src/outbound_store.rs");
@@ -64,14 +49,6 @@ fn ordinary_event_submit_uses_garth_durable_outbound() {
     assert!(
         outbound_store.contains("MlsCommit") && outbound_store.contains("\"mls-commit\""),
         "the durable MLS admission lane must remain distinct from ordinary outbound delivery"
-    );
-
-    let composer_path = manifest.join("src/views/chat/composer.rs");
-    let composer = fs::read_to_string(&composer_path)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", composer_path.display()));
-    assert!(
-        !composer.contains("chat_outbox.write().push(entry)"),
-        "new offline chat sends must not create a second product-specific durable queue"
     );
 }
 

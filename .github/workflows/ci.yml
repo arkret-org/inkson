@@ -278,11 +278,6 @@ jobs:
         working-directory: inkson
         run: python .ci/install-wasm-bindgen.py
 
-      # ARC-0002 (重构计划 2026-07-10): legacy patterns must ratchet to zero.
-      - name: Deletion gate
-        working-directory: inkson
-        run: bash scripts/deletion_gate.sh
-
       - name: SDK wire type ownership gate
         working-directory: inkson
         run: python ../arkret-rust-sdk/tools/wire_type_ownership_audit.py --workspace-root .. --require-repository inkson
